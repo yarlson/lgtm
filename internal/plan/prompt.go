@@ -3,7 +3,6 @@ package plan
 import (
 	"bytes"
 	"embed"
-	"fmt"
 	"strings"
 	"text/template"
 )
@@ -13,72 +12,73 @@ var promptFS embed.FS
 
 // promptData holds template parameters for plan prompt rendering.
 type promptData struct {
-	TasksDir string
-	Brief    string
-}
-
-// RenderPrinciplesPreamble renders the shared engineering principles preamble.
-func RenderPrinciplesPreamble() (string, error) {
-	return renderTemplate("prompts/principles.md", promptData{})
-}
-
-// prependPreamble renders the principles preamble and prepends it to the given prompt.
-func prependPreamble(prompt string) (string, error) {
-	preamble, err := RenderPrinciplesPreamble()
-	if err != nil {
-		return "", fmt.Errorf("render principles preamble: %w", err)
-	}
-	return preamble + "\n\n" + prompt, nil
+	TasksDir     string
+	BriefPath    string
+	ArtifactPath string
+	TaskNum      int
+	HasPRD       bool
 }
 
 // RenderRequirementsPrompt returns the Phase 1 requirements-gathering prompt.
-func RenderRequirementsPrompt() (string, error) {
-	return renderTemplate("prompts/requirements.md", promptData{})
+// briefPath is where Claude will write BRIEF.md when the user types /done.
+func RenderRequirementsPrompt(briefPath string) (string, error) {
+	return renderTemplate("prompts/requirements.md", promptData{BriefPath: briefPath})
 }
 
-// RenderPRDPrompt renders the PRD generation prompt with the given tasks directory and optional brief.
-func RenderPRDPrompt(tasksDir, brief string) (string, error) {
-	prompt, err := renderTemplate("prompts/prd.md", promptData{TasksDir: tasksDir, Brief: brief})
-	if err != nil {
-		return "", err
-	}
-	return prependPreamble(prompt)
+// RenderBriefSynthesisPrompt renders the BRIEF.md synthesis prompt sent after /done.
+func RenderBriefSynthesisPrompt(briefPath string) (string, error) {
+	return renderTemplate("prompts/brief.md", promptData{BriefPath: briefPath})
+}
+
+// RenderTriagePrompt renders the triage classification prompt.
+func RenderTriagePrompt(briefPath string) (string, error) {
+	return renderTemplate("prompts/triage.md", promptData{BriefPath: briefPath})
+}
+
+// RenderCriticPrompt renders the per-artifact critic prompt.
+func RenderCriticPrompt(briefPath, artifactPath string) (string, error) {
+	return renderTemplate("prompts/critic.md", promptData{BriefPath: briefPath, ArtifactPath: artifactPath})
+}
+
+// RenderPRDPrompt renders the PRD generation prompt.
+func RenderPRDPrompt(tasksDir, briefPath string) (string, error) {
+	return renderTemplate("prompts/prd.md", promptData{TasksDir: tasksDir, BriefPath: briefPath})
 }
 
 // RenderTechnologyPrompt renders the technology plan generation prompt.
-func RenderTechnologyPrompt(tasksDir string) (string, error) {
-	prompt, err := renderTemplate("prompts/technology.md", promptData{TasksDir: tasksDir})
-	if err != nil {
-		return "", err
-	}
-	return prependPreamble(prompt)
+func RenderTechnologyPrompt(tasksDir, briefPath string) (string, error) {
+	return renderTemplate("prompts/technology.md", promptData{TasksDir: tasksDir, BriefPath: briefPath})
 }
 
 // RenderDesignPrompt renders the design spec generation prompt.
-func RenderDesignPrompt(tasksDir string) (string, error) {
-	prompt, err := renderTemplate("prompts/design.md", promptData{TasksDir: tasksDir})
-	if err != nil {
-		return "", err
-	}
-	return prependPreamble(prompt)
+func RenderDesignPrompt(tasksDir, briefPath string) (string, error) {
+	return renderTemplate("prompts/design.md", promptData{TasksDir: tasksDir, BriefPath: briefPath})
 }
 
-// RenderAnalyzeTasksPrompt renders the combined task analysis prompt (create + assess + refine).
-func RenderAnalyzeTasksPrompt(tasksDir string) (string, error) {
-	prompt, err := renderTemplate("prompts/analyze-tasks.md", promptData{TasksDir: tasksDir})
-	if err != nil {
-		return "", err
-	}
-	return prependPreamble(prompt)
+// RenderAnalyzeTasksPrompt renders the task analysis prompt.
+func RenderAnalyzeTasksPrompt(tasksDir, briefPath string) (string, error) {
+	return renderTemplate("prompts/analyze-tasks.md", promptData{TasksDir: tasksDir, BriefPath: briefPath})
 }
 
 // RenderGenerateTasksPrompt renders the task generation prompt (TASKS.md + TASK<N>.md subagents).
-func RenderGenerateTasksPrompt(tasksDir string) (string, error) {
-	prompt, err := renderTemplate("prompts/generate-tasks.md", promptData{TasksDir: tasksDir})
-	if err != nil {
-		return "", err
-	}
-	return prependPreamble(prompt)
+func RenderGenerateTasksPrompt(tasksDir, briefPath string) (string, error) {
+	return renderTemplate("prompts/generate-tasks.md", promptData{TasksDir: tasksDir, BriefPath: briefPath})
+}
+
+// RenderSlimTaskPrompt renders the slim 6-section TASK<N>.md prompt for tiny + small tiers.
+// hasPRD is true at small tier (PRD-lite exists), false at tiny tier.
+func RenderSlimTaskPrompt(tasksDir, briefPath string, taskNum int, hasPRD bool) (string, error) {
+	return renderTemplate("prompts/task-slim.md", promptData{
+		TasksDir:  tasksDir,
+		BriefPath: briefPath,
+		TaskNum:   taskNum,
+		HasPRD:    hasPRD,
+	})
+}
+
+// RenderSlimTasksMdPrompt renders the slim TASKS.md index prompt for small tier.
+func RenderSlimTasksMdPrompt(tasksDir, briefPath string) (string, error) {
+	return renderTemplate("prompts/tasks-md-slim.md", promptData{TasksDir: tasksDir, BriefPath: briefPath})
 }
 
 func renderTemplate(name string, data promptData) (string, error) {

@@ -3,1032 +3,525 @@ package plan
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yarlson/tap"
 
 	"github.com/yarlson/snap/internal/model"
 )
 
-// mockExecutor records all calls and returns canned responses.
-type mockExecutor struct {
-	mu    sync.Mutex
-	calls []executorCall
-	err   error // if set, all Run calls return this error
+// recordingExecutor records every Run call and returns canned output. If a
+// fileWriter is set, it runs after each call to simulate the LLM's Write tool
+// creating artifact files on disk.
+type recordingExecutor struct {
+	mu             sync.Mutex
+	calls          []executorCall
+	cannedOutput   string
+	fileWriter     func(prompt string)
+	failOnContains map[string]error
 }
 
 type executorCall struct {
 	modelType model.Type
-	args      []string
+	prompt    string
 }
 
-func (m *mockExecutor) Run(_ context.Context, w io.Writer, mt model.Type, args ...string) error {
+func (m *recordingExecutor) Run(_ context.Context, w io.Writer, mt model.Type, args ...string) error {
+	prompt := args[len(args)-1]
 	m.mu.Lock()
-	m.calls = append(m.calls, executorCall{modelType: mt, args: args})
+	m.calls = append(m.calls, executorCall{modelType: mt, prompt: prompt})
 	m.mu.Unlock()
 
-	if m.err != nil {
-		return m.err
-	}
-
-	// Write a canned response so the output can be verified.
-	fmt.Fprintln(w, "LLM response")
-	return nil
-}
-
-func (m *mockExecutor) getCalls() []executorCall {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	result := make([]executorCall, len(m.calls))
-	copy(result, m.calls)
-	return result
-}
-
-// promptMatchExecutor returns per-prompt errors based on a substring match.
-type promptMatchExecutor struct {
-	failOn map[string]error // substring → error
-}
-
-func (m *promptMatchExecutor) Run(_ context.Context, w io.Writer, _ model.Type, args ...string) error {
-	prompt := args[len(args)-1]
-	for substr, err := range m.failOn {
+	for substr, err := range m.failOnContains {
 		if strings.Contains(prompt, substr) {
 			return err
 		}
 	}
-
-	fmt.Fprintln(w, "LLM response")
+	out := m.cannedOutput
+	if out == "" {
+		out = "LLM response\n"
+	}
+	if _, err := fmt.Fprint(w, out); err != nil {
+		return err
+	}
+	if m.fileWriter != nil {
+		m.fileWriter(prompt)
+	}
 	return nil
 }
 
-// --- Phase 1 tests ---
+func (m *recordingExecutor) snapshot() []executorCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]executorCall, len(m.calls))
+	copy(out, m.calls)
+	return out
+}
+
+// promptsContaining returns the prompts whose text matches the substring.
+func promptsContaining(calls []executorCall, substr string) []executorCall {
+	var out []executorCall
+	for _, c := range calls {
+		if strings.Contains(c.prompt, substr) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// newSessionDirs creates a temp session dir and returns the (sessionDir, tasksDir) pair.
+func newSessionDirs(t *testing.T) (sessionDir, tasksDir string) {
+	t.Helper()
+	root := t.TempDir()
+	sessionDir = filepath.Join(root, "session")
+	tasksDir = filepath.Join(sessionDir, "tasks")
+	require.NoError(t, os.MkdirAll(tasksDir, 0o755))
+	return sessionDir, tasksDir
+}
+
+// fileWriterForArtifacts returns a func that writes empty placeholder files
+// based on unambiguous markers in each prompt. Simulates the LLM's Write tool
+// so artifactExists checks behave correctly.
+func fileWriterForArtifacts(tasksDir, briefPath string) func(prompt string) {
+	write := func(name, body string) {
+		_ = os.WriteFile(filepath.Join(tasksDir, name), []byte(body), 0o600) //nolint:errcheck // best-effort test fixture
+	}
+
+	return func(prompt string) {
+		switch {
+		// BRIEF synthesis (prompts/brief.md).
+		case strings.Contains(prompt, "Synthesize the conversation above"):
+			_ = os.WriteFile(briefPath, []byte("# BRIEF\n## Problem\n(none)\n"), 0o600) //nolint:errcheck // best-effort test fixture
+
+		// Slim TASK<N>.md (prompts/task-slim.md). Contains "exactly six sections".
+		case strings.Contains(prompt, "exactly six sections"):
+			for n := 1; n <= 9; n++ {
+				marker := fmt.Sprintf("TASK%d.md`", n)
+				if strings.Contains(prompt, marker) {
+					write(fmt.Sprintf("TASK%d.md", n), "# Task")
+					return
+				}
+			}
+
+		// PRD writer (prompts/prd.md). "Write a PRD" only appears in this prompt.
+		case strings.Contains(prompt, "Write a PRD for the work"):
+			write("PRD.md", "# PRD")
+
+		// Technology writer.
+		case strings.Contains(prompt, "Map the product requirements into an engineering plan"):
+			write("TECHNOLOGY.md", "# Technology")
+
+		// Design writer.
+		case strings.Contains(prompt, "Translate the product requirements into a design"):
+			write("DESIGN.md", "# Design")
+
+		// Slim TASKS.md index (prompts/tasks-md-slim.md).
+		case strings.Contains(prompt, "Cap at 3 tasks"):
+			write("TASKS.md", "## G. Task list\n\n| 1 | TASK1.md | outcome | BRIEF#x |\n| 2 | TASK2.md | outcome | BRIEF#y |\n")
+
+		// Full-tier generate-tasks (prompts/generate-tasks.md). Writes TASKS.md
+		// + spawns subagents — simulate by writing TASKS.md and one TASK1.md.
+		case strings.Contains(prompt, "Write TASKS.md and generate individual"):
+			write("TASKS.md", "## G. Task List\n\n| 1 | TASK1.md | outcome | BRIEF#x |\n")
+			write("TASK1.md", "# Task 1")
+		}
+	}
+}
+
+// --- Phase 1 chat loop tests ---
 
 func TestPlanner_Phase1_UserMessageThenDone(t *testing.T) {
-	exec := &mockExecutor{}
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
 	var out bytes.Buffer
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "auth", tasksDir,
 		WithOutput(&out),
 		WithInput(strings.NewReader("I want OAuth2 auth\n/done\n")),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 	)
 
 	err := p.Run(context.Background())
 	require.NoError(t, err)
 
-	calls := exec.getCalls()
-	// First call: requirements prompt (no -c)
+	calls := exec.snapshot()
 	require.GreaterOrEqual(t, len(calls), 2)
-	assert.NotContains(t, calls[0].args, "-c")
+	assert.NotContains(t, calls[0].prompt, "I want OAuth2")
+	// User message gets sent with -c (last arg in args list).
+	userMsgs := promptsContaining(calls, "I want OAuth2 auth")
+	assert.Len(t, userMsgs, 1)
 
-	// Second call: user message with -c
-	assert.Contains(t, calls[1].args, "-c")
-	assert.Contains(t, calls[1].args[len(calls[1].args)-1], "I want OAuth2 auth")
-
-	// Output should contain phase headers
 	output := out.String()
 	assert.Contains(t, output, "Gathering requirements")
-	assert.Contains(t, output, "snap plan>")
 }
 
-func TestPlanner_Phase1_DoneImmediately(t *testing.T) {
-	exec := &mockExecutor{}
+func TestPlanner_Phase1_DoneImmediately_TriggersBriefSynth(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
 	var out bytes.Buffer
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "auth", tasksDir,
 		WithOutput(&out),
 		WithInput(strings.NewReader("/done\n")),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 	)
 
-	err := p.Run(context.Background())
-	require.NoError(t, err)
+	require.NoError(t, p.Run(context.Background()))
 
-	calls := exec.getCalls()
-	// First call: requirements prompt
-	require.GreaterOrEqual(t, len(calls), 1)
-	assert.NotContains(t, calls[0].args, "-c")
-
-	// Phase 2 pipeline: 1 (PRD) + 2 (parallel TECH+DESIGN) + 1 (analyze) + 1 (generate) = 5
-	// Total: 1 (requirements prompt) + 5 = 6
-	assert.Equal(t, 6, len(calls))
+	// Brief synthesis prompt fires after /done.
+	briefSynthCalls := promptsContaining(exec.snapshot(), "Synthesize the conversation")
+	assert.Len(t, briefSynthCalls, 1)
+	assert.FileExists(t, briefPath)
 }
 
-func TestPlanner_Phase1_DoneUppercase(t *testing.T) {
-	exec := &mockExecutor{}
+// --- --from mode ---
+
+func TestPlanner_FromBrief_SkipsPhase1ButTriages(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
 	var out bytes.Buffer
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "auth", tasksDir,
 		WithOutput(&out),
-		WithInput(strings.NewReader("/DONE\n")),
+		WithBrief("brief.md", "# from-file\nuser-supplied"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 	)
 
-	err := p.Run(context.Background())
-	require.NoError(t, err)
+	require.NoError(t, p.Run(context.Background()))
 
-	// Should have completed both phases (1 requirements + 5 generation)
-	calls := exec.getCalls()
-	assert.Equal(t, 6, len(calls))
+	// BRIEF.md was written from --from content (no Phase 1 chat, no synth call).
+	body, err := os.ReadFile(briefPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "user-supplied")
+
+	// No requirements prompt was sent.
+	assert.Empty(t, promptsContaining(exec.snapshot(), "Gather requirements"))
+	assert.Empty(t, promptsContaining(exec.snapshot(), "Synthesize the conversation"))
 }
 
-func TestPlanner_Phase1_EOF(t *testing.T) {
-	exec := &mockExecutor{}
+// --- Tier dispatcher ---
+
+func TestPlanner_Tiny_OnlyTASK1(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
 	var out bytes.Buffer
 
-	// No /done, just EOF
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "s", tasksDir,
 		WithOutput(&out),
-		WithInput(strings.NewReader("some requirements\n")),
+		WithBrief("brief.md", "tiny"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 	)
+	require.NoError(t, p.Run(context.Background()))
 
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	// Should have run user message + Phase 2
-	calls := exec.getCalls()
-	// 1 (requirements) + 1 (user msg) + 5 (generation) = 7
-	assert.Equal(t, 7, len(calls))
+	// Exactly one writer + one critic for TASK1.md.
+	calls := exec.snapshot()
+	taskWriters := promptsContaining(calls, "exactly six sections")
+	assert.Len(t, taskWriters, 1)
+	criticCalls := promptsContaining(calls, "strict reviewer")
+	assert.Len(t, criticCalls, 1)
+	assert.FileExists(t, filepath.Join(tasksDir, "TASK1.md"))
+	assert.NoFileExists(t, filepath.Join(tasksDir, "PRD.md"))
+	assert.NoFileExists(t, filepath.Join(tasksDir, "TECHNOLOGY.md"))
+	assert.NoFileExists(t, filepath.Join(tasksDir, "DESIGN.md"))
 }
+
+func TestPlanner_Small_PRDPlusTasksMdPlusSlimTasks(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithBrief("brief.md", "small"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierSmall}),
+	)
+	require.NoError(t, p.Run(context.Background()))
+
+	calls := exec.snapshot()
+	// PRD writer fires exactly once.
+	assert.Len(t, promptsContaining(calls, "Write a PRD for the work"), 1)
+	// Slim TASKS.md writer fires exactly once.
+	assert.Len(t, promptsContaining(calls, "Cap at 3 tasks"), 1)
+	// PRD + each TASK gets a critic. TASKS.md does not.
+	assert.GreaterOrEqual(t, len(promptsContaining(calls, "strict reviewer")), 3)
+	assert.FileExists(t, filepath.Join(tasksDir, "PRD.md"))
+	assert.FileExists(t, filepath.Join(tasksDir, "TASKS.md"))
+	assert.FileExists(t, filepath.Join(tasksDir, "TASK1.md"))
+	assert.FileExists(t, filepath.Join(tasksDir, "TASK2.md"))
+}
+
+func TestPlanner_Full_NoFlags_SkipsTechAndDesign(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithBrief("brief.md", "full"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierFull, HasArchitecture: false, HasUI: false}),
+	)
+	require.NoError(t, p.Run(context.Background()))
+
+	assert.FileExists(t, filepath.Join(tasksDir, "PRD.md"))
+	assert.NoFileExists(t, filepath.Join(tasksDir, "TECHNOLOGY.md"))
+	assert.NoFileExists(t, filepath.Join(tasksDir, "DESIGN.md"))
+	assert.FileExists(t, filepath.Join(tasksDir, "TASKS.md"))
+}
+
+func TestPlanner_Full_AllFlags_GeneratesEverything(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithBrief("brief.md", "full"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierFull, HasArchitecture: true, HasUI: true}),
+	)
+	require.NoError(t, p.Run(context.Background()))
+
+	for _, name := range []string{"PRD.md", "TECHNOLOGY.md", "DESIGN.md", "TASKS.md"} {
+		assert.FileExists(t, filepath.Join(tasksDir, name))
+	}
+}
+
+// --- Resume ---
+
+func TestPlanner_Resume_LoadsTierMarker(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+
+	// Pre-existing brief and tier marker.
+	require.NoError(t, os.WriteFile(briefPath, []byte("# brief"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(sessionDir, planTierMarker), []byte("tiny|false|false\n"), 0o600))
+
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithSessionDir(sessionDir),
+		WithResume(true),
+	)
+	require.NoError(t, p.Run(context.Background()))
+
+	// Tier was tiny: only TASK1.md should appear (no triage call to executor).
+	assert.FileExists(t, filepath.Join(tasksDir, "TASK1.md"))
+	// No triage-classifier prompt was sent (resume short-circuits it).
+	assert.Empty(t, promptsContaining(exec.snapshot(), "Classify the work"))
+}
+
+func TestPlanner_Resume_SkipsExistingArtifacts(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	require.NoError(t, os.WriteFile(briefPath, []byte("# brief"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(sessionDir, planTierMarker), []byte("tiny|false|false\n"), 0o600))
+	// TASK1.md already on disk.
+	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "TASK1.md"), []byte("# existing"), 0o600))
+
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithSessionDir(sessionDir),
+		WithResume(true),
+	)
+	require.NoError(t, p.Run(context.Background()))
+
+	// No writer call — only critic on existing file.
+	calls := exec.snapshot()
+	assert.Empty(t, promptsContaining(calls, "exactly six sections"), "writer must be skipped when artifact exists")
+	assert.Len(t, promptsContaining(calls, "strict reviewer"), 1, "critic still runs on existing file")
+}
+
+// --- Tier marker writes ---
+
+func TestPlanner_WritesTierMarkerAfterTriage(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithBrief("brief.md", "x"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierSmall, HasArchitecture: true, HasUI: false}),
+	)
+	require.NoError(t, p.Run(context.Background()))
+
+	data, err := os.ReadFile(filepath.Join(sessionDir, planTierMarker))
+	require.NoError(t, err)
+	assert.Equal(t, "small|true|false\n", string(data))
+}
+
+// --- TIER_MISMATCH detection ---
+
+func TestPlanner_Small_TierMismatchAborts(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	mismatchWriter := func(prompt string) {
+		if strings.Contains(prompt, "Synthesize the conversation") {
+			_ = os.WriteFile(briefPath, []byte("# brief"), 0o600) //nolint:errcheck // best-effort test fixture
+			return
+		}
+		if strings.Contains(prompt, "PRD.md`") && strings.Contains(prompt, "Write a PRD") {
+			_ = os.WriteFile(filepath.Join(tasksDir, "PRD.md"), []byte("# PRD"), 0o600) //nolint:errcheck // best-effort test fixture
+			return
+		}
+		if strings.Contains(prompt, "section G") {
+			// Slim TASKS.md emits the TIER_MISMATCH escape hatch.
+			_ = os.WriteFile(filepath.Join(tasksDir, "TASKS.md"), //nolint:errcheck // best-effort test fixture
+				[]byte("TIER_MISMATCH: this work needs the full tier.\n"), 0o600)
+		}
+	}
+
+	exec := &recordingExecutor{fileWriter: mismatchWriter}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "s", tasksDir,
+		WithOutput(&out),
+		WithBrief("brief.md", "x"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierSmall}),
+	)
+	err := p.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tier mismatch")
+}
+
+// --- Phase 1 cancellation ---
 
 func TestPlanner_Phase1_ContextCancel(t *testing.T) {
-	exec := &mockExecutor{}
+	sessionDir, tasksDir := newSessionDirs(t)
+	exec := &recordingExecutor{}
 	var out bytes.Buffer
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
+	cancel()
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "s", tasksDir,
 		WithOutput(&out),
-		WithInput(strings.NewReader("some input\n")),
+		WithInput(strings.NewReader("/done\n")),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 	)
-
 	err := p.Run(ctx)
 	require.Error(t, err)
-
-	output := out.String()
-	assert.Contains(t, output, "Planning aborted")
+	assert.Contains(t, out.String(), "Planning aborted")
 }
 
-// --- Phase 2 tests ---
+// --- onFirstMessage callback ---
 
-func TestPlanner_Phase2_Pipeline(t *testing.T) {
-	exec := &mockExecutor{}
+func TestPlanner_OnFirstMessage_FiresOnceAfterFirstCall(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
 	var out bytes.Buffer
+	calls := 0
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "s", tasksDir,
 		WithOutput(&out),
 		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// Requirements + 5 generation calls = 6.
-	// (1 PRD + 2 parallel + 1 analyze + 1 generate)
-	require.Equal(t, 6, len(calls))
-
-	// All Phase 2 calls should use model.Thinking.
-	for i := 1; i < len(calls); i++ {
-		assert.Equal(t, model.Thinking, calls[i].modelType, "call %d should use Thinking model", i)
-	}
-
-	// Call 1 (PRD): has -c (continues Phase 1 conversation).
-	assert.Contains(t, calls[1].args, "-c", "PRD step should have -c")
-
-	// Calls 2,3 (parallel TECH+DESIGN): no -c (independent processes).
-	assert.NotContains(t, calls[2].args, "-c", "parallel call should not have -c")
-	assert.NotContains(t, calls[3].args, "-c", "parallel call should not have -c")
-
-	// Call 4 (analyze tasks): no -c (fresh conversation).
-	assert.NotContains(t, calls[4].args, "-c", "analyze tasks should not have -c")
-
-	// Call 5 (generate tasks): has -c (continues analyze conversation).
-	assert.Contains(t, calls[5].args, "-c", "generate tasks should have -c")
-}
-
-func TestPlanner_Phase2_StepHeaders(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	output := out.String()
-
-	// Verify all 4 step headers with correct names.
-	steps := []struct {
-		header string
-		name   string
-	}{
-		{"Step 1/4", "Generate PRD"},
-		{"Step 2/4", "Generate technology plan + design spec"},
-		{"Step 3/4", "Analyze tasks"},
-		{"Step 4/4", "Generate tasks"},
-	}
-
-	for _, s := range steps {
-		assert.Contains(t, output, s.header, "output should contain %s", s.header)
-		assert.Contains(t, output, s.name, "output should contain step name %q", s.name)
-	}
-}
-
-func TestPlanner_Phase2_StepCompletions(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	output := out.String()
-	// Steps 1, 3, 4 produce "Step complete"; step 2 produces sub-step names.
-	assert.Equal(t, 3, strings.Count(output, "Step complete"))
-}
-
-func TestPlanner_Phase2_ParallelDocs(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// 1 (requirements) + 1 (PRD) + 2 (parallel TECH+DESIGN) + 1 (analyze) + 1 (generate) = 6
-	require.Equal(t, 6, len(calls))
-
-	// The two parallel calls (indices 2,3) should lack -c and use model.Thinking.
-	for _, i := range []int{2, 3} {
-		assert.NotContains(t, calls[i].args, "-c", "parallel call %d should not have -c", i)
-		assert.Equal(t, model.Thinking, calls[i].modelType, "parallel call %d should use Thinking", i)
-	}
-
-	// Sub-step completion lines should appear in output.
-	output := out.String()
-	assert.Contains(t, output, "Technology plan")
-	assert.Contains(t, output, "Design spec")
-}
-
-func TestPlanner_Phase2_ParallelDocOneFails(t *testing.T) {
-	exec := &promptMatchExecutor{
-		failOn: map[string]error{
-			"DESIGN.md": fmt.Errorf("design generation failed"),
-		},
-	}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "step 2/4 failed")
-
-	output := out.String()
-	// One sub-step succeeded, one failed.
-	assert.Contains(t, output, "Technology plan")
-	assert.Contains(t, output, "Design spec")
-}
-
-func TestPlanner_Phase2_ParallelDocBothFail(t *testing.T) {
-	exec := &promptMatchExecutor{
-		failOn: map[string]error{
-			"TECHNOLOGY.md": fmt.Errorf("tech failed"),
-			"DESIGN.md":     fmt.Errorf("design failed"),
-		},
-	}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "step 2/4 failed")
-
-	output := out.String()
-	// Both failures reported in output.
-	assert.Contains(t, output, "Technology plan")
-	assert.Contains(t, output, "Design spec")
-}
-
-func TestPlanner_Phase2_ContextCancel_BeforeParallel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Cancel after 2 calls (requirements + PRD), so context is cancelled before parallel step starts.
-	cancellingExec := &cancellingMockExecutor{
-		cancelAfter: 2,
-		cancel:      cancel,
-	}
-
-	var out bytes.Buffer
-
-	p := NewPlanner(cancellingExec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(ctx)
-	require.Error(t, err)
-
-	output := out.String()
-	assert.Contains(t, output, "Planning aborted at step 2/4")
-}
-
-func TestPlanner_Phase2_SubStepTimings(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	output := out.String()
-	// Sub-step completion lines should contain durations (e.g., "0s" for fast mock).
-	assert.Contains(t, output, "Technology plan")
-	assert.Contains(t, output, "Design spec")
-	assert.Contains(t, output, "0s")
-}
-
-func TestPlanner_Phase2_FromMode_Parallel(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithBrief("brief.md", "I want OAuth2 with Google"),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// Only Phase 2: 1 (PRD) + 2 (parallel) + 1 (analyze) + 1 (generate) = 5
-	require.Equal(t, 5, len(calls))
-
-	// PRD (call 0): no -c (--from mode, fresh conversation).
-	assert.NotContains(t, calls[0].args, "-c", "PRD in --from mode should not have -c")
-
-	// Parallel calls (1,2): no -c.
-	assert.NotContains(t, calls[1].args, "-c", "parallel call should not have -c")
-	assert.NotContains(t, calls[2].args, "-c", "parallel call should not have -c")
-
-	// Analyze tasks (call 3): no -c (fresh conversation).
-	assert.NotContains(t, calls[3].args, "-c", "analyze tasks should not have -c")
-
-	// Generate tasks (call 4): has -c (continues analyze conversation).
-	assert.Contains(t, calls[4].args, "-c", "generate tasks should have -c")
-
-	// PRD prompt should contain the brief.
-	firstPrompt := calls[0].args[len(calls[0].args)-1]
-	assert.Contains(t, firstPrompt, "I want OAuth2 with Google")
-
-	output := out.String()
-	assert.Contains(t, output, "using brief.md as input")
-	assert.Contains(t, output, "Planning complete")
-}
-
-func TestPlanner_Phase2_ContextCancelMidStep(t *testing.T) {
-	// Cancel after requirements prompt + first generation step (PRD).
-	ctx, cancel := context.WithCancel(context.Background())
-
-	cancellingExec := &cancellingMockExecutor{
-		cancelAfter: 2, // cancel after 2nd call (requirements + PRD)
-		cancel:      cancel,
-	}
-
-	var out bytes.Buffer
-
-	p := NewPlanner(cancellingExec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(ctx)
-	require.Error(t, err)
-
-	output := out.String()
-	assert.Contains(t, output, "Planning aborted at step")
-}
-
-// cancellingMockExecutor cancels after N calls.
-type cancellingMockExecutor struct {
-	mu          sync.Mutex
-	callCount   int
-	cancelAfter int
-	cancel      context.CancelFunc
-}
-
-func (m *cancellingMockExecutor) Run(_ context.Context, w io.Writer, _ model.Type, _ ...string) error {
-	m.mu.Lock()
-	m.callCount++
-	count := m.callCount
-	m.mu.Unlock()
-
-	fmt.Fprintln(w, "LLM response")
-
-	if count >= m.cancelAfter {
-		m.cancel()
-	}
-	return nil
-}
-
-// --- Combined tests ---
-
-func TestPlanner_FullPipeline(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("I want auth\nwith JWT sessions\n/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// 1 (requirements prompt) + 2 (user messages) + 5 (generation) = 8
-	assert.Equal(t, 8, len(calls))
-
-	// Requirements prompt (no -c)
-	assert.NotContains(t, calls[0].args, "-c")
-
-	// User messages (with -c)
-	for i := 1; i <= 2; i++ {
-		assert.Contains(t, calls[i].args, "-c")
-	}
-
-	// PRD (call 3): -c
-	assert.Contains(t, calls[3].args, "-c")
-	// Parallel calls (4,5): no -c
-	assert.NotContains(t, calls[4].args, "-c")
-	assert.NotContains(t, calls[5].args, "-c")
-	// Analyze tasks (call 6): no -c (fresh conversation)
-	assert.NotContains(t, calls[6].args, "-c")
-	// Generate tasks (call 7): -c (continues analyze conversation)
-	assert.Contains(t, calls[7].args, "-c")
-
-	output := out.String()
-	assert.Contains(t, output, "Planning session")
-	assert.Contains(t, output, "Gathering requirements")
-	assert.Contains(t, output, "Generating planning documents")
-	assert.Contains(t, output, "Planning complete")
-}
-
-func TestPlanner_WithBrief_SkipsPhase1(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithBrief("requirements.md", "I want OAuth2 with Google"),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// Only Phase 2: 1 (PRD) + 2 (parallel) + 1 (analyze) + 1 (generate) = 5
-	assert.Equal(t, 5, len(calls))
-
-	// First gen step (PRD) should NOT have -c (fresh conversation start).
-	assert.NotContains(t, calls[0].args, "-c")
-
-	// Parallel calls (1,2): no -c.
-	assert.NotContains(t, calls[1].args, "-c")
-	assert.NotContains(t, calls[2].args, "-c")
-
-	// Analyze tasks (call 3): no -c (fresh conversation).
-	assert.NotContains(t, calls[3].args, "-c")
-
-	// Generate tasks (call 4): has -c (continues analyze conversation).
-	assert.Contains(t, calls[4].args, "-c")
-
-	// PRD prompt should contain the brief.
-	firstPrompt := calls[0].args[len(calls[0].args)-1]
-	assert.Contains(t, firstPrompt, "I want OAuth2 with Google")
-
-	output := out.String()
-	assert.Contains(t, output, "using requirements.md as input")
-	assert.Contains(t, output, "Planning complete")
-}
-
-func TestPlanner_WithBrief_NoPhase1Output(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithBrief("brief.md", "some brief"),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	output := out.String()
-	// Should NOT contain Phase 1 artifacts
-	assert.NotContains(t, output, "Gathering requirements")
-	assert.NotContains(t, output, "snap plan>")
-}
-
-func TestPlanner_ExecutorError(t *testing.T) {
-	exec := &mockExecutor{err: fmt.Errorf("provider failed")}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "provider failed")
-}
-
-// --- Resume tests ---
-
-func TestPlanner_WithResume_FirstCallHasCFlag(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("refine tasks\n/done\n")),
-		WithResume(true),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// First call (requirements prompt) should have -c because of resume.
-	require.GreaterOrEqual(t, len(calls), 1)
-	assert.Contains(t, calls[0].args, "-c", "resume mode: first call should have -c")
-
-	output := out.String()
-	assert.Contains(t, output, "Resuming planning")
-}
-
-func TestPlanner_WithoutResume_FirstCallNoCFlag(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-		WithResume(false),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// First call (requirements prompt) should NOT have -c (fresh start).
-	require.GreaterOrEqual(t, len(calls), 1)
-	assert.NotContains(t, calls[0].args, "-c", "fresh mode: first call should not have -c")
-
-	output := out.String()
-	assert.NotContains(t, output, "Resuming planning")
-}
-
-// --- AfterFirstMessage callback tests ---
-
-func TestPlanner_AfterFirstMessage_CalledOnSuccess(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-	var callbackCalled bool
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 		WithAfterFirstMessage(func() error {
-			callbackCalled = true
+			calls++
 			return nil
 		}),
 	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-	assert.True(t, callbackCalled, "afterFirstMessage should be called after first successful message")
+	require.NoError(t, p.Run(context.Background()))
+	assert.Equal(t, 1, calls, "afterFirstMessage must fire exactly once")
 }
 
-func TestPlanner_AfterFirstMessage_NotCalledOnFailure(t *testing.T) {
-	exec := &mockExecutor{err: fmt.Errorf("provider failed")}
+func TestPlanner_OnFirstMessage_PropagatesError(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{fileWriter: fileWriterForArtifacts(tasksDir, briefPath)}
 	var out bytes.Buffer
-	var callbackCalled bool
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "s", tasksDir,
 		WithOutput(&out),
 		WithInput(strings.NewReader("/done\n")),
-		WithAfterFirstMessage(func() error {
-			callbackCalled = true
-			return nil
-		}),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
+		WithAfterFirstMessage(func() error { return errors.New("marker write failed") }),
 	)
-
 	err := p.Run(context.Background())
 	require.Error(t, err)
-	assert.False(t, callbackCalled, "afterFirstMessage should NOT be called when first message fails")
+	assert.Contains(t, err.Error(), "marker write failed")
 }
 
-func TestPlanner_AfterFirstMessage_CalledOnceOnly(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-	callCount := 0
+// --- Critic non-fatal ---
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("msg1\nmsg2\n/done\n")),
-		WithAfterFirstMessage(func() error {
-			callCount++
-			return nil
-		}),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, 1, callCount, "afterFirstMessage should be called exactly once")
-}
-
-func TestPlanner_AfterFirstMessage_WithBrief(t *testing.T) {
-	exec := &mockExecutor{}
-	var out bytes.Buffer
-	var callbackCalled bool
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithBrief("brief.md", "some brief"),
-		WithAfterFirstMessage(func() error {
-			callbackCalled = true
-			return nil
-		}),
-	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-	assert.True(t, callbackCalled, "afterFirstMessage should be called in --from mode too")
-}
-
-// --- Interactive (tap) path tests ---
-//
-// These tests use tap.SetTermIO (global state) so they must NOT use t.Parallel().
-
-// emitString types each rune as a keypress via the mock readable.
-func emitString(in *tap.MockReadable, s string) {
-	for _, ch := range s {
-		str := string(ch)
-		in.EmitKeypress(str, tap.Key{Name: str, Rune: ch})
+func TestPlanner_CriticFailureIsNonFatal(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	exec := &recordingExecutor{
+		fileWriter:     fileWriterForArtifacts(tasksDir, briefPath),
+		failOnContains: map[string]error{"strict reviewer": errors.New("haiku unavailable")},
 	}
-}
-
-// emitLine types a string followed by Enter.
-func emitLine(in *tap.MockReadable, s string) {
-	emitString(in, s)
-	in.EmitKeypress("", tap.Key{Name: "return"})
-}
-
-func TestPlanner_Interactive_UserMessageThenDone(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "hello")
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "/done")
-	}()
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// 1 (requirements prompt) + 1 (user msg "hello") + 5 (generation) = 7
-	assert.Equal(t, 7, len(calls))
-	// Requirements prompt (no -c)
-	assert.NotContains(t, calls[0].args, "-c")
-	// User message with -c, last arg is "hello"
-	assert.Contains(t, calls[1].args, "-c")
-	assert.Equal(t, "hello", calls[1].args[len(calls[1].args)-1])
-}
-
-func TestPlanner_Interactive_DoneImmediately(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "/done")
-	}()
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// 1 (requirements prompt) + 0 (no user msgs) + 5 (generation) = 6
-	assert.Equal(t, 6, len(calls))
-}
-
-func TestPlanner_Interactive_DoneCaseInsensitive(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		emitLine(in, "/DONE")
-	}()
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// 1 (requirements prompt) + 5 (generation) = 6
-	assert.Equal(t, 6, len(calls))
-}
-
-func TestPlanner_Interactive_CtrlC_Aborts(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		in.EmitKeypress("\x03", tap.Key{Name: "c", Ctrl: true})
-	}()
-
-	err := p.Run(context.Background())
-	require.ErrorIs(t, err, context.Canceled)
-
-	output := buf.String()
-	assert.Contains(t, output, "Planning aborted")
-}
-
-func TestPlanner_Interactive_Escape_Aborts(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		in.EmitKeypress("", tap.Key{Name: "escape"})
-	}()
-
-	err := p.Run(context.Background())
-	require.ErrorIs(t, err, context.Canceled)
-
-	output := buf.String()
-	assert.Contains(t, output, "Planning aborted")
-}
-
-func TestPlanner_Interactive_ContextCancel(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		cancel()
-	}()
-
-	err := p.Run(ctx)
-	require.ErrorIs(t, err, context.Canceled)
-
-	output := buf.String()
-	assert.Contains(t, output, "Planning aborted")
-}
-
-func TestPlanner_Interactive_MultipleMessages(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "msg1")
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "msg2")
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "/done")
-	}()
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// 1 (requirements) + 2 (user msgs) + 5 (generation) = 8
-	assert.Equal(t, 8, len(calls))
-	// User messages have -c
-	assert.Contains(t, calls[1].args, "-c")
-	assert.Equal(t, "msg1", calls[1].args[len(calls[1].args)-1])
-	assert.Contains(t, calls[2].args, "-c")
-	assert.Equal(t, "msg2", calls[2].args[len(calls[2].args)-1])
-}
-
-func TestPlanner_Phase2_PreambleInPrompts(t *testing.T) {
-	exec := &mockExecutor{}
 	var out bytes.Buffer
 
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
+	p := NewPlanner(exec, "s", tasksDir,
 		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
+		WithBrief("brief.md", "x"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
 	)
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// Requirements prompt + 5 generation calls = 6 total.
-	require.Equal(t, 6, len(calls))
-
-	// PRD (1), parallel TECH (2), parallel DESIGN (3): all have preamble.
-	for _, i := range []int{1, 2, 3} {
-		prompt := calls[i].args[len(calls[i].args)-1]
-		assert.Contains(t, prompt, "simplest solution",
-			"Phase 2 call %d prompt should contain preamble text", i)
-	}
-
-	// Analyze tasks (4): has preamble (via RenderAnalyzeTasksPrompt).
-	prompt4 := calls[4].args[len(calls[4].args)-1]
-	assert.Contains(t, prompt4, "simplest solution", "analyze tasks prompt should contain preamble")
-
-	// Generate tasks (5): has preamble (via RenderGenerateTasksPrompt).
-	prompt5 := calls[5].args[len(calls[5].args)-1]
-	assert.Contains(t, prompt5, "simplest solution", "generate tasks prompt should contain preamble")
+	require.NoError(t, p.Run(context.Background()), "critic failure must not abort planning")
+	assert.FileExists(t, filepath.Join(tasksDir, "TASK1.md"))
+	assert.Contains(t, out.String(), "critic skipped")
 }
 
-func TestPlanner_Phase2_ContextCancel_DuringAnalyze(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+// --- Helper-level tests ---
 
-	// Cancel after 4 calls: requirements + PRD + 2 parallel.
-	// This fires just as step 3 (analyze) would start.
-	cancellingExec := &cancellingMockExecutor{
-		cancelAfter: 4,
-		cancel:      cancel,
-	}
+func TestCountTasksInTasksMd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "TASKS.md")
+	require.NoError(t, os.WriteFile(path, []byte(`
+## G. Task list
 
-	var out bytes.Buffer
-
-	p := NewPlanner(cancellingExec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(ctx)
-	require.Error(t, err)
-
-	output := out.String()
-	assert.Contains(t, output, "Planning aborted at step 3/4")
+| # | File     | Outcome | Grounded |
+| - | -------- | ------- | -------- |
+| 1 | TASK1.md | a       | x        |
+| 2 | TASK2.md | b       | y        |
+| 3 | TASK3.md | c       | z        |
+`), 0o600))
+	assert.Equal(t, 3, countTasksInTasksMd(path))
 }
 
-func TestPlanner_Phase2_ContextCancel_DuringGenerate(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Cancel after 5 calls: requirements + PRD + 2 parallel + analyze.
-	// This fires just as step 4 (generate) would start.
-	cancellingExec := &cancellingMockExecutor{
-		cancelAfter: 5,
-		cancel:      cancel,
+func TestListTaskFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"TASK1.md", "TASK2.md", "TASKS.md", "PRD.md", "scratch.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(""), 0o600))
 	}
-
-	var out bytes.Buffer
-
-	p := NewPlanner(cancellingExec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&out),
-		WithInput(strings.NewReader("/done\n")),
-	)
-
-	err := p.Run(ctx)
-	require.Error(t, err)
-
-	output := out.String()
-	assert.Contains(t, output, "Planning aborted at step 4/4")
-}
-
-func TestPlanner_Interactive_WithResume(t *testing.T) {
-	in := tap.NewMockReadable()
-	out := tap.NewMockWritable()
-	tap.SetTermIO(in, out)
-	defer tap.SetTermIO(nil, nil)
-
-	exec := &mockExecutor{}
-	var buf bytes.Buffer
-
-	p := NewPlanner(exec, "auth", ".snap/sessions/auth/tasks",
-		WithOutput(&buf),
-		WithInteractive(true),
-		WithResume(true),
-	)
-
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "refine")
-		time.Sleep(200 * time.Millisecond)
-		emitLine(in, "/done")
-	}()
-
-	err := p.Run(context.Background())
-	require.NoError(t, err)
-
-	calls := exec.getCalls()
-	// First executor call (requirements prompt) has -c (resume mode)
-	require.GreaterOrEqual(t, len(calls), 1)
-	assert.Contains(t, calls[0].args, "-c", "resume mode: first call should have -c")
-
-	output := buf.String()
-	assert.Contains(t, output, "Resuming planning")
+	got := listTaskFiles(dir)
+	assert.ElementsMatch(t, []string{"TASK1.md", "TASK2.md"}, got)
 }
