@@ -109,67 +109,53 @@ func createPRFlow(ctx context.Context, cfg Config, currentBranch string) (hasPR 
 		return true, nil
 	}
 
-	// Generate PR title and body via LLM
-	fmt.Fprint(cfg.Output, ui.Step("Creating pull request..."))
-	prStart := time.Now()
-
-	title, body := generatePR(ctx, cfg, defaultBranch)
-
-	// Create PR
-	prURL, err := CreatePR(ctx, title, body)
-	if err != nil {
-		fmt.Fprint(cfg.Output, ui.Error(fmt.Sprintf("PR creation failed: %s", err)))
-		return false, fmt.Errorf("PR creation failed: %w", err)
-	}
-
-	// Extract PR number from URL
-	prNumber := extractPRNumber(prURL)
-	fmt.Fprint(cfg.Output, ui.StepComplete(fmt.Sprintf("PR %s created: %s", prNumber, prURL), time.Since(prStart)))
-
-	return true, nil
-}
-
-func generatePR(ctx context.Context, cfg Config, defaultBranch string) (title, body string) {
 	if cfg.Executor == nil {
-		return "Update", ""
+		return false, fmt.Errorf("no executor configured for PR creation")
 	}
 
-	// Read PRD content
+	// Read PRD content (best-effort)
 	var prdContent string
 	if cfg.PRDPath != "" {
-		data, readErr := os.ReadFile(cfg.PRDPath)
-		if readErr == nil {
+		if data, readErr := os.ReadFile(cfg.PRDPath); readErr == nil {
 			prdContent = string(data)
 		}
 	}
 
-	// Get diff stat and commit messages (best-effort, ignore errors).
+	// Gather commit messages and diff stat (best-effort)
 	diffStat, _ := DiffStat(ctx, defaultBranch)             //nolint:errcheck // best-effort diff stat
 	commitMessages, _ := CommitMessages(ctx, defaultBranch) //nolint:errcheck // best-effort commit log
 
-	// Render prompt
 	prompt, err := prompts.PR(prompts.PRData{
 		PRDContent:     prdContent,
 		CommitMessages: commitMessages,
 		DiffStat:       diffStat,
 	})
 	if err != nil {
-		return "Update", ""
+		return false, fmt.Errorf("failed to render PR prompt: %w", err)
 	}
 
-	// Call LLM
-	var buf strings.Builder
-	if err := cfg.Executor.Run(ctx, &buf, model.Fast, prompt); err != nil {
-		return "Update", ""
+	fmt.Fprint(cfg.Output, ui.Step("Creating pull request..."))
+	prStart := time.Now()
+
+	// LLM agent drafts title+body and runs `gh pr create` itself.
+	if err := cfg.Executor.Run(ctx, cfg.Output, model.Fast, prompt); err != nil {
+		fmt.Fprint(cfg.Output, ui.Error(fmt.Sprintf("PR creation failed: %s", err)))
+		return false, fmt.Errorf("PR creation failed: %w", err)
 	}
 
-	// Parse LLM output
-	title, body, parseErr := parsePROutput(buf.String())
-	if parseErr != nil {
-		return "Update", ""
+	// Verify the PR was actually created.
+	exists, prURL, err := PRExists(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to verify PR creation: %w", err)
+	}
+	if !exists {
+		fmt.Fprint(cfg.Output, ui.Error("PR creation failed: agent did not create a pull request"))
+		return false, fmt.Errorf("PR creation failed: agent did not create a pull request")
 	}
 
-	return title, body
+	prNumber := extractPRNumber(prURL)
+	fmt.Fprint(cfg.Output, ui.StepComplete(fmt.Sprintf("PR %s created: %s", prNumber, prURL), time.Since(prStart)))
+	return true, nil
 }
 
 // monitorCI detects relevant CI workflows and polls check status until completion.

@@ -20,69 +20,170 @@ import (
 )
 
 // mockExecutor is a test double for the LLM executor.
+// On PR-creation prompts, it simulates the real agent by invoking `gh pr create`
+// (which is mocked via PATH). On other prompts, it streams the configured output.
 type mockExecutor struct {
 	output string
 	err    error
 }
 
-func (m *mockExecutor) Run(_ context.Context, w io.Writer, _ model.Type, _ ...string) error {
+func (m *mockExecutor) Run(ctx context.Context, w io.Writer, _ model.Type, args ...string) error {
 	if m.err != nil {
 		return m.err
+	}
+	if isPRPrompt(args) {
+		return runMockGHCreate(ctx, "Add feature", "Body")
 	}
 	_, err := fmt.Fprint(w, m.output)
 	return err
 }
 
-// capturingExecutor captures the prompt sent to the executor.
+// capturingExecutor captures the prompt sent to the executor and, on PR prompts,
+// invokes the mocked `gh pr create` so the post-LLM PRExists check succeeds.
 type capturingExecutor struct {
 	capturedPrompt string
 	output         string
 }
 
-func (m *capturingExecutor) Run(_ context.Context, w io.Writer, _ model.Type, args ...string) error {
+func (m *capturingExecutor) Run(ctx context.Context, w io.Writer, _ model.Type, args ...string) error {
 	if len(args) > 0 {
 		m.capturedPrompt = args[0]
+	}
+	if isPRPrompt(args) {
+		return runMockGHCreate(ctx, "Add feature", "Body")
 	}
 	_, err := fmt.Fprint(w, m.output)
 	return err
 }
 
+// isPRPrompt returns true if the executor was called with the PR-creation prompt.
+func isPRPrompt(args []string) bool {
+	return len(args) > 0 && strings.Contains(args[0], "GitHub pull request")
+}
+
+// runMockGHCreate invokes the mocked `gh pr create`. The gh mock script is
+// expected on PATH and is responsible for writing the marker that flips
+// `gh pr view` to "PR exists". Title is parameterised so tests can vary it; body
+// is fixed because no test asserts on it.
+//
+//nolint:unparam // body is parameterised for clarity even though tests use "Body"
+func runMockGHCreate(ctx context.Context, title, body string) error {
+	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--title", title, "--body", body)
+	return cmd.Run()
+}
+
 // mockGHMulti creates a gh script that handles repo view, pr view, and pr create subcommands.
-// defaultBranch: returned by "gh repo view"; prViewJSON: returned by "gh pr view" (empty string = exit 1);
-// prCreateURL: returned by "gh pr create" (empty string = exit 1 with error).
+// defaultBranch: returned by "gh repo view".
+// prViewJSON: returned by "gh pr view" before any "pr create" call (empty string = exit 1).
+// prCreateURL: returned by "gh pr create" (empty string = exit 1 with error). After a successful
+// "pr create", "pr view" flips to returning a JSON document with state OPEN and that URL — so
+// the post-LLM PRExists check sees the freshly-created PR.
 //
 //nolint:unparam // defaultBranch is parameterized for readability even though tests use "main"
 func mockGHMulti(t *testing.T, defaultBranch, prViewJSON, prCreateURL string) {
 	t.Helper()
+	writeGHScript(t, ghScriptOptions{defaultBranch: defaultBranch, prViewJSON: prViewJSON, prCreateURL: prCreateURL})
+}
+
+// ghScriptOptions configures the gh mock script written by writeGHScript.
+type ghScriptOptions struct {
+	defaultBranch   string
+	prViewJSON      string
+	prCreateURL     string
+	checksJSON      string   // single static "pr checks" response
+	checksResponses []string // ordered "pr checks" responses (counter-driven)
+	failedRunID     string   // "run list --status failure" response
+	failedLogs      string   // "run view <id> --log-failed" response
+}
+
+// writeGHScript emits a stateful gh mock script. "pr create" writes a marker file;
+// subsequent "pr view" calls return a JSON document built from prCreateURL so the
+// post-LLM PRExists check sees the newly-created PR.
+func writeGHScript(t *testing.T, opts ghScriptOptions) {
+	t.Helper()
 	binDir := t.TempDir()
+	markerFile := filepath.Join(binDir, "pr_marker")
+	counterFile := filepath.Join(binDir, "checks_counter")
+	if len(opts.checksResponses) > 0 {
+		require.NoError(t, os.WriteFile(counterFile, []byte("0"), 0o600))
+	}
 
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\n")
 	script.WriteString("case \"$1 $2\" in\n")
 
 	// gh repo view
-	script.WriteString("  \"repo view\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '%s'\n", defaultBranch)
-	script.WriteString("    ;;\n")
+	if opts.defaultBranch != "" {
+		script.WriteString("  \"repo view\")\n")
+		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", opts.defaultBranch)
+		script.WriteString("    ;;\n")
+	}
 
-	// gh pr view
+	// gh pr view — flips after "pr create" writes the marker
 	script.WriteString("  \"pr view\")\n")
-	if prViewJSON == "" {
+	if opts.prCreateURL != "" {
+		fmt.Fprintf(&script, "    if [ -f %s ]; then\n", markerFile)
+		fmt.Fprintf(&script, "      printf '%%s' '{\"state\":\"OPEN\",\"url\":\"%s\"}'\n", opts.prCreateURL)
+		script.WriteString("      exit 0\n")
+		script.WriteString("    fi\n")
+	}
+	if opts.prViewJSON == "" {
 		script.WriteString("    exit 1\n")
 	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prViewJSON)
+		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", opts.prViewJSON)
 	}
 	script.WriteString("    ;;\n")
 
-	// gh pr create
+	// gh pr create — writes marker on success
 	script.WriteString("  \"pr create\")\n")
-	if prCreateURL == "" {
+	if opts.prCreateURL == "" {
 		script.WriteString("    echo 'creation failed' >&2\n")
 		script.WriteString("    exit 1\n")
 	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prCreateURL)
+		fmt.Fprintf(&script, "    : > %s\n", markerFile)
+		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", opts.prCreateURL)
 	}
 	script.WriteString("    ;;\n")
+
+	// gh pr checks — single static response
+	if opts.checksJSON != "" {
+		script.WriteString("  \"pr checks\")\n")
+		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", opts.checksJSON)
+		script.WriteString("    ;;\n")
+	}
+
+	// gh pr checks — counter-driven sequence
+	if len(opts.checksResponses) > 0 {
+		script.WriteString("  \"pr checks\")\n")
+		fmt.Fprintf(&script, "    COUNT=$(cat %s)\n", counterFile)
+		script.WriteString("    COUNT=$((COUNT + 1))\n")
+		fmt.Fprintf(&script, "    printf '%%s' \"$COUNT\" > %s\n", counterFile)
+		script.WriteString("    case $COUNT in\n")
+		for i, resp := range opts.checksResponses {
+			fmt.Fprintf(&script, "      %d)\n", i+1)
+			fmt.Fprintf(&script, "        printf '%%s' '%s'\n", resp)
+			script.WriteString("        ;;\n")
+		}
+		script.WriteString("      *)\n")
+		fmt.Fprintf(&script, "        printf '%%s' '%s'\n", opts.checksResponses[len(opts.checksResponses)-1])
+		script.WriteString("        ;;\n")
+		script.WriteString("    esac\n")
+		script.WriteString("    ;;\n")
+	}
+
+	// gh run list (FailedRunID)
+	if opts.failedRunID != "" {
+		script.WriteString("  \"run list\")\n")
+		fmt.Fprintf(&script, "    printf '%%s' '[{\"databaseId\":%s}]'\n", opts.failedRunID)
+		script.WriteString("    ;;\n")
+	}
+
+	// gh run view (FailureLogs)
+	if opts.failedLogs != "" {
+		script.WriteString("  \"run view\")\n")
+		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", opts.failedLogs)
+		script.WriteString("    ;;\n")
+	}
 
 	script.WriteString("  *)\n")
 	script.WriteString("    echo \"unexpected gh call: $*\" >&2\n")
@@ -353,7 +454,7 @@ func TestRun_PRCreation_PassesCommitsAndAntiPatterns(t *testing.T) {
 
 	mockGHMulti(t, "main", "", "https://github.com/user/repo/pull/1")
 
-	executor := &capturingExecutor{output: "Add parser\n\n### What\n\n- impl"}
+	executor := &capturingExecutor{}
 
 	var buf bytes.Buffer
 	cfg := Config{
@@ -371,6 +472,7 @@ func TestRun_PRCreation_PassesCommitsAndAntiPatterns(t *testing.T) {
 	assert.Contains(t, executor.capturedPrompt, "Anti-patterns")
 	assert.Contains(t, executor.capturedPrompt, "Do not quote the PRD")
 	assert.Contains(t, executor.capturedPrompt, "50–72")
+	assert.Contains(t, executor.capturedPrompt, "gh pr create")
 }
 
 func TestRun_PRCreation_Failed(t *testing.T) {
@@ -414,7 +516,7 @@ func TestRun_PRCreation_LLMFails(t *testing.T) {
 	gitCmd(t, dir, "commit", "-m", "add feature")
 	chdir(t, dir)
 
-	// Mock gh: default branch "main", no existing PR, PR create succeeds
+	// Mock gh: default branch "main", no existing PR, PR create would succeed if invoked
 	mockGHMulti(t, "main", "", "https://github.com/user/repo/pull/77")
 
 	var buf bytes.Buffer
@@ -425,13 +527,12 @@ func TestRun_PRCreation_LLMFails(t *testing.T) {
 		Executor:  &mockExecutor{err: fmt.Errorf("LLM timeout")},
 	}
 
+	// Agent failure surfaces directly: there is no fallback because the agent owns
+	// drafting and creating the PR in a single step.
 	err := Run(context.Background(), cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	// PR should still be created with fallback title "Update" when LLM fails
-	assert.Contains(t, output, "Creating pull request...")
-	assert.Contains(t, output, "PR #77 created: https://github.com/user/repo/pull/77")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PR creation failed")
+	assert.Contains(t, err.Error(), "LLM timeout")
 }
 
 // gitOutput runs a git command in a directory and returns combined output.
@@ -546,125 +647,28 @@ func addWorkflowFile(t *testing.T, repoRoot string) {
 	require.NoError(t, os.WriteFile(filepath.Join(wfDir, "ci.yml"), []byte(content), 0o600))
 }
 
-// mockGHWithCI creates a gh mock script that handles repo view, pr view, pr create, and pr checks.
-// checksJSON is returned for "gh pr checks" calls.
+// mockGHWithCI is a thin wrapper around writeGHScript for tests that need a single static
+// "pr checks" response.
 func mockGHWithCI(t *testing.T, defaultBranch, prViewJSON, prCreateURL, checksJSON string) {
 	t.Helper()
-	binDir := t.TempDir()
-
-	var script strings.Builder
-	script.WriteString("#!/bin/sh\n")
-	script.WriteString("case \"$1 $2\" in\n")
-
-	// gh repo view
-	script.WriteString("  \"repo view\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '%s'\n", defaultBranch)
-	script.WriteString("    ;;\n")
-
-	// gh pr view
-	script.WriteString("  \"pr view\")\n")
-	if prViewJSON == "" {
-		script.WriteString("    exit 1\n")
-	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prViewJSON)
-	}
-	script.WriteString("    ;;\n")
-
-	// gh pr create
-	script.WriteString("  \"pr create\")\n")
-	if prCreateURL == "" {
-		script.WriteString("    echo 'creation failed' >&2\n")
-		script.WriteString("    exit 1\n")
-	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prCreateURL)
-	}
-	script.WriteString("    ;;\n")
-
-	// gh pr checks
-	script.WriteString("  \"pr checks\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '%s'\n", checksJSON)
-	script.WriteString("    ;;\n")
-
-	script.WriteString("  *)\n")
-	script.WriteString("    echo \"unexpected gh call: $*\" >&2\n")
-	script.WriteString("    exit 99\n")
-	script.WriteString("    ;;\n")
-	script.WriteString("esac\n")
-
-	ghPath := filepath.Join(binDir, "gh")
-	require.NoError(t, os.WriteFile(ghPath, []byte(script.String()), 0o755)) //nolint:gosec // test script needs execute permission
-
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath)
+	writeGHScript(t, ghScriptOptions{
+		defaultBranch: defaultBranch,
+		prViewJSON:    prViewJSON,
+		prCreateURL:   prCreateURL,
+		checksJSON:    checksJSON,
+	})
 }
 
-// mockGHWithCIStateful creates a gh mock that returns different pr checks results on successive calls.
-// Uses a counter file to track call number.
+// mockGHWithCIStateful is a thin wrapper around writeGHScript for tests that need the
+// "pr checks" response to change on successive calls.
 func mockGHWithCIStateful(t *testing.T, defaultBranch, prViewJSON, prCreateURL string, checksResponses []string) {
 	t.Helper()
-	binDir := t.TempDir()
-	counterFile := filepath.Join(binDir, "counter")
-	require.NoError(t, os.WriteFile(counterFile, []byte("0"), 0o600))
-
-	var script strings.Builder
-	script.WriteString("#!/bin/sh\n")
-	script.WriteString("case \"$1 $2\" in\n")
-
-	// gh repo view
-	script.WriteString("  \"repo view\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '%s'\n", defaultBranch)
-	script.WriteString("    ;;\n")
-
-	// gh pr view
-	script.WriteString("  \"pr view\")\n")
-	if prViewJSON == "" {
-		script.WriteString("    exit 1\n")
-	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prViewJSON)
-	}
-	script.WriteString("    ;;\n")
-
-	// gh pr create
-	script.WriteString("  \"pr create\")\n")
-	if prCreateURL == "" {
-		script.WriteString("    echo 'creation failed' >&2\n")
-		script.WriteString("    exit 1\n")
-	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prCreateURL)
-	}
-	script.WriteString("    ;;\n")
-
-	// gh pr checks — stateful
-	script.WriteString("  \"pr checks\")\n")
-	fmt.Fprintf(&script, "    COUNT=$(cat %s)\n", counterFile)
-	script.WriteString("    COUNT=$((COUNT + 1))\n")
-	fmt.Fprintf(&script, "    printf '%%s' \"$COUNT\" > %s\n", counterFile)
-	script.WriteString("    case $COUNT in\n")
-	for i, resp := range checksResponses {
-		fmt.Fprintf(&script, "      %d)\n", i+1)
-		fmt.Fprintf(&script, "        printf '%%s' '%s'\n", resp)
-		script.WriteString("        ;;\n")
-	}
-	// After all responses exhausted, return the last one
-	script.WriteString("      *)\n")
-	if len(checksResponses) > 0 {
-		fmt.Fprintf(&script, "        printf '%%s' '%s'\n", checksResponses[len(checksResponses)-1])
-	}
-	script.WriteString("        ;;\n")
-	script.WriteString("    esac\n")
-	script.WriteString("    ;;\n")
-
-	script.WriteString("  *)\n")
-	script.WriteString("    echo \"unexpected gh call: $*\" >&2\n")
-	script.WriteString("    exit 99\n")
-	script.WriteString("    ;;\n")
-	script.WriteString("esac\n")
-
-	ghPath := filepath.Join(binDir, "gh")
-	require.NoError(t, os.WriteFile(ghPath, []byte(script.String()), 0o755)) //nolint:gosec // test script needs execute permission
-
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath)
+	writeGHScript(t, ghScriptOptions{
+		defaultBranch:   defaultBranch,
+		prViewJSON:      prViewJSON,
+		prCreateURL:     prCreateURL,
+		checksResponses: checksResponses,
+	})
 }
 
 func TestRun_CI_AllGreen(t *testing.T) {
@@ -783,108 +787,37 @@ func TestRun_NoWorkflows(t *testing.T) {
 	assert.NotContains(t, output, "Waiting for CI checks...")
 }
 
-// mockGHWithCIFix creates a gh mock that handles all commands needed for the fix loop.
-// checksResponses are returned in order for "pr checks" calls.
-// failedRunID is returned by "run list --status failure".
-// failedLogs is returned by "run view <id> --log-failed".
+// mockGHWithCIFix is a thin wrapper around writeGHScript for tests that exercise the CI fix loop
+// (counter-driven "pr checks" plus "run list" / "run view").
 //
 //nolint:unparam // defaultBranch is parameterized for readability even though tests use "main"
 func mockGHWithCIFix(t *testing.T, defaultBranch, prViewJSON, prCreateURL string, checksResponses []string, failedRunID, failedLogs string) {
 	t.Helper()
-	binDir := t.TempDir()
-	counterFile := filepath.Join(binDir, "counter")
-	require.NoError(t, os.WriteFile(counterFile, []byte("0"), 0o600))
-
-	var script strings.Builder
-	script.WriteString("#!/bin/sh\n")
-	script.WriteString("case \"$1 $2\" in\n")
-
-	// gh repo view
-	script.WriteString("  \"repo view\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '%s'\n", defaultBranch)
-	script.WriteString("    ;;\n")
-
-	// gh pr view
-	script.WriteString("  \"pr view\")\n")
-	if prViewJSON == "" {
-		script.WriteString("    exit 1\n")
-	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prViewJSON)
-	}
-	script.WriteString("    ;;\n")
-
-	// gh pr create
-	script.WriteString("  \"pr create\")\n")
-	if prCreateURL == "" {
-		script.WriteString("    echo 'creation failed' >&2\n")
-		script.WriteString("    exit 1\n")
-	} else {
-		fmt.Fprintf(&script, "    printf '%%s' '%s'\n", prCreateURL)
-	}
-	script.WriteString("    ;;\n")
-
-	// gh pr checks — stateful
-	script.WriteString("  \"pr checks\")\n")
-	fmt.Fprintf(&script, "    COUNT=$(cat %s)\n", counterFile)
-	script.WriteString("    COUNT=$((COUNT + 1))\n")
-	fmt.Fprintf(&script, "    printf '%%s' \"$COUNT\" > %s\n", counterFile)
-	script.WriteString("    case $COUNT in\n")
-	for i, resp := range checksResponses {
-		fmt.Fprintf(&script, "      %d)\n", i+1)
-		fmt.Fprintf(&script, "        printf '%%s' '%s'\n", resp)
-		script.WriteString("        ;;\n")
-	}
-	script.WriteString("      *)\n")
-	if len(checksResponses) > 0 {
-		fmt.Fprintf(&script, "        printf '%%s' '%s'\n", checksResponses[len(checksResponses)-1])
-	}
-	script.WriteString("        ;;\n")
-	script.WriteString("    esac\n")
-	script.WriteString("    ;;\n")
-
-	// gh run list (for FailedRunID)
-	script.WriteString("  \"run list\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '[{\"databaseId\":%s}]'\n", failedRunID)
-	script.WriteString("    ;;\n")
-
-	// gh run view (for FailureLogs)
-	script.WriteString("  \"run view\")\n")
-	fmt.Fprintf(&script, "    printf '%%s' '%s'\n", failedLogs)
-	script.WriteString("    ;;\n")
-
-	script.WriteString("  *)\n")
-	script.WriteString("    echo \"unexpected gh call: $*\" >&2\n")
-	script.WriteString("    exit 99\n")
-	script.WriteString("    ;;\n")
-	script.WriteString("esac\n")
-
-	ghPath := filepath.Join(binDir, "gh")
-	require.NoError(t, os.WriteFile(ghPath, []byte(script.String()), 0o755)) //nolint:gosec // test script needs execute permission
-
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath)
+	writeGHScript(t, ghScriptOptions{
+		defaultBranch:   defaultBranch,
+		prViewJSON:      prViewJSON,
+		prCreateURL:     prCreateURL,
+		checksResponses: checksResponses,
+		failedRunID:     failedRunID,
+		failedLogs:      failedLogs,
+	})
 }
 
-// fixLoopExecutor writes a file on each call (simulating LLM fix) so git has something to commit.
+// fixLoopExecutor simulates the LLM agent during the CI fix loop. On the first call (PR-creation
+// prompt) it invokes the mocked `gh pr create` so the post-LLM PRExists check sees the new PR.
+// On subsequent calls (CI fix prompts) it writes a file so git has something to commit.
 type fixLoopExecutor struct {
-	dir      string
-	callNum  int
-	prOutput string // output for PR generation (first call)
+	dir     string
+	callNum int
 }
 
-func (m *fixLoopExecutor) Run(_ context.Context, w io.Writer, _ model.Type, args ...string) error {
+func (m *fixLoopExecutor) Run(ctx context.Context, _ io.Writer, _ model.Type, args ...string) error {
 	m.callNum++
-	// Check if this is a PR prompt or a CI fix prompt
-	if len(args) > 0 && strings.Contains(args[0], "pull request") {
-		_, err := fmt.Fprint(w, m.prOutput)
-		return err
+	if isPRPrompt(args) {
+		return runMockGHCreate(ctx, "Fix lint", "Body")
 	}
-	// CI fix call — create a file to simulate a fix
 	fileName := filepath.Join(m.dir, fmt.Sprintf("fix-%d.txt", m.callNum))
-	if err := os.WriteFile(fileName, []byte(fmt.Sprintf("fix %d", m.callNum)), 0o600); err != nil {
-		return err
-	}
-	return nil
+	return os.WriteFile(fileName, []byte(fmt.Sprintf("fix %d", m.callNum)), 0o600)
 }
 
 func TestRun_CIFix_SuccessOnSecondAttempt(t *testing.T) {
@@ -912,7 +845,7 @@ func TestRun_CIFix_SuccessOnSecondAttempt(t *testing.T) {
 		"12345", "Error: unused variable on line 10",
 	)
 
-	executor := &fixLoopExecutor{dir: dir, prOutput: "Fix lint\n\nFixed the lint issue."}
+	executor := &fixLoopExecutor{dir: dir}
 
 	var buf bytes.Buffer
 	cfg := Config{
@@ -963,7 +896,7 @@ func TestRun_CIFix_MaxRetriesExhausted(t *testing.T) {
 		responses, "12345", "Error: persistent issue",
 	)
 
-	executor := &fixLoopExecutor{dir: dir, prOutput: "Fix\n\nBody."}
+	executor := &fixLoopExecutor{dir: dir}
 
 	var buf bytes.Buffer
 	cfg := Config{
@@ -1011,7 +944,7 @@ func TestRun_CIFix_MultipleFailing(t *testing.T) {
 		"12345", "Multiple errors",
 	)
 
-	executor := &fixLoopExecutor{dir: dir, prOutput: "Fix\n\nBody."}
+	executor := &fixLoopExecutor{dir: dir}
 
 	var buf bytes.Buffer
 	cfg := Config{
@@ -1047,10 +980,10 @@ func TestRun_CIFix_LogFetchFailed(t *testing.T) {
 
 	chdir(t, dir)
 
-	// Mock where run view fails
+	// Mock where run view fails. pr view flips after pr create writes the marker so
+	// the post-LLM PRExists check sees the new PR and the flow proceeds to CI monitoring.
 	binDir := t.TempDir()
-	counterFile := filepath.Join(binDir, "counter")
-	require.NoError(t, os.WriteFile(counterFile, []byte("0"), 0o600))
+	markerFile := filepath.Join(binDir, "pr_marker")
 
 	script := fmt.Sprintf(`#!/bin/sh
 case "$1 $2" in
@@ -1058,9 +991,14 @@ case "$1 $2" in
     printf '%%s' 'main'
     ;;
   "pr view")
+    if [ -f %s ]; then
+      printf '%%s' '{"state":"OPEN","url":"https://github.com/user/repo/pull/63"}'
+      exit 0
+    fi
     exit 1
     ;;
   "pr create")
+    : > %s
     printf '%%s' 'https://github.com/user/repo/pull/63'
     ;;
   "pr checks")
@@ -1078,7 +1016,7 @@ case "$1 $2" in
     exit 99
     ;;
 esac
-`)
+`, markerFile, markerFile)
 	ghPath := filepath.Join(binDir, "gh")
 	require.NoError(t, os.WriteFile(ghPath, []byte(script), 0o755)) //nolint:gosec // test script
 	origPath := os.Getenv("PATH")
@@ -1123,7 +1061,7 @@ func TestRun_CIFix_PushAfterFixFailed(t *testing.T) {
 	)
 
 	// Use an executor that removes the remote after creating the fix file
-	executor := &pushFailExecutor{dir: dir, prOutput: "Fix\n\nBody."}
+	executor := &pushFailExecutor{dir: dir}
 
 	var buf bytes.Buffer
 	cfg := Config{
@@ -1141,17 +1079,17 @@ func TestRun_CIFix_PushAfterFixFailed(t *testing.T) {
 }
 
 // pushFailExecutor creates a fix file and then sabotages the git remote.
+// On the PR-creation prompt it invokes the mocked `gh pr create` so the post-LLM
+// PRExists check sees the new PR.
 type pushFailExecutor struct {
-	dir      string
-	callNum  int
-	prOutput string
+	dir     string
+	callNum int
 }
 
-func (m *pushFailExecutor) Run(ctx context.Context, w io.Writer, _ model.Type, args ...string) error {
+func (m *pushFailExecutor) Run(ctx context.Context, _ io.Writer, _ model.Type, args ...string) error {
 	m.callNum++
-	if len(args) > 0 && strings.Contains(args[0], "pull request") {
-		_, err := fmt.Fprint(w, m.prOutput)
-		return err
+	if isPRPrompt(args) {
+		return runMockGHCreate(ctx, "Fix", "Body")
 	}
 	// Create a fix file
 	fileName := filepath.Join(m.dir, fmt.Sprintf("fix-%d.txt", m.callNum))
@@ -1240,7 +1178,7 @@ func TestRun_CIFix_LogsNotWrittenToDisk(t *testing.T) {
 		"12345", sentinel,
 	)
 
-	executor := &fixLoopExecutor{dir: dir, prOutput: "Fix\n\nBody."}
+	executor := &fixLoopExecutor{dir: dir}
 
 	var buf bytes.Buffer
 	cfg := Config{

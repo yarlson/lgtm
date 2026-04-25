@@ -44,8 +44,8 @@ postrun.Run(ctx, postrun.Config{
    - Get default branch via `gh repo view`
    - Skip PR creation if on default branch
    - Check if PR already exists via `gh pr view` (skip if exists)
-   - Generate PR title and body via LLM (using PRD context)
-   - Create PR via `gh pr create`
+   - Hand off to the LLM agent with a prompt containing the PRD, commit messages, and diff stat. The agent drafts the title and body and invokes `gh pr create` itself in a single step
+   - Verify the PR was created via `gh pr view`; surface an error if the agent did not create one
    - Display PR URL and number
 5. **CI status monitoring** (all remotes with GitHub or after PR creation):
    - Detect if CI workflows exist via `HasRelevantWorkflows()` (scans `.github/workflows/*.yml`)
@@ -195,12 +195,6 @@ Checks if a PR already exists for the current branch using `gh pr view --json st
 
 Used for PR deduplication — prevents creating duplicate PRs.
 
-### CreatePR
-
-Creates a new pull request using `gh pr create --title "..." --body "..."`.
-
-Returns the PR URL. Returns error if creation fails.
-
 ### CheckStatus
 
 Retrieves CI check status using `gh pr checks` or `gh run list`.
@@ -249,15 +243,16 @@ Used to determine if CI monitoring should proceed after push/PR creation.
 
 **File**: `internal/postrun/prompts/pr.md` and `internal/postrun/prompts/prompts.go`
 
-The PR prompt template (`pr.md`) instructs the LLM to produce:
+The PR prompt template (`pr.md`) is delivered to the LLM agent (Claude or Codex), which has shell access via the executor. The agent is instructed to draft the title and body and then run `gh pr create` itself in a single step — there is no Go-side parsing of the agent's output. The prompt enforces:
 
-- **Title** — free prose, imperative mood, 50–72 characters, no scope prefix, no code or identifiers, no quotation marks. The model is told to describe the user-visible or behavioural change, not the mechanism.
+- **Title** — free prose, imperative mood, 50–72 characters (hard cap 72), no scope prefix, no code or identifiers, no quotation marks. Single line. Describe the user-visible or behavioural change, not the mechanism.
 - **Body** — three blocks (or two when no PRD is available), each with a level-3 markdown heading, in this order:
   - `### Why` — one or two sentences anchored in the PRD's motivation; paraphrased, never quoted. Skipped entirely when no PRD is supplied.
   - `### What` — bulleted summary derived from the commit messages, with related commits merged and noisy subjects collapsed.
   - `### How to verify` — bulleted concrete checks, derived from PRD Requirements when present, otherwise from commits and diff stat.
 - **Length budget** — body targets ~150 words, hard ceiling 250.
 - **Anti-patterns** — the prompt explicitly forbids code snippets / file contents in title or body, pasting the diff stat, quoting the PRD verbatim, inventing requirements not in the inputs, and filler phrasing like "This PR…".
+- **Execution** — agent runs `gh pr create --title "<title>" --body "<body>"` exactly once, with no extra flags. If `gh` rejects the title (for example "Title is too long"), the agent shortens the title to fit the 72-character cap and retries once. After the PR is created, the agent stops.
 
 The `PR()` function renders this template with:
 
@@ -265,16 +260,7 @@ The `PR()` function renders this template with:
 - `{{.CommitMessages}}` — Output of `CommitMessages()` (oldest first, last 30 commits)
 - `{{.DiffStat}}` — Output of `DiffStat()` (file-level scope; never quoted in body)
 
-### Output Parsing
-
-**File**: `internal/postrun/parse.go`
-
-The `parsePROutput()` function extracts title and body from LLM output:
-
-- Splits on first blank line (double newline)
-- First line becomes the title
-- Remaining text becomes the body
-- Returns error if output is empty or malformed
+After the agent returns, `createPRFlow` calls `PRExists()` once to confirm the PR was created and to capture its URL for the success message. There is no Go-side parsing of the agent's textual output — the source of truth is GitHub.
 
 ## CI Fix Generation
 

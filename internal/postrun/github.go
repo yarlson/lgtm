@@ -50,24 +50,12 @@ func PRExists(ctx context.Context) (exists bool, prURL string, err error) {
 	return true, result.URL, nil
 }
 
-// CreatePR creates a new pull request with the given title and body.
-// Returns the PR URL.
-func CreatePR(ctx context.Context, title, body string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--title", title, "--body", body)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", &GHError{Stderr: strings.TrimSpace(stderr.String()), Err: err}
-	}
-	return strings.TrimSpace(stdout.String()), nil
-}
-
 // prCheckResult represents a single check from gh pr checks --json.
+// Note: gh no longer accepts "conclusion" as a JSON field for pr checks; the
+// state field carries the conclusion-style values (SUCCESS, FAILURE, ...).
 type prCheckResult struct {
-	Name       string `json:"name"`
-	State      string `json:"state"`
-	Conclusion string `json:"conclusion"`
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 // runCheckResult represents a single run from gh run list --json.
@@ -87,7 +75,7 @@ func CheckStatus(ctx context.Context, hasPR bool, branch string) ([]CheckResult,
 }
 
 func checkStatusPR(ctx context.Context) ([]CheckResult, error) {
-	cmd := exec.CommandContext(ctx, "gh", "pr", "checks", "--json", "name,state,conclusion")
+	cmd := exec.CommandContext(ctx, "gh", "pr", "checks", "--json", "name,state")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -103,9 +91,8 @@ func checkStatusPR(ctx context.Context) ([]CheckResult, error) {
 	results := make([]CheckResult, len(raw))
 	for i, r := range raw {
 		results[i] = CheckResult{
-			Name:       r.Name,
-			Status:     normalizePRCheckStatus(r.State, r.Conclusion),
-			Conclusion: r.Conclusion,
+			Name:   r.Name,
+			Status: normalizePRCheckStatus(r.State),
 		}
 	}
 	return results, nil
@@ -138,7 +125,7 @@ func checkStatusRun(ctx context.Context, branch string) ([]CheckResult, error) {
 
 // normalizePRCheckStatus converts gh pr checks states to our standard statuses.
 // gh pr checks states: PENDING, SUCCESS, FAILURE, ERROR, CANCELLED, etc.
-func normalizePRCheckStatus(state, _ string) string {
+func normalizePRCheckStatus(state string) string {
 	switch strings.ToUpper(state) {
 	case "SUCCESS":
 		return "passed"

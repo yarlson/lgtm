@@ -75,22 +75,6 @@ func TestPRExists_HasPR(t *testing.T) {
 	assert.Equal(t, "https://github.com/user/repo/pull/42", url)
 }
 
-func TestCreatePR(t *testing.T) {
-	mockGH(t, "https://github.com/user/repo/pull/42")
-
-	url, err := CreatePR(context.Background(), "Add feature", "Body text")
-	require.NoError(t, err)
-	assert.Equal(t, "https://github.com/user/repo/pull/42", url)
-}
-
-func TestCreatePR_Failure(t *testing.T) {
-	mockGHScript(t, "echo 'permission denied' >&2\nexit 1\n")
-
-	_, err := CreatePR(context.Background(), "Title", "Body")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "permission denied")
-}
-
 func TestCheckStatus_AllGreen(t *testing.T) {
 	mockGHScript(t, `
 printf '%s' '[{"name":"lint","state":"SUCCESS","conclusion":"success"},{"name":"test","state":"SUCCESS","conclusion":"success"}]'

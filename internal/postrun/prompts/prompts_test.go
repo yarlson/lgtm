@@ -30,6 +30,7 @@ func TestPR_RendersTemplate(t *testing.T) {
 	assert.Contains(t, result, "50–72")
 	assert.Contains(t, result, "~150 words")
 	assert.Contains(t, result, "Anti-patterns")
+	assert.Contains(t, result, "gh pr create")
 	assert.Equal(t, strings.TrimSpace(result), result)
 }
 
