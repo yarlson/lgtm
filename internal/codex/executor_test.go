@@ -66,6 +66,12 @@ func TestEventParser_Parse(t *testing.T) {
 			contains: []string{"Shell", "exit 7", "Command failed (exit code 7)"},
 		},
 		{
+			name: "long command output is trimmed to viewport",
+			input: `{"type":"item.started","item":{"id":"1","type":"command_execution","command":"/bin/zsh -lc seq 12","status":"in_progress"}}` + "\n" +
+				`{"type":"item.completed","item":{"id":"1","type":"command_execution","command":"/bin/zsh -lc seq 12","aggregated_output":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n","exit_code":0,"status":"completed"}}`,
+			contains: []string{"Tool output (last 10/12 lines)", "line 12"},
+		},
+		{
 			name:     "skips malformed lines",
 			input:    `not-json` + "\n" + `{"type":"item.completed","item":{"id":"2","type":"agent_message","text":"ok"}}`,
 			contains: []string{"ok"},
@@ -82,6 +88,11 @@ func TestEventParser_Parse(t *testing.T) {
 			rendered := ui.StripColors(out.String())
 			for _, fragment := range tt.contains {
 				assert.Contains(t, rendered, fragment)
+			}
+
+			if tt.name == "long command output is trimmed to viewport" {
+				assert.NotContains(t, rendered, "│ line 1 ")
+				assert.NotContains(t, rendered, "│ line 2 ")
 			}
 		})
 	}

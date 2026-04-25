@@ -394,7 +394,7 @@ func todoStatusColor(status string) string {
 
 func formatToolResult(content ContentBlock) string {
 	if content.IsError {
-		return ui.DimError(content.Content) + "\n"
+		return ui.FormatToolError(content.Content)
 	}
-	return ui.Info(content.Content)
+	return ui.FormatToolOutput(content.Content)
 }

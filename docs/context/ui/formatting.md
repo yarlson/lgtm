@@ -2,7 +2,7 @@
 
 ## Overview
 
-Package `internal/ui` provides styled text output functions for CLI display, including headers, status messages, error handling, and task duration tracking.
+Package `internal/ui` provides styled text output functions for CLI display, including headers, status messages, error handling, task duration tracking, and bounded tool-output viewports.
 
 ## Core Functions
 
@@ -35,7 +35,17 @@ Package `internal/ui` provides styled text output functions for CLI display, inc
 
 - **Info(text)** — Informational text with dim styling, newline-terminated (used for secondary information like "Next steps:", setup instructions)
 - **Tool(text)** — Tool/provider reference text with specific styling
+- **FormatToolOutput(text)** — Formats tool output; short output renders inline, while output over 10 lines is shown inside a boxed viewport containing only the most recent 10 lines
+- **FormatToolError(text)** — Same viewport behavior as `FormatToolOutput`, but uses error styling for failed tool output
 - **Separator()** — Visual separator line (e.g., for dividing sections)
+
+### Viewport Utilities
+
+- **NewLineViewport(maxLines)** — Creates a virtual line buffer that retains only the most recent lines from streamed text
+- **LineViewport.Append(text)** — Adds streamed text while preserving trailing partial lines across chunks
+- **LineViewport.VisibleLines()** — Returns the currently visible slice of the virtual buffer
+- **LineViewport.TotalLines()** — Returns how many logical lines have been observed
+- **LineViewport.Overflowed()** — Reports whether older lines were trimmed from view
 
 ### Duration Functions
 
@@ -112,6 +122,7 @@ Colors are automatically managed through `ResolveColor()` and `ResolveStyle()` f
 
 - **BoxWidth** — Width of bordered containers
 - **BoxPaddingLeft/Right** — Horizontal padding inside boxes
+- **ToolOutputMaxLines** — Maximum number of visible lines retained in the tool-output viewport
 - **SpaceXS, SpaceSM, SpaceMD** — Vertical spacing (newline counts)
 - **SeparatorWidth** — Width for right-aligned content (duration alignment)
 - **IndentResult** — Left indent for result lines
@@ -128,3 +139,4 @@ Colors are automatically managed through `ResolveColor()` and `ResolveStyle()` f
 - **List command** (`cmd/list.go`) — Uses `Info()` for empty state messages; directly applies `ResolveStyle()` styling codes (bold/dim/reset) to table output for visual hierarchy
 - **Status command** (`cmd/status.go`) — Uses `KeyValue()` for session metadata display, `Info()` for section headers and summary messages, `TaskDone()`/`TaskActive()`/`TaskPending()` for task state display
 - **Interrupts** — Uses `Interrupted()`, `InterruptedWithContext()` to display execution interruption messages
+- **Claude/Codex executors** (`internal/claude/executor.go`, `internal/codex/executor.go`) — Route multiline tool results through the 10-line viewport to prevent large command output from bloating the main transcript

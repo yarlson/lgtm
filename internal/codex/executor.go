@@ -216,7 +216,7 @@ func formatCommandResult(item streamItem) string {
 
 	if failed {
 		if output != "" {
-			return ui.DimError(output) + "\n"
+			return ui.FormatToolError(output)
 		}
 		exitCode := "unknown"
 		if item.ExitCode != nil {
@@ -229,7 +229,7 @@ func formatCommandResult(item streamItem) string {
 		return ""
 	}
 
-	return ui.Info(output)
+	return ui.FormatToolOutput(output)
 }
 
 type streamEvent struct {

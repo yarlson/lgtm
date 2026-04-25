@@ -46,7 +46,7 @@ Workflow Runner (orchestrates 10-step iteration workflow)
 - **Session state**: Saved to `.snap/sessions/<name>/state.json` for named sessions, `.snap/state.json` for legacy layout, or `.snap/adhoc/<hash>/state.json` for ad hoc single-task runs (tracks completed tasks, current task, step progress)
 - **Run command**: Supports `snap run [session]` with four modes: named session, auto-detection (single session), legacy fallback (docs/tasks/), or ad hoc single-task mode via `--task-file`
 - **Context**: `docs/context/` stores project context for future runs
-- **Terminal output**: Uses ANSI colors, styled headers, progress indicators, task durations, diagnostic hints
+- **Terminal output**: Uses ANSI colors, styled headers, progress indicators, task durations, diagnostic hints, and a boxed 10-line viewport for oversized tool output
 
 ## Capabilities
 
@@ -69,6 +69,7 @@ Workflow Runner (orchestrates 10-step iteration workflow)
 - **Version flag**: `--version` displays snap version (set at build time via ldflags)
 - **State inspection**: `--show-state` displays workflow progress in human-readable format; `--show-state --json` outputs raw state JSON; works with sessions and `--task-file`
 - **Color output control**: NO_COLOR environment variable support (follows https://no-color.org/ standard); automatic color disabling in non-TTY contexts
+- **Bounded tool output**: Multiline tool results are capped to the most recent 10 lines in a boxed viewport so long command output does not flood the main transcript
 - **Auto-push and PR creation**: Upon workflow completion, automatically pushes commits to configured git remote (origin); on GitHub remotes, creates a pull request with LLM-generated title and description (using PRD context); skips PR if on default branch or PR already exists
 - **CI workflow monitoring**: Detects GitHub Actions workflows triggered by push or pull_request events; polls CI status after push/PR creation; displays status updates and final results; tracks individual checks (≤5) or summary view (>5 checks); automatically attempts to fix failing checks with LLM-generated minimal code changes (up to 10 attempts)
 - **CI/CD integration**: GitHub Actions workflow validates lint and race conditions on every push and PR

@@ -91,6 +91,12 @@ func TestStreamParser(t *testing.T) {
 			expectedContent: []string{"🔧 Write", "file_path=output.go", "File created successfully"},
 		},
 		{
+			name: "trims long tool results to viewport",
+			input: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Bash","input":{"command":"seq 12"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_789","content":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12"}]}}`,
+			expectedContent: []string{"🔧 Bash", "Tool output (last 10/12 lines)", "line 12"},
+		},
+		{
 			name:  "parses TodoWrite tool input",
 			input: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_todo_1","name":"TodoWrite","input":{"todos":[{"content":"Inspect parser tokenization logic","status":"pending","activeForm":"Inspecting parser tokenization logic"},{"content":"Review parser error handling paths","status":"in_progress","activeForm":"Reviewing parser error handling paths"}]}}]}}`,
 			expectedContent: []string{
@@ -136,6 +142,11 @@ func TestStreamParser(t *testing.T) {
 			for _, expected := range tt.expectedContent {
 				assert.Contains(t, strippedResult, expected,
 					"Expected to find %q in output", expected)
+			}
+
+			if tt.name == "trims long tool results to viewport" {
+				assert.NotContains(t, strippedResult, "│ line 1 ")
+				assert.NotContains(t, strippedResult, "│ line 2 ")
 			}
 		})
 	}
