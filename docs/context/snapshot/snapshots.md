@@ -44,7 +44,7 @@ runner := workflow.NewRunner(executor, config,
 snap: <task-label> step <N>/<TOTAL> — <step-name>
 ```
 
-Example: `snap: TASK1 step 3/9 — Lint & test`
+Example: `snap: TASK1 step 3/10 — Lint & test`
 
 ## Use Cases
 
