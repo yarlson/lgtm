@@ -143,13 +143,15 @@ func generatePR(ctx context.Context, cfg Config, defaultBranch string) (title, b
 		}
 	}
 
-	// Get diff stat (best-effort, ignore errors).
-	diffStat, _ := DiffStat(ctx, defaultBranch) //nolint:errcheck // best-effort diff stat
+	// Get diff stat and commit messages (best-effort, ignore errors).
+	diffStat, _ := DiffStat(ctx, defaultBranch)             //nolint:errcheck // best-effort diff stat
+	commitMessages, _ := CommitMessages(ctx, defaultBranch) //nolint:errcheck // best-effort commit log
 
 	// Render prompt
 	prompt, err := prompts.PR(prompts.PRData{
-		PRDContent: prdContent,
-		DiffStat:   diffStat,
+		PRDContent:     prdContent,
+		CommitMessages: commitMessages,
+		DiffStat:       diffStat,
 	})
 	if err != nil {
 		return "Update", ""

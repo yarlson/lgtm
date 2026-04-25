@@ -131,3 +131,18 @@ func DiffStat(ctx context.Context, baseBranch string) (string, error) {
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
+
+// CommitMessages returns full commit message bodies for commits between
+// baseBranch and HEAD, oldest first, separated by a blank line. Capped at the
+// last 30 commits so very long branches do not blow the prompt budget.
+// Returns "" with nil error when the range is empty.
+func CommitMessages(ctx context.Context, baseBranch string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "log", "-n", "30", baseBranch+"..HEAD", "--reverse", "--format=%B%n") //nolint:gosec // baseBranch comes from gh CLI output, not user input
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}

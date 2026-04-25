@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -155,4 +156,36 @@ func TestCommitAll_NothingToCommit(t *testing.T) {
 	err := CommitAll(context.Background(), "empty commit")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nothing to commit")
+}
+
+func TestCommitMessages_HappyPath(t *testing.T) {
+	dir := initGitRepo(t)
+	gitCmd(t, dir, "checkout", "-b", "feature")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "first.txt"), []byte("first"), 0o600))
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "Add login form")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "second.txt"), []byte("second"), 0o600))
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "Wire login to API\n\nUses POST /session.")
+
+	chdir(t, dir)
+
+	out, err := CommitMessages(context.Background(), "main")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Add login form")
+	assert.Contains(t, out, "Wire login to API")
+	assert.Contains(t, out, "Uses POST /session.")
+	assert.Less(t, strings.Index(out, "Add login form"), strings.Index(out, "Wire login to API"),
+		"oldest commit should appear first (--reverse)")
+}
+
+func TestCommitMessages_EmptyRange(t *testing.T) {
+	dir := initGitRepo(t)
+	chdir(t, dir)
+
+	out, err := CommitMessages(context.Background(), "main")
+	require.NoError(t, err)
+	assert.Empty(t, out)
 }

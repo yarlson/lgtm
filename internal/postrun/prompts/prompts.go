@@ -15,8 +15,9 @@ var ciFixTmpl string
 
 // PRData holds template parameters for the PR generation prompt.
 type PRData struct {
-	PRDContent string
-	DiffStat   string
+	PRDContent     string
+	CommitMessages string
+	DiffStat       string
 }
 
 // PR renders the PR generation prompt template with the given data.

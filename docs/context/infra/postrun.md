@@ -149,6 +149,18 @@ Returns diff statistics between the base branch and HEAD using `git diff <baseBr
 
 Used as input to the PR generation prompt to give the LLM context about what changed.
 
+## Commit Messages
+
+**Function**: `CommitMessages(ctx context.Context, baseBranch string)` in `internal/postrun/git.go`
+
+Returns the full commit message bodies for commits between the base branch and HEAD using `git log -n 30 <baseBranch>..HEAD --reverse --format=%B%n`.
+
+- Oldest commit first (mirrors reviewer reading order).
+- Capped at the last 30 commits to keep the prompt budget bounded on long-lived branches.
+- Returns `""` with nil error when the range is empty (e.g., already on the base branch).
+
+Used as the primary "what shipped" input to the PR generation prompt — the LLM derives the `What` bullets from these messages rather than from the diff itself, so it never has raw code to regurgitate into the title.
+
 ## Commit All
 
 **Function**: `CommitAll(ctx context.Context, message string)` in `internal/postrun/git.go`
@@ -237,16 +249,21 @@ Used to determine if CI monitoring should proceed after push/PR creation.
 
 **File**: `internal/postrun/prompts/pr.md` and `internal/postrun/prompts/prompts.go`
 
-The PR prompt template (`pr.md`) instructs the LLM to:
+The PR prompt template (`pr.md`) instructs the LLM to produce:
 
-- Generate a title under 72 characters describing the change
-- Generate a body explaining _why_ the changes were made using the PRD for context
-- Output only the PR content (no preamble)
+- **Title** — free prose, imperative mood, 50–72 characters, no scope prefix, no code or identifiers, no quotation marks. The model is told to describe the user-visible or behavioural change, not the mechanism.
+- **Body** — three blocks (or two when no PRD is available), each with a level-3 markdown heading, in this order:
+  - `### Why` — one or two sentences anchored in the PRD's motivation; paraphrased, never quoted. Skipped entirely when no PRD is supplied.
+  - `### What` — bulleted summary derived from the commit messages, with related commits merged and noisy subjects collapsed.
+  - `### How to verify` — bulleted concrete checks, derived from PRD Requirements when present, otherwise from commits and diff stat.
+- **Length budget** — body targets ~150 words, hard ceiling 250.
+- **Anti-patterns** — the prompt explicitly forbids code snippets / file contents in title or body, pasting the diff stat, quoting the PRD verbatim, inventing requirements not in the inputs, and filler phrasing like "This PR…".
 
 The `PR()` function renders this template with:
 
-- `{{.PRDContent}}` — Full PRD.md text for context
-- `{{.DiffStat}}` — Diff statistics from git
+- `{{.PRDContent}}` — Full PRD.md text (used for motivation only; absent → `Why` block is omitted)
+- `{{.CommitMessages}}` — Output of `CommitMessages()` (oldest first, last 30 commits)
+- `{{.DiffStat}}` — Output of `DiffStat()` (file-level scope; never quoted in body)
 
 ### Output Parsing
 

@@ -337,6 +337,42 @@ func TestRun_PRCreation_UsesPRDContext(t *testing.T) {
 	assert.Contains(t, executor.capturedPrompt, "mobile clients")
 }
 
+func TestRun_PRCreation_PassesCommitsAndAntiPatterns(t *testing.T) {
+	dir := initGitRepo(t)
+	initBareRemote(t, dir)
+
+	gitCmd(t, dir, "checkout", "-b", "feature-commits")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o600))
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "Implement parser")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o600))
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "Add parser tests")
+
+	chdir(t, dir)
+
+	mockGHMulti(t, "main", "", "https://github.com/user/repo/pull/1")
+
+	executor := &capturingExecutor{output: "Add parser\n\n### What\n\n- impl"}
+
+	var buf bytes.Buffer
+	cfg := Config{
+		Output:    &buf,
+		RemoteURL: "https://github.com/user/repo.git",
+		IsGitHub:  true,
+		Executor:  executor,
+	}
+
+	err := Run(context.Background(), cfg)
+	require.NoError(t, err)
+
+	assert.Contains(t, executor.capturedPrompt, "Implement parser")
+	assert.Contains(t, executor.capturedPrompt, "Add parser tests")
+	assert.Contains(t, executor.capturedPrompt, "Anti-patterns")
+	assert.Contains(t, executor.capturedPrompt, "Do not quote the PRD")
+	assert.Contains(t, executor.capturedPrompt, "50–72")
+}
+
 func TestRun_PRCreation_Failed(t *testing.T) {
 	dir := initGitRepo(t)
 	initBareRemote(t, dir)

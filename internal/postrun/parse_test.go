@@ -55,6 +55,12 @@ func TestParsePROutput(t *testing.T) {
 			wantTitle: "Add feature",
 			wantBody:  "Body text.",
 		},
+		{
+			name:      "three-block body with markdown headings",
+			input:     "Add user login\n\n### Why\n\nUsers need to authenticate.\n\n### What\n\n- Add login form\n- Wire to API\n\n### How to verify\n\n- Run tests\n- Open /login",
+			wantTitle: "Add user login",
+			wantBody:  "### Why\n\nUsers need to authenticate.\n\n### What\n\n- Add login form\n- Wire to API\n\n### How to verify\n\n- Run tests\n- Open /login",
+		},
 	}
 
 	for _, tt := range tests {
