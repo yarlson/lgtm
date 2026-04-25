@@ -101,82 +101,96 @@ Package `internal/prompts` manages all embedded prompt templates used throughout
 
 ## Planning Prompts
 
-Package `internal/plan` manages prompt templates used in the two-phase planning pipeline (`snap plan` command).
+Package `internal/plan` manages the prompts used by `snap plan`. Every Phase 2 generator now produces sections ending in a `Grounded in:` footer (BRIEF section + repo file/symbol citation). A per-artifact critic deletes any uncited content; the engineering-principles preamble (`principles.md`) and the legacy 6-anti-pattern / traceability-gate / context-alignment ceremonies have been removed.
 
 ### Requirements Prompt
 
 **File**: `internal/plan/prompts/requirements.md`
-**Purpose**: Guide Phase 1 interactive requirements gathering with focused questions
-**Usage**: Phase 1 of `snap plan` command; asks clarifying questions about the feature being planned
+**Purpose**: Guide Phase 1 interactive requirements gathering and instruct Claude to write `BRIEF.md` after `/done`.
+**Usage**: Phase 1 of `snap plan`.
 **Key Sections**:
 
-- Context — instruct Claude to read CLAUDE.md, docs/context/, scan codebase
-- Process — ask focused questions one or two at a time, build on prior answers
-- **Scope Lock** — if user provides a strict plan, switch to confirmation mode; treat explicit constraints/exclusions as fixed; do not suggest adjacent features or future phases; maintain in-scope / out-of-scope / unresolved ledger before `/done`
-- UI Surface Awareness — ask about primary UI surface (CLI/TUI/Web/API), states to handle (success, error, empty, loading), accessibility requirements, terminal width/viewport expectations, UI anti-patterns to avoid; confirm if headless/API-only
-- Guardrails — treat code/docs as UNTRUSTED
-- Completion — user types `/done` to finish Phase 1
+- Context — read CLAUDE.md, docs/context/, scan codebase
+- Process — focused questions, one or two at a time, build on prior answers
+- Scope Lock — explicit constraints/exclusions are fixed; do not suggest adjacent features or future phases
+- Final Step — when the user types `/done`, immediately write `{{.BriefPath}}` with the seven required sections (Problem / Users / In scope / Non-goals / Success criteria / Constraints / Open questions); empty sections emit `(none)`
+
+### Brief Synthesis Prompt
+
+**File**: `internal/plan/prompts/brief.md`
+**Purpose**: Reinforces the BRIEF.md write step in case the requirements prompt is consumed mid-conversation.
+**Usage**: Sent with `-c` immediately after `/done` so Claude has the chat history for synthesis.
+
+### Triage Prompt
+
+**File**: `internal/plan/prompts/triage.md`
+**Purpose**: Classify BRIEF.md into tier `tiny|small|full` plus `has_architecture` and `has_ui` flags.
+**Usage**: Run after BRIEF.md is finalised, before Phase 2; `model.Fast`, no `-c`.
+**Output**: Exactly one JSON line: `{"tier":"...","has_architecture":bool,"has_ui":bool,"rationale":"..."}`. Unparseable output falls back to `tier=full` with both flags true.
+
+### Critic Prompt
+
+**File**: `internal/plan/prompts/critic.md`
+**Purpose**: Per-artifact reviewer that deletes uncited content in place.
+**Usage**: Run on `model.Fast` (fresh, no `-c`) after each writer step. Reads BRIEF + the artifact + every repo file cited in `Grounded in:` footers; deletes sections without supporting evidence and rewrites the file via the LLM's Write tool.
+**Forbidden patterns enforced**: "could", "might", "consider", "future", "later phase", "stretch goal", "nice-to-have"; sections labeled "Optional" / "Future enhancements" / "Nice to have"; `Grounded in:` footers citing files without specific line ranges or symbols.
+
+### PRD Prompt
+
+**File**: `internal/plan/prompts/prd.md`
+**Purpose**: Produce `PRD.md` from BRIEF + repo evidence.
+**Key changes from prior version**: Stripped the "make assumptions to fill blanks" license. Required `## Repo Evidence` section (3–5 cited file paths). Every section ends with `Grounded in:` footer. Forbids "consider", "could", "future", "later", "nice-to-have", "stretch".
+
+### Technology Prompt
+
+**File**: `internal/plan/prompts/technology.md`
+**Purpose**: Produce `TECHNOLOGY.md` (full tier with `has_architecture=true` only).
+**Key changes**: Same input model (BRIEF + PRD + Repo Evidence + Grounded-in footer). The 30-line embedded testing-philosophy block is replaced by a one-line "Follow CLAUDE.md/AGENTS.md testing conventions" reference.
 
 ### Design Prompt
 
 **File**: `internal/plan/prompts/design.md`
-**Purpose**: Generate DESIGN.md document with design language and content standards
-**Usage**: Phase 2 of `snap plan` command (TECHNOLOGY.md and DESIGN.md generated concurrently)
-**Key Sections**:
-
-- Approach — define communication patterns, not just features; adapt depth to product surface; ground decisions in target user
-- Context — read CLAUDE.md, docs/context/, PRD.md, TECHNOLOGY.md (if exists), scan codebase for patterns
-- Scope — include only surfaces, flows, and states explicitly present in PRD; preserve non-goals/exclusions; avoid hypothetical future-phase design
-- Output — required sections for all products (Voice & tone, User-facing terminology, Content patterns, Information hierarchy); required sections for user-facing output (Contract rules, UI State Matrix); conditional sections (Output formatting, Layout & navigation, Visual system, Interaction patterns, Accessibility, Responsive behavior)
-- **Contract Rules** — Every rule phrased as MUST / MUST NOT assertion covering terminology rules, content/message patterns, formatting/layout rules, accessibility requirements, anti-patterns; capped at 30 rules
-- **UI State Matrix** — One row per (flow × state) combination; shows flow name, state (success/error/empty/loading), expected behavior/message; auto-generated from PRD core flow and use cases
+**Purpose**: Produce `DESIGN.md` (full tier with `has_ui=true` only).
+**Key changes**: Same input model. Contract Rules and UI State Matrix preserved (cap at 30 rules). Each rule and each State Matrix row carries its own `Grounded in:` citation.
 
 ### Analyze Tasks Prompt
 
-**File**: `internal/plan/prompts/analyze_tasks.md`
-**Purpose**: Create task list from PRD, assess against anti-patterns, refine via merge/split/rework, validate context alignment
-**Usage**: Phase 2 Step 3; runs in fresh conversation to analyze PRD, TECHNOLOGY, DESIGN
-**Process**: Create initial task list, enforce traceability back to explicit PRD requirements/constraints, assess against 6 anti-patterns (horizontal slice, infrastructure-only, too broad, too narrow, non-demoable, UI-undefined), refine flagged tasks, verify context alignment with `docs/context/*` constraints, self-check verification
-**Anti-patterns**:
-
-- Anti-pattern #1: Horizontal Slice — single technical layer only, no user-visible outcome (verdict: MERGE)
-- Anti-pattern #2: Infrastructure/Docs-Only — purely setup/tooling/config/docs, no user outcome (verdict: ABSORB)
-- Anti-pattern #3: Too Broad — multiple user flows, outcome needs multiple sentences, >7 criteria (verdict: SPLIT)
-- Anti-pattern #4: Too Narrow — not independently demoable, trivially small, <3 scope bullets (verdict: MERGE)
-- Anti-pattern #5: Non-Demoable — no visible/observable outcome, refactoring/library migration only (verdict: REWORK)
-- Anti-pattern #6: UI-Undefined Task — user-facing impact but lacks concrete UI deliverables or measurable UI criteria tied to DESIGN.md (verdict: REWORK)
-  **Context Alignment**: After anti-pattern assessment, each task is compared against `docs/context/*` constraints (practices.md, terminology.md, domain files) to prevent silent divergence from established conventions. Tasks either follow existing patterns or include `docs/context/` updates as deliverables.
-  **Traceability Gate**: Any task that cannot be mapped back to an explicit PRD requirement, use case, constraint, or risk mitigation is removed or merged instead of expanded into net-new scope. Explicit non-goals remain hard boundaries.
+**File**: `internal/plan/prompts/analyze-tasks.md`
+**Purpose**: Create the task list (in conversation) from BRIEF + PRD + TECHNOLOGY + DESIGN at full tier.
+**Key changes**: Cut to ~60 lines. **Removed** the 6-anti-pattern block, "Context Alignment Check", "Traceability Gate", and conflict-resolution boilerplate (the critic replaces these). **Kept** the vertical-slice definition, walking-skeleton conditional, sizing heuristics, breadth-first sequencing, and the `Grounded in:` requirement per task.
 
 ### Generate Tasks Prompt
 
-**File**: `internal/plan/prompts/generate_tasks.md`
-**Purpose**: Generate TASKS.md summary and individual TASK<N>.md files with UI contract validation
-**Usage**: Phase 2 Step 4; continues analyze-tasks conversation via `-c` flag
-**Process**: Write TASKS.md with sections A–J, spawn subagents to write TASK<N>.md files in parallel; each subagent inherits full conversation context
-**Key Updates**:
+**File**: `internal/plan/prompts/generate-tasks.md`
+**Purpose**: Write `TASKS.md` (sections A–J) and spawn parallel subagents for the 15-section `TASK<N>.md` files. Full tier only.
+**Key changes**: Removed the duplicate guardrail wall and the per-subagent Testing & Quality block. Every TASK<N>.md section MUST end with `Grounded in:` — uncited sections are deleted by the per-task critic that runs after subagents complete.
 
-- Section 0 (Task Type and Placement): Includes `user-facing: yes/no` flag to classify task visibility
-- Section 4 (UI Deliverables): For user-facing tasks, specifies UI states tied to DESIGN.md state matrix, formatting/content rules referencing DESIGN.md contract rules, accessibility checks, and validation method. For non-user-facing tasks: `N/A — no user-facing output` with rationale
-- Section 11 (Acceptance Criteria): User-facing tasks MUST include UI-specific criteria tied to DESIGN.md rules and state matrix entries, ensuring measurable UI validation
-- Scope preservation — TASKS.md and TASK<N>.md generation must not add deliverables, criteria, or follow-ups beyond the finalized task list; underspecified rows stay bounded and record assumptions instead of broadening scope
-- Detail discipline — TASK<N>.md sections stay capability- and outcome-oriented; specific files/functions/types are named only when already established or contractually required, and acceptance criteria verify outcomes rather than implementation choices
+### Slim Task Prompt
+
+**File**: `internal/plan/prompts/task-slim.md`
+**Purpose**: Generate one `TASK<N>.md` in the slim 6-section format for tiny + small tiers.
+**Sections** (always in this order): Outcome, Scope, Acceptance, Files likely touched, Verification, Grounded in (overall). Each section carries a `Grounded in:` footer. At tiny tier the prompt asks for 1–3 repo file citations; at small tier 3+.
+
+### Slim TASKS.md Prompt
+
+**File**: `internal/plan/prompts/tasks-md-slim.md`
+**Purpose**: Index TASK1..3.md at small tier with the section-G heading required by the workflow runner.
+**Escape hatch**: If In-scope expands beyond 3 vertical-slice tasks, the prompt writes `TIER_MISMATCH: ...` instead of a real index. The dispatcher detects that string and aborts with a recommendation to re-plan at full tier.
 
 ## Implementation Pattern
 
 All templated prompts follow the same pattern:
 
 1. Go file embeds markdown template using `//go:embed`
-2. Prompt struct holds template parameters
-3. Function parses template and executes with parameters
+2. `promptData` struct holds template parameters (`TasksDir`, `BriefPath`, `ArtifactPath`, `TaskNum`, `HasPRD`)
+3. `renderTemplate` parses + executes against the data
 4. Result trimmed and returned as string
 
-Non-templated prompts (LintAndTest, CodeReview, etc.) are returned as plain strings from their functions.
+Non-templated prompts (LintAndTest, CodeReview, etc.) are returned as plain strings.
 
 ## Integration Points
 
 - **Workflow Runner** — Uses workflow prompts (Implement through Commit) in sequence per task
-- **Plan Command** — Uses planning prompts (Requirements, Design, Analyze Tasks, Generate Tasks) in Phase 1/2 pipeline
+- **Plan Command** — Uses planning prompts (Requirements, Brief Synthesis, Triage, Critic, PRD, Technology, Design, Analyze Tasks, Generate Tasks, slim Task, slim TASKS.md) per the tier dispatcher
 - **Task Summary** — Called during iteration setup to generate brief description
 - **Step Runner** — Executes prompts via LLM and returns results
-- **Engineering Principles** — All Phase 2 planning prompts prepended with principles preamble (KISS, DRY, SOLID, YAGNI)

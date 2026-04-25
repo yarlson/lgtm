@@ -8,294 +8,262 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testBriefPath = ".snap/sessions/auth/tasks/BRIEF.md"
+	testTasksDir  = ".snap/sessions/auth/tasks"
+)
+
 func TestRenderRequirementsPrompt(t *testing.T) {
-	prompt, err := RenderRequirementsPrompt()
+	prompt, err := RenderRequirementsPrompt(testBriefPath)
 	require.NoError(t, err)
 	assert.Contains(t, prompt, "## Context")
 	assert.Contains(t, prompt, "CLAUDE.md")
 	assert.Contains(t, prompt, "docs/context/")
 	assert.Contains(t, prompt, "## Process")
 	assert.Contains(t, prompt, "/done")
-	assert.Contains(t, prompt, "## Completion")
-
-	// UI Surface Awareness (M1).
-	assert.Contains(t, prompt, "UI Surface")
-	assert.Contains(t, prompt, "headless")
-	assert.Contains(t, prompt, "accessibility")
-	assert.Contains(t, prompt, "anti-pattern")
 
 	// Scope drift prevention.
 	assert.Contains(t, prompt, "## Scope Lock")
-	assert.Contains(t, prompt, "explicit user constraints and exclusions as fixed")
 	assert.Contains(t, prompt, "Do NOT suggest adjacent features")
-	assert.Contains(t, prompt, "ask a clarifying question instead of expanding scope")
-	assert.Contains(t, prompt, "in-scope")
-	assert.Contains(t, prompt, "out-of-scope")
+
+	// Final Step writes BRIEF.md.
+	assert.Contains(t, prompt, "## Final Step: Write BRIEF.md")
+	assert.Contains(t, prompt, testBriefPath)
+	assert.Contains(t, prompt, "Problem")
+	assert.Contains(t, prompt, "Users")
+	assert.Contains(t, prompt, "In scope")
+	assert.Contains(t, prompt, "Non-goals")
+	assert.Contains(t, prompt, "Success criteria")
+	assert.Contains(t, prompt, "Constraints")
+	assert.Contains(t, prompt, "Open questions")
+	assert.Contains(t, prompt, "BRIEF.md written")
 }
 
-func TestRenderPRDPrompt_WithoutBrief(t *testing.T) {
-	result, err := RenderPRDPrompt(".snap/sessions/auth/tasks", "")
+func TestRenderBriefSynthesisPrompt(t *testing.T) {
+	prompt, err := RenderBriefSynthesisPrompt(testBriefPath)
 	require.NoError(t, err)
-
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/PRD.md")
-	assert.NotContains(t, result, "Requirements Brief")
-	assert.Contains(t, result, "CLAUDE.md")
-	assert.Contains(t, result, "docs/context/")
-	assert.Contains(t, result, "Only include scope explicitly requested")
-	assert.Contains(t, result, "Do NOT turn assumptions into requirements")
-	assert.Contains(t, result, "Guardrails")
-	assert.Contains(t, result, "Completion")
+	assert.Contains(t, prompt, testBriefPath)
+	for _, section := range []string{"Problem", "Users", "In scope", "Non-goals", "Success criteria", "Constraints", "Open questions"} {
+		assert.Contains(t, prompt, section, "expected section %q in brief synthesis prompt", section)
+	}
+	assert.Contains(t, prompt, "(none)")
+	assert.Contains(t, prompt, "BRIEF.md written")
 }
 
-func TestRenderPRDPrompt_WithBrief(t *testing.T) {
-	result, err := RenderPRDPrompt(".snap/sessions/auth/tasks", "I want OAuth2 auth with Google")
+func TestRenderTriagePrompt(t *testing.T) {
+	prompt, err := RenderTriagePrompt(testBriefPath)
+	require.NoError(t, err)
+	assert.Contains(t, prompt, testBriefPath)
+	assert.Contains(t, prompt, "tiny")
+	assert.Contains(t, prompt, "small")
+	assert.Contains(t, prompt, "full")
+	assert.Contains(t, prompt, "has_architecture")
+	assert.Contains(t, prompt, "has_ui")
+	assert.Contains(t, prompt, "rationale")
+	assert.Contains(t, prompt, "one line of JSON")
+}
+
+func TestRenderCriticPrompt(t *testing.T) {
+	artifactPath := testTasksDir + "/PRD.md"
+	prompt, err := RenderCriticPrompt(testBriefPath, artifactPath)
+	require.NoError(t, err)
+	assert.Contains(t, prompt, testBriefPath)
+	assert.Contains(t, prompt, artifactPath)
+	assert.Contains(t, prompt, "delete")
+	assert.Contains(t, prompt, "Grounded in")
+	// Forbidden patterns must be enumerated.
+	for _, forbidden := range []string{"could", "consider", "future", "stretch", "Optional"} {
+		assert.Contains(t, prompt, forbidden, "critic prompt missing forbidden pattern %q", forbidden)
+	}
+	assert.Contains(t, prompt, "Critic complete")
+}
+
+func TestRenderPRDPrompt(t *testing.T) {
+	result, err := RenderPRDPrompt(testTasksDir, testBriefPath)
 	require.NoError(t, err)
 
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/PRD.md")
-	assert.Contains(t, result, "Requirements Brief")
-	assert.Contains(t, result, "I want OAuth2 auth with Google")
-	assert.Contains(t, result, "Guardrails")
+	assert.Contains(t, result, testBriefPath)
+	assert.Contains(t, result, testTasksDir+"/PRD.md")
+	assert.Contains(t, result, "## Repo Evidence")
+	assert.Contains(t, result, "Grounded in:")
+	// Drift license must be gone.
+	assert.NotContains(t, result, "make a decision and list it as an assumption")
+	assert.NotContains(t, result, "Do NOT turn assumptions into requirements")
+	// Forbidden words list.
+	assert.Contains(t, result, "consider")
+	assert.Contains(t, result, "future")
+	assert.Contains(t, result, "PRD.md written")
 }
 
 func TestRenderTechnologyPrompt(t *testing.T) {
-	result, err := RenderTechnologyPrompt(".snap/sessions/auth/tasks")
+	result, err := RenderTechnologyPrompt(testTasksDir, testBriefPath)
 	require.NoError(t, err)
 
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/PRD.md")
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/TECHNOLOGY.md")
-	assert.Contains(t, result, "CLAUDE.md")
-	assert.Contains(t, result, "docs/context/")
-	assert.Contains(t, result, "Guardrails")
-	assert.Contains(t, result, "Completion")
+	assert.Contains(t, result, testBriefPath)
+	assert.Contains(t, result, testTasksDir+"/PRD.md")
+	assert.Contains(t, result, testTasksDir+"/TECHNOLOGY.md")
+	assert.Contains(t, result, "## Repo Evidence")
+	assert.Contains(t, result, "Grounded in:")
+	// Embedded 30-line testing philosophy block must be gone.
+	assert.NotContains(t, result, "Three layers, distinct purposes")
+	assert.NotContains(t, result, "What \"outside\" means per surface")
+	assert.Contains(t, result, "TECHNOLOGY.md written")
 }
 
 func TestRenderDesignPrompt(t *testing.T) {
-	result, err := RenderDesignPrompt(".snap/sessions/auth/tasks")
+	result, err := RenderDesignPrompt(testTasksDir, testBriefPath)
 	require.NoError(t, err)
 
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/PRD.md")
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/TECHNOLOGY.md")
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/DESIGN.md")
-	assert.Contains(t, result, "CLAUDE.md")
-	assert.Contains(t, result, "docs/context/")
-	assert.Contains(t, result, "Guardrails")
-	assert.Contains(t, result, "Completion")
-	assert.Contains(t, result, "Do NOT add surfaces, states, or interaction patterns")
-	assert.Contains(t, result, "future phase")
+	assert.Contains(t, result, testBriefPath)
+	assert.Contains(t, result, testTasksDir+"/PRD.md")
+	assert.Contains(t, result, testTasksDir+"/DESIGN.md")
+	assert.Contains(t, result, "## Repo Evidence")
+	assert.Contains(t, result, "Grounded in:")
 
-	// Contract Rules (M2).
+	// Contract Rules + State Matrix preserved.
 	assert.Contains(t, result, "Contract")
 	assert.Contains(t, result, "MUST")
 	assert.Contains(t, result, "MUST NOT")
-
-	// UI State Matrix (S2).
 	assert.Contains(t, result, "State Matrix")
-	assert.Contains(t, result, "Flow")
-	assert.Contains(t, result, "Expected Behavior")
-	assert.Contains(t, result, "Auto-generate")
-
-	// Rule cap.
 	assert.Contains(t, result, "30 rules")
+	assert.Contains(t, result, "DESIGN.md written")
 }
 
 func TestRenderAnalyzeTasksPrompt(t *testing.T) {
-	result, err := RenderAnalyzeTasksPrompt(".snap/sessions/auth/tasks")
+	result, err := RenderAnalyzeTasksPrompt(testTasksDir, testBriefPath)
 	require.NoError(t, err)
 
-	// Contains tasksDir references.
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/PRD.md")
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/TECHNOLOGY.md")
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/DESIGN.md")
-
-	// Context loading.
-	assert.Contains(t, result, "CLAUDE.md")
-	assert.Contains(t, result, "docs/context/")
-
-	// Definitions from create-tasks.
+	assert.Contains(t, result, testBriefPath)
+	assert.Contains(t, result, testTasksDir+"/PRD.md")
+	assert.Contains(t, result, testTasksDir+"/TECHNOLOGY.md")
+	assert.Contains(t, result, "vertical slice")
 	assert.Contains(t, result, "Walking Skeleton")
-	assert.Contains(t, result, "source files, tests, and build tooling already exist")
 	assert.Contains(t, result, "Scope (In) bullets")
 	assert.Contains(t, result, "Acceptance criteria")
-	assert.Contains(t, result, "vertical slice")
+	assert.Contains(t, result, "Grounded in:")
 
-	// Anti-pattern criteria from assess-tasks.
-	assert.Contains(t, result, "Horizontal Slice")
-	assert.Contains(t, result, "Infrastructure/Docs-Only")
-	assert.Contains(t, result, "Too Broad")
-	assert.Contains(t, result, "Too Narrow")
-	assert.Contains(t, result, "Non-Demoable")
-
-	// Verdict labels.
-	assert.Contains(t, result, "PASS")
-	assert.Contains(t, result, "MERGE")
-	assert.Contains(t, result, "ABSORB")
-	assert.Contains(t, result, "SPLIT")
-	assert.Contains(t, result, "REWORK")
-
-	// Anti-pattern #6: UI-Undefined Task (M3).
-	assert.Contains(t, result, "UI-Undefined Task")
-	assert.Contains(t, result, "user-facing impact")
-	assert.Contains(t, result, "6 anti-patterns")
-
-	// Context Alignment Check (M5).
-	assert.Contains(t, result, "Context Alignment Check")
-	assert.Contains(t, result, "docs/context/*")
-	assert.Contains(t, result, "Aligned")
-	assert.Contains(t, result, "Conflicting")
-	assert.Contains(t, result, "## Traceability Gate")
-	assert.Contains(t, result, "Every task must map back to")
-	assert.Contains(t, result, "remove or merge it")
-	assert.Contains(t, result, "Preserve explicit PRD non-goals")
-
-	// Refinement from merge-tasks.
-	assert.Contains(t, result, "Re-verify")
-
-	// Guardrails.
-	assert.Contains(t, result, "Guardrails")
-
-	// Preamble (via prependPreamble).
-	assert.Contains(t, result, "simplest solution")
+	// Stripped: 6 anti-patterns, traceability gate, context alignment.
+	assert.NotContains(t, result, "Horizontal Slice")
+	assert.NotContains(t, result, "UI-Undefined Task")
+	assert.NotContains(t, result, "Traceability Gate")
+	assert.NotContains(t, result, "Context Alignment Check")
+	assert.NotContains(t, result, "## Conflict Resolution")
+	assert.NotContains(t, result, "6 anti-patterns")
 }
 
 func TestRenderGenerateTasksPrompt(t *testing.T) {
-	result, err := RenderGenerateTasksPrompt(".snap/sessions/auth/tasks")
+	result, err := RenderGenerateTasksPrompt(testTasksDir, testBriefPath)
 	require.NoError(t, err)
 
-	// Contains tasksDir reference for TASKS.md.
-	assert.Contains(t, result, ".snap/sessions/auth/tasks/TASKS.md")
+	assert.Contains(t, result, testTasksDir+"/TASKS.md")
+	assert.Contains(t, result, testBriefPath)
 
-	// Contains TASKS.md section format (A–J).
-	for _, section := range []string{"A.", "B.", "C.", "D.", "E.", "F.", "G.", "H.", "I.", "J."} {
+	// TASKS.md A–J sections preserved.
+	for _, section := range []string{"A. ", "B. ", "C. ", "D. ", "E. ", "F. ", "G. ", "H. ", "I. ", "J. "} {
 		assert.Contains(t, result, section, "should contain section %s", section)
 	}
 
-	// Contains TASK<N>.md 15-section format.
+	// 15-section TASK format preserved.
 	assert.Contains(t, result, "0. Task Type and Placement")
 	assert.Contains(t, result, "14. Follow-ups Unlocked")
 
-	// Contains subagent instructions.
+	// Subagent dispatch + Grounded-in footer requirement.
 	assert.Contains(t, result, "Agent tool")
 	assert.Contains(t, result, "subagent")
-
-	// Context loading for subagents.
-	assert.Contains(t, result, "CLAUDE.md")
-	assert.Contains(t, result, "docs/context/")
-
-	// User-facing flag in section 0 (S3).
-	assert.Contains(t, result, "user-facing: yes/no")
-
-	// UI deliverables in section 4 (M4).
-	assert.Contains(t, result, "DESIGN.md state matrix")
-	assert.Contains(t, result, "DESIGN.md contract rules")
-	assert.Contains(t, result, "N/A")
-	assert.Contains(t, result, "no user-facing output")
-
-	// UI acceptance criteria in section 11 (M4).
-	assert.Contains(t, result, "UI-specific criteria")
-
-	// Guardrails.
-	assert.Contains(t, result, "Guardrails")
-	assert.Contains(t, result, "Do NOT add deliverables")
-	assert.Contains(t, result, "preserve the task's original boundaries")
-	assert.Contains(t, result, "If the row is underspecified")
-	assert.Contains(t, result, "Prefer behavioral expectations over prescribing internal implementation details")
-	assert.Contains(t, result, "Name specific files, functions, or types only when")
-	assert.Contains(t, result, "Acceptance criteria must verify outcomes, not internal implementation choices")
-
-	// Preamble (via prependPreamble).
-	assert.Contains(t, result, "simplest solution")
+	assert.Contains(t, result, "Grounded in:")
 }
 
-func TestRenderPrinciplesPreamble(t *testing.T) {
-	preamble, err := RenderPrinciplesPreamble()
+func TestRenderSlimTaskPrompt_Tiny(t *testing.T) {
+	result, err := RenderSlimTaskPrompt(testTasksDir, testBriefPath, 1, false)
 	require.NoError(t, err)
-	assert.NotEmpty(t, preamble)
-	assert.Contains(t, preamble, "KISS")
-	assert.Contains(t, preamble, "DRY")
-	assert.Contains(t, preamble, "SOLID")
-	assert.Contains(t, preamble, "YAGNI")
+
+	assert.Contains(t, result, testBriefPath)
+	assert.Contains(t, result, testTasksDir+"/TASK1.md")
+	// At tiny: 1–3 repo files required.
+	assert.Contains(t, result, "1–3 file")
+	assert.NotContains(t, result, "PRD.md")
+
+	// 6 sections.
+	assert.Contains(t, result, "1. Outcome")
+	assert.Contains(t, result, "2. Scope")
+	assert.Contains(t, result, "3. Acceptance")
+	assert.Contains(t, result, "4. Files likely touched")
+	assert.Contains(t, result, "5. Verification")
+	assert.Contains(t, result, "6. Grounded in")
+	assert.Contains(t, result, "TASK1.md written")
 }
 
-func TestPrependPreamble(t *testing.T) {
-	result, err := prependPreamble("hello world")
+func TestRenderSlimTaskPrompt_Small(t *testing.T) {
+	result, err := RenderSlimTaskPrompt(testTasksDir, testBriefPath, 2, true)
 	require.NoError(t, err)
 
-	preamble, err := RenderPrinciplesPreamble()
-	require.NoError(t, err)
-
-	assert.True(t, strings.HasPrefix(result, preamble), "result should start with preamble")
-	assert.Contains(t, result, "\n\n")
-	assert.True(t, strings.HasSuffix(result, "hello world"), "result should end with original prompt")
+	assert.Contains(t, result, testBriefPath)
+	assert.Contains(t, result, testTasksDir+"/PRD.md")
+	assert.Contains(t, result, testTasksDir+"/TASK2.md")
+	// Small: 3+ repo file paths required.
+	assert.Contains(t, result, "3+ repo file paths")
+	assert.Contains(t, result, "TASK2.md written")
 }
 
-func TestPreamblePrepended_PRD(t *testing.T) {
-	result, err := RenderPRDPrompt(".snap/sessions/auth/tasks", "")
+func TestRenderSlimTasksMdPrompt(t *testing.T) {
+	result, err := RenderSlimTasksMdPrompt(testTasksDir, testBriefPath)
 	require.NoError(t, err)
 
-	preamble, err := RenderPrinciplesPreamble()
-	require.NoError(t, err)
-
-	assert.True(t, strings.HasPrefix(result, preamble), "PRD prompt should start with preamble")
+	assert.Contains(t, result, testTasksDir+"/TASKS.md")
+	assert.Contains(t, result, testBriefPath)
+	// Section G heading required for snap run compatibility.
+	assert.Contains(t, result, "## G. Task list")
+	// Cap at 3 tasks.
+	assert.Contains(t, result, "Cap at 3 tasks")
+	// TIER_MISMATCH escape hatch.
+	assert.Contains(t, result, "TIER_MISMATCH")
+	assert.Contains(t, result, "TASKS.md written")
 }
 
-func TestPreamblePrepended_Technology(t *testing.T) {
-	result, err := RenderTechnologyPrompt(".snap/sessions/auth/tasks")
-	require.NoError(t, err)
-
-	preamble, err := RenderPrinciplesPreamble()
-	require.NoError(t, err)
-
-	assert.True(t, strings.HasPrefix(result, preamble), "Technology prompt should start with preamble")
-}
-
-func TestPreamblePrepended_Design(t *testing.T) {
-	result, err := RenderDesignPrompt(".snap/sessions/auth/tasks")
-	require.NoError(t, err)
-
-	preamble, err := RenderPrinciplesPreamble()
-	require.NoError(t, err)
-
-	assert.True(t, strings.HasPrefix(result, preamble), "Design prompt should start with preamble")
-}
-
-func TestPreamblePrepended_AnalyzeTasks(t *testing.T) {
-	result, err := RenderAnalyzeTasksPrompt(".snap/sessions/auth/tasks")
-	require.NoError(t, err)
-
-	preamble, err := RenderPrinciplesPreamble()
-	require.NoError(t, err)
-
-	assert.True(t, strings.HasPrefix(result, preamble), "AnalyzeTasks prompt should start with preamble")
-}
-
-func TestPreamblePrepended_GenerateTasks(t *testing.T) {
-	result, err := RenderGenerateTasksPrompt(".snap/sessions/auth/tasks")
-	require.NoError(t, err)
-
-	preamble, err := RenderPrinciplesPreamble()
-	require.NoError(t, err)
-
-	assert.True(t, strings.HasPrefix(result, preamble), "GenerateTasks prompt should start with preamble")
-}
-
-func TestAllPrompts_ContainCodebaseExploration(t *testing.T) {
+func TestAllPrompts_HaveBriefPath(t *testing.T) {
 	tests := []struct {
 		name   string
 		render func() (string, error)
 	}{
-		{"PRD", func() (string, error) { return RenderPRDPrompt("tasks", "") }},
-		{"Technology", func() (string, error) { return RenderTechnologyPrompt("tasks") }},
-		{"Design", func() (string, error) { return RenderDesignPrompt("tasks") }},
-		{"AnalyzeTasks", func() (string, error) { return RenderAnalyzeTasksPrompt("tasks") }},
-		{"GenerateTasks", func() (string, error) { return RenderGenerateTasksPrompt("tasks") }},
+		{"Requirements", func() (string, error) { return RenderRequirementsPrompt(testBriefPath) }},
+		{"BriefSynthesis", func() (string, error) { return RenderBriefSynthesisPrompt(testBriefPath) }},
+		{"Triage", func() (string, error) { return RenderTriagePrompt(testBriefPath) }},
+		{"Critic", func() (string, error) { return RenderCriticPrompt(testBriefPath, testTasksDir+"/PRD.md") }},
+		{"PRD", func() (string, error) { return RenderPRDPrompt(testTasksDir, testBriefPath) }},
+		{"Technology", func() (string, error) { return RenderTechnologyPrompt(testTasksDir, testBriefPath) }},
+		{"Design", func() (string, error) { return RenderDesignPrompt(testTasksDir, testBriefPath) }},
+		{"AnalyzeTasks", func() (string, error) { return RenderAnalyzeTasksPrompt(testTasksDir, testBriefPath) }},
+		{"GenerateTasks", func() (string, error) { return RenderGenerateTasksPrompt(testTasksDir, testBriefPath) }},
+		{"SlimTaskTiny", func() (string, error) { return RenderSlimTaskPrompt(testTasksDir, testBriefPath, 1, false) }},
+		{"SlimTaskSmall", func() (string, error) { return RenderSlimTaskPrompt(testTasksDir, testBriefPath, 1, true) }},
+		{"SlimTasksMd", func() (string, error) { return RenderSlimTasksMdPrompt(testTasksDir, testBriefPath) }},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := tt.render()
 			require.NoError(t, err)
-			assert.Contains(t, result, "CLAUDE.md")
-			assert.Contains(t, result, "docs/context/")
+			assert.Contains(t, result, testBriefPath, "%s prompt must reference brief path", tt.name)
 		})
+	}
+}
+
+func TestNoPrincipleseamble_AllPrompts(t *testing.T) {
+	// principles.md is deleted; no rendered prompt should include KISS/DRY/SOLID/YAGNI preamble.
+	prompts := []func() (string, error){
+		func() (string, error) { return RenderPRDPrompt(testTasksDir, testBriefPath) },
+		func() (string, error) { return RenderTechnologyPrompt(testTasksDir, testBriefPath) },
+		func() (string, error) { return RenderDesignPrompt(testTasksDir, testBriefPath) },
+		func() (string, error) { return RenderAnalyzeTasksPrompt(testTasksDir, testBriefPath) },
+		func() (string, error) { return RenderGenerateTasksPrompt(testTasksDir, testBriefPath) },
+	}
+
+	for _, render := range prompts {
+		result, err := render()
+		require.NoError(t, err)
+		// "Engineering Principles" was the heading of principles.md.
+		assert.NotContains(t, result, "Engineering Principles")
+		assert.False(t, strings.Contains(result, "KISS") && strings.Contains(result, "DRY") && strings.Contains(result, "SOLID") && strings.Contains(result, "YAGNI"),
+			"prompt still contains KISS/DRY/SOLID/YAGNI preamble")
 	}
 }

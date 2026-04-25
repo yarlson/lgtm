@@ -65,18 +65,33 @@ After session resolution, `snap plan` checks for existing planning artifacts (TA
 
 The conflict guard ensures users don't accidentally overwrite planning artifacts without explicit confirmation.
 
-## Two-Phase Pipeline
+## Pipeline Overview
+
+`snap plan` runs a four-stage pipeline guarded by a per-artifact critic:
+
+```
+Phase 1 (chat) → BRIEF.md synthesis → user review/edit
+              → Triage (tier + flags, user-confirmed via tap.Select)
+              → Phase 2 dispatcher per tier:
+                  tiny:  TASK1.md → critic
+                  small: PRD-lite → critic → TASKS.md → critic-skipped → TASK1..3.md → critic each
+                  full:  PRD → critic → [TECH → critic] → [DESIGN → critic]
+                                     → analyze (in-conv) → generate TASKS.md + TASK1..N.md (-c) → parallel critics
+```
+
+`BRIEF.md` is the fixed source of truth — every downstream artifact must cite it and repo files via `Grounded in:` footers, and a per-artifact critic auto-deletes any uncited content. Triage and critics run on `model.Fast`; writers run on `model.Thinking`. The only `-c` continuation in Phase 2 is analyze→generate at the full tier (analysis lives in conversation, not on disk).
 
 ### Phase 1: Interactive Requirements Gathering
 
 - User chats with Claude via stdin/stdout
 - Claude asks clarifying questions about requirements
 - If the user already supplied a strict plan, Claude switches to confirmation mode and asks only for missing blockers
-- Claude maintains an explicit scope ledger (`in-scope`, `out-of-scope`, `unresolved`) before Phase 1 completes
 - Claude does not suggest adjacent features, future phases, or tooling work unless the user explicitly asks
-- User types `/done` to signal completion and move to Phase 2
-- Skipped if `--from` flag provides input file
-- Skipped if resuming prior planning session (jumps directly to Phase 2 for continuation)
+- User types `/done` to signal completion
+- After `/done`, the planner sends one more prompt instructing Claude to write `{tasksDir}/BRIEF.md` (seven sections: Problem / Users / In scope / Non-goals / Success criteria / Constraints / Open questions). Empty sections emit `(none)`.
+- Then the planner enters a **brief review loop** (TTY only): a `tap.Select` offers `continue` / `edit` (open `$EDITOR`, fallback `vi`) / `abort`. Non-interactive runs auto-continue.
+- Skipped if `--from` flag provides input file (BRIEF.md is written from that content directly; no chat call, no synthesis call, no review).
+- Skipped if resuming prior planning session and BRIEF.md exists.
 
 #### Interactive Input Modes
 
@@ -112,62 +127,48 @@ Planner supports two input modes:
 6. Extract brief from conversation history
 7. Transition to Phase 2
 
-### Phase 2: Autonomous Document Generation
+### Triage
 
-- Claude generates task files based on brief via a 4-step pipeline:
-  1. **PRD.md** — Product requirements document (features, acceptance criteria, scope)
-  2. **TECHNOLOGY.md** and **DESIGN.md** — Technology decisions and design specification (generated in parallel)
-  3. **Analyze tasks** — Creates initial task list, assesses against anti-patterns, refines (all in one conversation turn, no files written)
-  4. **Generate tasks** — Writes TASKS.md (sections A–J), then Claude spawns subagents to write individual TASK<N>.md files
-- Each document generated via LLM call with specialized prompt template
-- **Engineering principles preamble**: All Phase 2 prompts are prepended with shared engineering principles (KISS, DRY, SOLID, YAGNI) to guide consistent decision-making across all generated documents
-- Documents written to `.snap/sessions/<session>/tasks/`
-- File listing printed after completion
+After BRIEF.md is finalised, the planner runs an LLM classifier (`model.Fast`) over BRIEF.md alone — fresh context, no `-c`. The classifier emits one JSON line: `{"tier":"tiny|small|full","has_architecture":bool,"has_ui":bool,"rationale":"..."}`. On unparseable output, the planner falls back to `tier=full` with both flags true.
 
-Phase 2 flow:
+On TTY runs, a `tap.Select` shows the classifier's choice as the default. The user can override; the chosen tier is written to `.snap/sessions/<name>/.plan-tier` (format: `tier|has_architecture|has_ui`) so resume re-enters the same dispatcher branch without re-classifying. To correct an under-included flag at full tier (e.g., classifier missed UI), the user edits BRIEF.md and re-plans — there is no per-flag confirmation prompt.
 
-1. **Step 1 (Sequential)**: Generate PRD
-   - Render PRD prompt template
-   - Prepend engineering principles preamble
-   - Call LLM executor
-   - Write PRD.md to tasks directory
-   - Display step completion
-2. **Step 2 (Parallel)**: Generate TECHNOLOGY.md and DESIGN.md concurrently
-   - Render TECHNOLOGY and DESIGN prompt templates
-   - Prepend engineering principles preamble to both
-   - Call LLM executor for both concurrently via errgroup
-   - Write TECHNOLOGY.md and DESIGN.md to tasks directory
-   - Display individual sub-step completions with timing
-3. **Step 3 (Sequential)**: Analyze tasks
-   - Render analyze-tasks prompt template (combines create, assess, refine, validate into one prompt)
-   - Prepend engineering principles preamble
-   - Call LLM executor in fresh conversation (no -c flag)
-   - Reads PRD, TECHNOLOGY, DESIGN; creates task list; enforces traceability back to explicit requirements, constraints, and risk mitigations; assesses against 6 anti-patterns (horizontal slice, infrastructure-only, too broad, too narrow, non-demoable, UI-undefined); refines flagged tasks via merge/absorb/split/rework; validates context alignment with `docs/context/*` constraints; performs self-check re-verification
-   - All output stays in conversation (no files written yet)
-   - Display step completion
-4. **Step 4 (Sequential)**: Generate tasks
-   - Render generate-tasks prompt template
-   - Prepend engineering principles preamble
-   - Call LLM executor with -c flag (continues analyze-tasks conversation)
-   - Claude writes TASKS.md with sections A–J to tasks directory
-   - Claude spawns subagents (via Agent tool) to write individual TASK<N>.md files in parallel
-   - TASKS.md and TASK<N>.md generation preserve finalized task boundaries; underspecified rows record assumptions instead of expanding scope
-   - TASK<N>.md files stay outcome-driven instead of implementation-prescriptive; exact files/functions/types are named only when established by the codebase or required by contract
-   - Each subagent inherits full conversation context and writes one task file using the 15-section format
-   - Display step completion
-5. Print file listing showing all generated files (PRD.md, TECHNOLOGY.md, DESIGN.md, TASKS.md, TASK0.md, TASK1.md, etc.)
-6. Print "Run: snap run <session>" suggestion
+### Phase 2: Autonomous Document Generation per tier
 
-### Engineering Principles
+The dispatcher branches on the triaged tier. Each writer step is followed by a per-artifact critic (`model.Fast`, fresh context) that reads BRIEF + the artifact + cited repo files and rewrites the artifact in place to delete any uncited section. Critic failures are non-fatal (the planner logs and continues). Critic is skipped on `TASKS.md` (structural index) and on the in-conversation analyze step.
 
-All planning prompts (PRD, Technology, Design, Tasks) are guided by shared engineering principles defined in `internal/plan/prompts/principles.md`:
+Resume detects existing artifact files via `os.Stat` and skips writers for files already present; the critic still runs on existing files.
 
-- **KISS** — Prefer simplest solution; avoid premature abstraction, unnecessary indirection, speculative generality
-- **DRY** — Single source of truth; eliminate duplication of decisions and intent
-- **SOLID** — Single responsibility per module; open for extension, closed for modification; substitutable abstractions; narrow interfaces; depend on abstractions
-- **YAGNI** — Build only what's needed now; no hypothetical extension points or configuration for non-existent scenarios
+**Tiny tier** (1 writer + 1 critic):
 
-Conflicts resolved in favor of simplicity: straightforward solutions that work today are better than elegant abstractions that anticipate tomorrow.
+1. Generate `TASK1.md` via the slim 6-section format (Outcome / Scope / Acceptance / Files-likely-touched / Verification / Grounded in)
+2. Critic on `TASK1.md`
+
+**Small tier** (PRD-lite + slim TASKS.md + per-task slim files; ~6–10 calls):
+
+1. Generate PRD-lite → critic
+2. Generate slim `TASKS.md` (section G heading kept for `snap run` compatibility) → no critic
+3. Read TASKS.md row count (capped at 3); for each task, generate slim TASK<N>.md → critic each
+4. If TASKS.md output contains `TIER_MISMATCH`, the dispatcher aborts with an instruction to re-plan at full tier
+
+**Full tier** (4 writers + flag-conditional + analyze + generate-tasks; ~7–14 calls):
+
+1. Generate PRD → critic
+2. If `has_architecture`: generate TECHNOLOGY.md → critic. (Skipped otherwise — never empty-generated.)
+3. If `has_ui`: generate DESIGN.md → critic. (Skipped otherwise.)
+4. Analyze tasks (in-conversation, no file written, no critic)
+5. Generate TASKS.md + per-task subagents via `-c` continuation; subagents write 15-section TASK<N>.md files in parallel
+6. Run critics in parallel via existing `runParallel` over each TASK<N>.md (one batch)
+
+TECH and DESIGN run sequentially (DESIGN benefits from reading TECH; each step pays for a critic anyway, so parallelism saves little).
+
+### Per-artifact critic
+
+The critic prompt instructs the LLM to read BRIEF.md + the artifact + every repo file cited in `Grounded in:` footers, then delete every section, bullet, table row, or paragraph not supported by either source. Forbidden patterns include "could", "might", "consider", "future", "later phase", "stretch goal", "nice-to-have", and `Grounded in:` footers without specific line ranges or symbols. The critic writes the cleaned content back via the LLM's Write tool and prints a one-line summary. Failures are logged but never abort planning — the user can replan via the conflict guard if a critic over-deletes.
+
+### Grounding model
+
+Generators must produce a `## Repo Evidence` section (3–5 cited file paths, with one-line relevance notes) at small/full tiers — softened to 1–3 file paths at tiny tier. Every other section ends with a `Grounded in: BRIEF.md#<section>; <repo-file-path>:<lines-or-symbol>` footer. Sections without footers are deleted by the critic. Generators are prohibited from filler language ("consider", "future", "later", "nice-to-have", "stretch") and from making assumptions to fill empty sections — empty sections render as `(none)` or migrate to BRIEF Open questions.
 
 ## --from Flag
 

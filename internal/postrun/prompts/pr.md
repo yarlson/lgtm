@@ -36,8 +36,8 @@ Body target ~150 words. Hard ceiling 250 words. Prefer terse bullets over prose.
 - Do not quote the PRD verbatim. Use it only for motivation.
 - Do not invent requirements that are not in the PRD or commits.
 - Do not pad with filler ("This PR…", "In this change we…").
-{{if not .PRDContent}}- The PRD is not available for this branch. Skip the "Why" block entirely; do not fabricate motivation.
-{{end}}
+  {{if not .PRDContent}}- The PRD is not available for this branch. Skip the "Why" block entirely; do not fabricate motivation.
+  {{end}}
 
 ## Execution
 

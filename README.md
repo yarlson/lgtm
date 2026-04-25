@@ -44,38 +44,79 @@ That's it. `snap plan` walks you through requirements and generates task files. 
 
 ## Planning
 
-`snap plan` is an interactive session where you describe what you want to build. Chat about your requirements, type `/done`, and snap generates the full planning scaffold: PRD, technology decisions, design doc, and numbered task files.
+`snap plan` is a four-stage pipeline:
 
-If you already know the scope, say it plainly. Planning mode now treats explicit constraints and exclusions as hard boundaries, asks for clarification instead of "helpfully" expanding scope, and keeps generated task files focused on outcomes and acceptance criteria rather than over-prescribing implementation details.
+1. **Chat** about requirements (`/done` to finish).
+2. **`BRIEF.md`** is written from the chat. snap opens a `tap.Select` with `continue` / `edit` (in `$EDITOR`) / `abort`. BRIEF.md is the source of truth — every later artifact must cite it.
+3. **Triage** classifies the work into one of three tiers (`tiny` / `small` / `full`) plus optional `architecture` and `ui` flags. snap shows the suggestion + rationale and you confirm via `tap.Select` (override allowed).
+4. **Generation** scales to the tier. Each artifact is run through a critic that deletes any section without a `Grounded in:` citation back to BRIEF.md or to a specific repo file.
 
 ```bash
-snap plan my-feature           # Chat about requirements, type /done when ready
+snap plan my-feature           # Chat → BRIEF.md → triage → generate → critic
 snap run my-feature            # Implements everything
 ```
 
-On a fresh project with no sessions, `snap plan` automatically creates a session. You can also pre-create named sessions with `snap new <name>`.
+`snap plan` auto-creates a default session on a fresh project. To skip the chat entirely, supply a brief on disk: `snap plan --from requirements.md`. To re-plan an existing session, snap prompts you to clean up or branch a new session.
 
-If you run `snap plan` again on a session with existing planning artifacts, snap will prompt you to either clean up and re-plan, or create a new session (in interactive mode). Non-interactive mode shows clear instructions to prevent accidental overwrites.
+### Tier reference
 
-Or skip the chat and feed a requirements file:
+The tier controls which artifacts are generated. Pick the one that matches the brief.
+
+| Tier  | When                                                                     | Artifacts                                                                                        |
+| ----- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| tiny  | One focused change. One or two files. No new module, schema, or surface. | `BRIEF.md`, `TASK1.md`                                                                           |
+| small | One feature in an existing area. 2–4 vertical slices.                    | `BRIEF.md`, `PRD.md`, `TASKS.md`, `TASK1.md`–`TASK3.md`                                          |
+| full  | Multi-feature scope, multiple modules, or a redesign.                    | `BRIEF.md`, `PRD.md`, optional `TECHNOLOGY.md` / `DESIGN.md`, `TASKS.md`, `TASK1.md`–`TASK_N.md` |
+
+`TECHNOLOGY.md` is only generated at full tier when the brief mentions architecture, integrations, performance, or deployment. `DESIGN.md` is only generated when the brief mentions user-facing surfaces, terminology, or accessibility. Empty docs are not generated — write the brief explicitly if you want them included.
+
+If the brief naturally requires more than 3 vertical slices at small tier, snap aborts with a `TIER_MISMATCH` notice. Re-plan and pick `full` at the triage prompt.
+
+#### Tiny — example
 
 ```bash
-snap plan --from requirements.md
+snap plan rename-flag
+# > Add a --json flag to `snap status` that prints state.json verbatim. /done
+# triage suggests: tiny
+# generates: BRIEF.md, TASK1.md
+snap run rename-flag
+```
+
+#### Small — example
+
+```bash
+snap plan yaml-lint
+# > Build a CLI that lints YAML files: report syntax errors, schema mismatches,
+#   indent inconsistencies. Two output modes: human and JSON. /done
+# triage suggests: small
+# generates: BRIEF.md, PRD.md, TASKS.md, TASK1.md, TASK2.md, TASK3.md
+snap run yaml-lint
+```
+
+#### Full — example
+
+```bash
+snap plan dashboard
+# > Web dashboard for browsing snap sessions: list, view PRD, edit BRIEF, view diffs.
+#   New HTTP server, persistent state, auth via local token. /done
+# triage suggests: full (architecture: yes, ui: yes)
+# generates: BRIEF.md, PRD.md, TECHNOLOGY.md, DESIGN.md, TASKS.md, TASK1..N.md
+snap run dashboard
 ```
 
 ### Manual task files
 
-If you prefer full control, write task files directly in `docs/tasks/` and run `snap run`. Name them `TASK1.md`, `TASK2.md`, etc. (uppercase, numbered). Each should describe what to build, requirements, and acceptance criteria. See `example/` for a working sample.
+Write task files directly in `docs/tasks/` and run `snap run`. Name them `TASK1.md`, `TASK2.md`, etc. (uppercase, numbered). See `example/` for a working sample.
 
 ### Single task file mode
 
-If you only have one task file, you can skip PRD, TECHNOLOGY, DESIGN, and session setup entirely:
+If you only have one task file, skip the planning artifacts entirely:
 
 ```bash
 snap run --task-file ./notes/custom-task.md
 ```
 
-The file can have any name and live anywhere on disk. snap still runs the full 10-step implementation flow, and stores resumable state under `.snap/adhoc/`.
+The file can have any name and live anywhere on disk. snap still runs the full 10-step implementation flow, with resumable state under `.snap/adhoc/`.
 
 ## The workflow
 

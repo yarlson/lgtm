@@ -207,9 +207,11 @@ func MarkPlanStarted(projectRoot, name string) error {
 
 // artifactNames are exact filenames considered planning artifacts.
 var artifactNames = map[string]bool{
+	"BRIEF.md":      true,
 	"PRD.md":        true,
 	"TECHNOLOGY.md": true,
 	"DESIGN.md":     true,
+	"TASKS.md":      true,
 }
 
 // HasArtifacts reports whether a session's tasks directory contains any
@@ -251,7 +253,7 @@ func CleanSession(projectRoot, name string) error {
 	}
 
 	sd := Dir(projectRoot, name)
-	for _, f := range []string{"state.json", ".plan-started"} {
+	for _, f := range []string{"state.json", ".plan-started", ".plan-tier"} {
 		if err := os.Remove(filepath.Join(sd, f)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", f, err)
 		}

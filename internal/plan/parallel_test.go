@@ -138,7 +138,7 @@ func TestRunParallel_AllFail(t *testing.T) {
 
 func TestRunParallel_OutputIsolation(t *testing.T) {
 	// Verify each goroutine writes to its own buffer (no interleaving).
-	exec := &mockExecutor{}
+	exec := &recordingExecutor{}
 	tasks := []parallelTask{
 		{name: "Technology plan", modelType: model.Thinking, args: []string{"tech-prompt"}},
 		{name: "Design spec", modelType: model.Thinking, args: []string{"design-prompt"}},

@@ -123,11 +123,12 @@ func TestE2E_CUJ2_PlanInteractive(t *testing.T) {
 
 	outputStr := string(output)
 
-	// Assert step headers present (4-step pipeline).
-	assert.Contains(t, outputStr, "Step 1/4")
-	assert.Contains(t, outputStr, "Step 2/4")
-	assert.Contains(t, outputStr, "Step 3/4")
-	assert.Contains(t, outputStr, "Step 4/4")
+	// New pipeline: BRIEF synthesis + triage + (full-tier writers).
+	// Mock claude returns garbled output, so triage falls back to TierFull with
+	// both flags → 5 writer steps (PRD + TECH + DESIGN + analyze + generate).
+	assert.Contains(t, outputStr, "Triaging brief...")
+	assert.Contains(t, outputStr, "Step 1/5")
+	assert.Contains(t, outputStr, "Step 5/5")
 
 	// Assert planning complete message.
 	assert.Contains(t, outputStr, "Planning complete")
@@ -136,6 +137,11 @@ func TestE2E_CUJ2_PlanInteractive(t *testing.T) {
 	markerPath := filepath.Join(projectDir, ".snap", "sessions", "auth", ".plan-started")
 	_, err = os.Stat(markerPath)
 	assert.NoError(t, err, ".plan-started marker should exist")
+
+	// Assert .plan-tier marker was written (triage result persisted).
+	tierPath := filepath.Join(projectDir, ".snap", "sessions", "auth", ".plan-tier")
+	_, err = os.Stat(tierPath)
+	assert.NoError(t, err, ".plan-tier marker should exist")
 }
 
 // CUJ-2: Plan and Implement — with file (--from).
@@ -175,14 +181,18 @@ func TestE2E_CUJ2_PlanWithFile(t *testing.T) {
 	// Assert --from header.
 	assert.Contains(t, outputStr, "using brief.md as input")
 
-	// Assert step headers (4-step pipeline).
-	assert.Contains(t, outputStr, "Step 1/4")
-	assert.Contains(t, outputStr, "Step 2/4")
-	assert.Contains(t, outputStr, "Step 3/4")
-	assert.Contains(t, outputStr, "Step 4/4")
+	// New pipeline: triage runs even with --from. Fallback is full + flags → 5 steps.
+	assert.Contains(t, outputStr, "Triaging brief...")
+	assert.Contains(t, outputStr, "Step 1/5")
+	assert.Contains(t, outputStr, "Step 5/5")
 
 	// Assert planning complete.
 	assert.Contains(t, outputStr, "Planning complete")
+
+	// BRIEF.md was created from --from input.
+	writtenBrief := filepath.Join(projectDir, ".snap", "sessions", "auth", "tasks", "BRIEF.md")
+	_, err = os.Stat(writtenBrief)
+	assert.NoError(t, err, "BRIEF.md should be written from --from content")
 }
 
 // Test: snap plan with nonexistent session.
@@ -372,28 +382,33 @@ func TestPlanE2E_UIContract(t *testing.T) {
 	require.NoError(t, planErr, "snap plan failed: %s", output)
 	assert.Contains(t, string(output), "Planning complete")
 
-	// Verify analyze-tasks prompt contains UI anti-pattern and context alignment.
+	// Verify analyze-tasks prompt now grounds tasks against BRIEF + repo, not via
+	// the legacy 6-anti-pattern rubric (which was stripped).
 	analyzePrompt, err := renderAnalyzeTasksForTest(tasksDir)
 	require.NoError(t, err)
-	assert.Contains(t, analyzePrompt, "UI-Undefined Task")
-	assert.Contains(t, analyzePrompt, "Context Alignment Check")
+	assert.Contains(t, analyzePrompt, "vertical slice")
+	assert.Contains(t, analyzePrompt, "Grounded in:")
+	assert.NotContains(t, analyzePrompt, "UI-Undefined Task")
+	assert.NotContains(t, analyzePrompt, "Context Alignment Check")
 
-	// Verify generate-tasks prompt contains user-facing flag and UI deliverables.
+	// Verify generate-tasks prompt still emits the 15-section TASK<N>.md format
+	// and now demands Grounded-in footers per section.
 	generatePrompt, err := renderGenerateTasksForTest(tasksDir)
 	require.NoError(t, err)
 	assert.Contains(t, generatePrompt, "user-facing: yes/no")
 	assert.Contains(t, generatePrompt, "DESIGN.md state matrix")
 	assert.Contains(t, generatePrompt, "DESIGN.md contract rules")
+	assert.Contains(t, generatePrompt, "Grounded in:")
 }
 
 // renderAnalyzeTasksForTest calls the plan package's render function for E2E verification.
 func renderAnalyzeTasksForTest(tasksDir string) (string, error) {
-	return planpkg.RenderAnalyzeTasksPrompt(tasksDir)
+	return planpkg.RenderAnalyzeTasksPrompt(tasksDir, tasksDir+"/BRIEF.md")
 }
 
 // renderGenerateTasksForTest calls the plan package's render function for E2E verification.
 func renderGenerateTasksForTest(tasksDir string) (string, error) {
-	return planpkg.RenderGenerateTasksPrompt(tasksDir)
+	return planpkg.RenderGenerateTasksPrompt(tasksDir, tasksDir+"/BRIEF.md")
 }
 
 // Test: snap plan with multiple sessions and no name shows error.

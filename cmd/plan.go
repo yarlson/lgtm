@@ -73,7 +73,10 @@ func planRun(_ *cobra.Command, args []string) error {
 	if input.IsTerminal(os.Stdin) {
 		planOutput = ui.NewSwitchWriter(os.Stdout, ui.WithLFToCRLF())
 	}
-	opts = append(opts, plan.WithOutput(planOutput), plan.WithInput(os.Stdin), plan.WithInteractive(input.IsTerminal(os.Stdin)))
+	// --from implies a non-interactive pipeline: the user gave us the brief, we
+	// shouldn't prompt them for review or tier confirmation.
+	interactive := input.IsTerminal(os.Stdin) && fromFile == ""
+	opts = append(opts, plan.WithOutput(planOutput), plan.WithInput(os.Stdin), plan.WithInteractive(interactive))
 
 	if fromFile != "" {
 		content, err := os.ReadFile(fromFile)
