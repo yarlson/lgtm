@@ -25,8 +25,11 @@ import (
 func mockPlanProvider(t *testing.T) string {
 	t.Helper()
 	mockBinDir := t.TempDir()
+	// POSIX-compliant last-argument extraction: dash on Ubuntu CI rejects the
+	// bash-only ${@: -1} syntax, so iterate to the last positional arg.
 	script := `#!/bin/sh
-PROMPT="${@: -1}"
+PROMPT=""
+for arg in "$@"; do PROMPT=$arg; done
 
 if [ -n "$MOCK_TASKS_DIR" ]; then
   mkdir -p "$MOCK_TASKS_DIR"
