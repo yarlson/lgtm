@@ -330,7 +330,11 @@ func (p *Planner) gatherRequirementsScanner(ctx context.Context) error {
 	return nil
 }
 
-// synthesizeBrief asks Claude to write the structured BRIEF.md from chat history.
+// synthesizeBrief asks Claude to write the structured BRIEF.md from chat history,
+// then verifies the file actually appeared on disk. The agent occasionally treats
+// the synthesis call as a chat turn and asks clarifying questions instead of
+// writing — without verification, the planner would happily proceed against a
+// non-existent file. We fail loudly instead.
 func (p *Planner) synthesizeBrief(ctx context.Context, briefPath string) error {
 	prompt, err := RenderBriefSynthesisPrompt(briefPath)
 	if err != nil {
@@ -341,6 +345,10 @@ func (p *Planner) synthesizeBrief(ctx context.Context, briefPath string) error {
 	start := time.Now()
 	if err := p.executor.Run(ctx, p.output, model.Fast, "-c", prompt); err != nil {
 		return fmt.Errorf("brief synthesis failed: %w", err)
+	}
+	if _, statErr := os.Stat(briefPath); statErr != nil {
+		fmt.Fprintln(p.output, ui.StepFailed("BRIEF.md synthesis", time.Since(start)))
+		return fmt.Errorf("synthesis call returned success but %s was not written: %w", briefPath, statErr)
 	}
 	fmt.Fprintln(p.output, ui.StepComplete("BRIEF.md written", time.Since(start)))
 	return nil
@@ -555,6 +563,12 @@ func (p *Planner) runWriterStep(
 		}
 		if err := p.onFirstMessage(); err != nil {
 			return err
+		}
+		// Verify the artifact actually appeared. The agent occasionally claims
+		// success while having asked a clarifying question instead of writing.
+		if artifactName != "" && !p.artifactExists(artifactName) {
+			fmt.Fprintln(p.output, ui.StepFailed(label, time.Since(start)))
+			return fmt.Errorf("step %d/%d %q reported success but %s was not written", stepIdx, totalSteps, label, artifactName)
 		}
 		fmt.Fprintln(p.output, ui.StepComplete(label, time.Since(start)))
 	}

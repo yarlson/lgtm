@@ -15,18 +15,67 @@ import (
 )
 
 // mockPlanProvider creates a mock claude script that accepts any args and exits 0.
-// It outputs a minimal stream-json line so the parser has something to process.
-// When MOCK_TASKS_DIR env var is set, the mock writes a minimal TASKS.md to that directory
-// so step 7 (task file generation) can parse task count.
+// It outputs a minimal stream-json line so the parser has something to process,
+// and — critically — fakes the LLM's Write tool by creating the artifact files
+// the planner expects after each step. The planner verifies file existence
+// after every writer call, so the mock must actually produce them on disk.
+//
+// MOCK_TASKS_DIR env var, when set, points at the session's tasks directory.
+// The script inspects the prompt (last argv) to decide which artifact to write.
 func mockPlanProvider(t *testing.T) string {
 	t.Helper()
 	mockBinDir := t.TempDir()
-	// The mock outputs a minimal assistant message in stream-json format, then exits.
-	// If MOCK_TASKS_DIR is set, it writes a TASKS.md with 2 tasks so step 7 can proceed.
 	script := `#!/bin/sh
+PROMPT="${@: -1}"
+
 if [ -n "$MOCK_TASKS_DIR" ]; then
   mkdir -p "$MOCK_TASKS_DIR"
-  cat > "$MOCK_TASKS_DIR/TASKS.md" << 'TASKSEOF'
+
+  case "$PROMPT" in
+    *"Synthesize the conversation above"*)
+      cat > "$MOCK_TASKS_DIR/BRIEF.md" << 'BRIEFEOF'
+## Problem
+(none)
+## Users
+(none)
+## In scope
+(none)
+## Non-goals
+(none)
+## Success criteria
+(none)
+## Constraints
+(none)
+## Open questions
+(none)
+BRIEFEOF
+      ;;
+    *"Write a PRD for the work"*)
+      printf '# PRD\n' > "$MOCK_TASKS_DIR/PRD.md"
+      ;;
+    *"Map the product requirements into an engineering plan"*)
+      printf '# TECHNOLOGY\n' > "$MOCK_TASKS_DIR/TECHNOLOGY.md"
+      ;;
+    *"Translate the product requirements into a design"*)
+      printf '# DESIGN\n' > "$MOCK_TASKS_DIR/DESIGN.md"
+      ;;
+    *"exactly six sections"*)
+      # Slim TASK<N>.md prompt — extract N from the prompt.
+      N=$(printf '%s' "$PROMPT" | grep -oE 'TASK[0-9]+\.md' | head -1 | grep -oE '[0-9]+')
+      [ -z "$N" ] && N=1
+      printf '# TASK '"$N"'\n' > "$MOCK_TASKS_DIR/TASK${N}.md"
+      ;;
+    *"Cap at 3 tasks"*)
+      cat > "$MOCK_TASKS_DIR/TASKS.md" << 'TASKSEOF'
+## G. Task list
+
+| # | File | Outcome | Grounded in |
+| - | ---- | ------- | ----------- |
+| 1 | TASK1.md | outcome | BRIEF.md#x; src/x |
+TASKSEOF
+      ;;
+    *"Write TASKS.md and generate individual"*)
+      cat > "$MOCK_TASKS_DIR/TASKS.md" << 'TASKSEOF'
 # TASKS
 
 ## G. Task List
@@ -38,7 +87,10 @@ if [ -n "$MOCK_TASKS_DIR" ]; then
 
 ## H. Dependencies
 TASKSEOF
+      ;;
+  esac
 fi
+
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"OK"}]}}'
 exit 0
 `

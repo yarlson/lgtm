@@ -478,6 +478,56 @@ func TestPlanner_OnFirstMessage_PropagatesError(t *testing.T) {
 	assert.Contains(t, err.Error(), "marker write failed")
 }
 
+// --- Verify-or-fail when LLM claims success but doesn't write ---
+
+func TestPlanner_BriefSynth_FailsWhenFileNotWritten(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+
+	// Executor reports success but never writes BRIEF.md (simulates the agent
+	// asking a clarifying question instead of using the Write tool).
+	exec := &recordingExecutor{}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "auth", tasksDir,
+		WithOutput(&out),
+		WithInput(strings.NewReader("/done\n")),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
+	)
+
+	err := p.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BRIEF.md")
+	assert.Contains(t, err.Error(), "not written")
+}
+
+func TestPlanner_TinyWriter_FailsWhenTaskFileNotWritten(t *testing.T) {
+	sessionDir, tasksDir := newSessionDirs(t)
+	briefPath := filepath.Join(tasksDir, "BRIEF.md")
+	require.NoError(t, os.WriteFile(briefPath, []byte("# brief"), 0o600))
+
+	// fileWriter writes BRIEF on synthesis call but ignores the slim TASK call.
+	briefOnlyWriter := func(prompt string) {
+		if strings.Contains(prompt, "Synthesize the conversation above") {
+			_ = os.WriteFile(briefPath, []byte("# brief"), 0o600) //nolint:errcheck // test fixture
+		}
+	}
+	exec := &recordingExecutor{fileWriter: briefOnlyWriter}
+	var out bytes.Buffer
+
+	p := NewPlanner(exec, "auth", tasksDir,
+		WithOutput(&out),
+		WithBrief("brief.md", "tiny brief"),
+		WithSessionDir(sessionDir),
+		WithForcedTier(TriageResult{Tier: TierTiny}),
+	)
+
+	err := p.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TASK1.md")
+	assert.Contains(t, err.Error(), "not written")
+}
+
 // --- Critic non-fatal ---
 
 func TestPlanner_CriticFailureIsNonFatal(t *testing.T) {

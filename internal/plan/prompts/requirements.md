@@ -29,7 +29,7 @@ Use project context to ask informed, specific questions rather than generic ones
 
 ## Final Step: Write BRIEF.md
 
-When the user types `/done`, do NOT respond conversationally. Instead, immediately write `{{.BriefPath}}` (one Write tool call) with these seven sections, in this exact order:
+When the user types `/done`, do NOT respond conversationally. Do NOT ask clarifying questions. Do NOT propose changes. Immediately write `{{.BriefPath}}` (one Write tool call, full file contents) with these seven sections, in this exact order:
 
 1. ## Problem
 2. ## Users
@@ -43,5 +43,6 @@ Rules for the brief:
 
 - Use only material the user has stated or confirmed in this conversation.
 - Empty sections get a single line: `(none)`.
+- Open ambiguities go under `## Open questions`. Do NOT block the write to ask them again.
 - No assumptions, no inferred features, no "future" / "could" / "consider" / "nice-to-have".
-- One file only. After writing, print exactly: `BRIEF.md written`.
+- One file only. After writing, print exactly: `BRIEF.md written`. Stop.
