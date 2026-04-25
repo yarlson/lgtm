@@ -69,7 +69,14 @@ func TestEventParser_Parse(t *testing.T) {
 			name: "long command output is trimmed to viewport",
 			input: `{"type":"item.started","item":{"id":"1","type":"command_execution","command":"/bin/zsh -lc seq 12","status":"in_progress"}}` + "\n" +
 				`{"type":"item.completed","item":{"id":"1","type":"command_execution","command":"/bin/zsh -lc seq 12","aggregated_output":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n","exit_code":0,"status":"completed"}}`,
-			contains: []string{"Tool output (last 10/12 lines)", "line 12"},
+			contains: []string{"line 3", "line 12"},
+		},
+		{
+			name: "command output delta streams trim to viewport",
+			input: `{"type":"item.started","item":{"id":"1","type":"command_execution","command":"/bin/zsh -lc seq 12","status":"in_progress"}}` + "\n" +
+				`{"type":"item/commandExecution/outputDelta","itemId":"1","delta":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n"}` + "\n" +
+				`{"type":"item.completed","item":{"id":"1","type":"command_execution","command":"/bin/zsh -lc seq 12","aggregated_output":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n","exit_code":0,"status":"completed"}}`,
+			contains: []string{"line 3", "line 12"},
 		},
 		{
 			name:     "skips malformed lines",
@@ -90,9 +97,12 @@ func TestEventParser_Parse(t *testing.T) {
 				assert.Contains(t, rendered, fragment)
 			}
 
-			if tt.name == "long command output is trimmed to viewport" {
-				assert.NotContains(t, rendered, "│ line 1 ")
-				assert.NotContains(t, rendered, "│ line 2 ")
+			if tt.name == "long command output is trimmed to viewport" || tt.name == "command output delta streams trim to viewport" {
+				assert.NotContains(t, rendered, "Tool output")
+				assert.NotContains(t, rendered, "┌")
+				assert.NotContains(t, rendered, "└")
+				assert.NotContains(t, rendered, "line 1\n")
+				assert.NotContains(t, rendered, "line 2\n")
 			}
 		})
 	}

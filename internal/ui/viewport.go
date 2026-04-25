@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
-	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -20,6 +23,14 @@ type LineViewport struct {
 	pending    string
 }
 
+// StreamViewport renders a plain scrolling viewport for streamed tool output.
+type StreamViewport struct {
+	writer        io.Writer
+	viewport      *LineViewport
+	renderedLines int
+	isTTY         bool
+}
+
 // NewLineViewport creates a viewport with a fixed visible line capacity.
 func NewLineViewport(maxLines int) *LineViewport {
 	if maxLines <= 0 {
@@ -29,6 +40,20 @@ func NewLineViewport(maxLines int) *LineViewport {
 	return &LineViewport{
 		maxLines: maxLines,
 		lines:    make([]string, 0, maxLines),
+	}
+}
+
+// NewStreamViewport creates a streaming viewport for tool output.
+func NewStreamViewport(w io.Writer, maxLines int) *StreamViewport {
+	isTTY := false
+	if f, ok := w.(*os.File); ok {
+		isTTY = term.IsTerminal(int(f.Fd()))
+	}
+
+	return &StreamViewport{
+		writer:   w,
+		viewport: NewLineViewport(maxLines),
+		isTTY:    isTTY,
 	}
 }
 
@@ -73,8 +98,42 @@ func (v *LineViewport) Overflowed() bool {
 	return v.TotalLines() > v.maxLines
 }
 
-// FormatToolOutput formats tool output, boxing and trimming it when it exceeds
-// the virtual viewport height.
+// Append adds streamed text and updates the live viewport when attached to a TTY.
+func (v *StreamViewport) Append(text string, isError bool) error {
+	if text == "" {
+		return nil
+	}
+
+	v.viewport.Append(text)
+	if !v.isTTY {
+		return nil
+	}
+
+	return v.render(isError)
+}
+
+// FinalText returns the currently visible text joined with newlines.
+func (v *StreamViewport) FinalText() string {
+	return strings.Join(v.viewport.VisibleLines(), "\n")
+}
+
+// HasOutput reports whether the viewport currently contains visible content.
+func (v *StreamViewport) HasOutput() bool {
+	return len(v.viewport.VisibleLines()) > 0
+}
+
+// IsTTY reports whether this viewport is attached to a terminal.
+func (v *StreamViewport) IsTTY() bool {
+	return v.isTTY
+}
+
+// Reset clears the viewport state.
+func (v *StreamViewport) Reset() {
+	v.viewport = NewLineViewport(v.viewport.maxLines)
+	v.renderedLines = 0
+}
+
+// FormatToolOutput formats tool output and trims it to the visible viewport.
 func FormatToolOutput(text string) string {
 	return formatViewportOutput(text, false)
 }
@@ -101,62 +160,76 @@ func formatViewportOutput(text string, isError bool) string {
 
 	viewport := NewLineViewport(ToolOutputMaxLines)
 	viewport.Append(text)
-	if !viewport.Overflowed() {
-		if isError {
-			return DimError(text) + "\n"
-		}
-		return Info(text)
-	}
-
-	title := fmt.Sprintf("Tool output (last %d/%d lines)", len(viewport.VisibleLines()), viewport.TotalLines())
-	color := ColorTool
 	if isError {
-		color = ColorError
+		return renderToolOutputLines(viewport.VisibleLines(), true)
 	}
 
-	return renderViewportBox(title, viewport.VisibleLines(), color)
+	return renderToolOutputLines(viewport.VisibleLines(), false)
 }
 
-func renderViewportBox(title string, lines []string, color ColorToken) string {
-	title = fitViewportTitle(title)
-	colorCode := ResolveColor(color)
-	borderStyle := ResolveStyle(WeightBold)
-	textStyle := ResolveStyle(WeightDim)
-	resetCode := ResolveStyle(WeightNormal)
+func (v *StreamViewport) render(isError bool) error {
+	lines := v.viewport.VisibleLines()
+	clearCount := v.renderedLines
+	if len(lines) > clearCount {
+		clearCount = len(lines)
+	}
+
+	if v.renderedLines > 0 {
+		if _, err := fmt.Fprintf(v.writer, "\x1b[%dA", v.renderedLines); err != nil {
+			return err
+		}
+	}
+
+	for i := 0; i < clearCount; i++ {
+		if _, err := io.WriteString(v.writer, "\r\x1b[2K"); err != nil {
+			return err
+		}
+		if i < len(lines) {
+			if _, err := io.WriteString(v.writer, styledToolOutputLine(lines[i], isError)); err != nil {
+				return err
+			}
+		}
+		if i < clearCount-1 {
+			if _, err := io.WriteString(v.writer, "\n"); err != nil {
+				return err
+			}
+		}
+	}
+
+	if clearCount > 0 {
+		if _, err := io.WriteString(v.writer, "\n"); err != nil {
+			return err
+		}
+	}
+
+	v.renderedLines = len(lines)
+	return nil
+}
+
+func renderToolOutputLines(lines []string, isError bool) string {
+	if len(lines) == 0 {
+		return ""
+	}
 
 	var builder strings.Builder
-	builder.WriteString(boxTopBorder(title, borderStyle, colorCode, resetCode))
-	for _, line := range lines {
-		builder.WriteString(viewportLine(line, colorCode, textStyle, resetCode))
+	for i, line := range lines {
+		builder.WriteString(styledToolOutputLine(line, isError))
+		if i < len(lines)-1 {
+			builder.WriteByte('\n')
+		}
 	}
-	builder.WriteString(boxBottomBorder(borderStyle, colorCode, resetCode))
 	builder.WriteByte('\n')
 
 	return builder.String()
 }
 
-func fitViewportTitle(title string) string {
-	const maxTitleRunes = BoxWidth - 8
-	if utf8.RuneCountInString(title) <= maxTitleRunes {
-		return title
-	}
-	runes := []rune(title)
-	return string(runes[:maxTitleRunes-1]) + "…"
-}
+func styledToolOutputLine(line string, isError bool) string {
+	sanitized := StripColors(line)
+	resetCode := ResolveStyle(WeightNormal)
 
-func viewportLine(text, borderColor, textStyle, resetCode string) string {
-	text = fitText(StripColors(text))
-	padding := boxContentWidth - utf8.RuneCountInString(text)
-	if padding < 0 {
-		padding = 0
+	if isError {
+		return ResolveStyle(WeightDim) + ResolveColor(ColorError) + sanitized + resetCode
 	}
 
-	return fmt.Sprintf("%s│ %s%s%s%s │%s\n",
-		borderColor,
-		textStyle,
-		text,
-		resetCode,
-		strings.Repeat(" ", padding),
-		resetCode,
-	)
+	return ResolveStyle(WeightDim) + sanitized + resetCode
 }

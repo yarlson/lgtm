@@ -94,7 +94,7 @@ func TestStreamParser(t *testing.T) {
 			name: "trims long tool results to viewport",
 			input: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Bash","input":{"command":"seq 12"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_789","content":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12"}]}}`,
-			expectedContent: []string{"🔧 Bash", "Tool output (last 10/12 lines)", "line 12"},
+			expectedContent: []string{"🔧 Bash", "line 3", "line 12"},
 		},
 		{
 			name:  "parses TodoWrite tool input",
@@ -145,8 +145,11 @@ func TestStreamParser(t *testing.T) {
 			}
 
 			if tt.name == "trims long tool results to viewport" {
-				assert.NotContains(t, strippedResult, "│ line 1 ")
-				assert.NotContains(t, strippedResult, "│ line 2 ")
+				assert.NotContains(t, strippedResult, "Tool output")
+				assert.NotContains(t, strippedResult, "┌")
+				assert.NotContains(t, strippedResult, "└")
+				assert.NotContains(t, strippedResult, "line 1\n")
+				assert.NotContains(t, strippedResult, "line 2\n")
 			}
 		})
 	}

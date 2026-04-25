@@ -32,15 +32,17 @@ func TestFormatToolOutput_UsesViewportForLongOutput(t *testing.T) {
 
 	rendered := ui.StripColors(ui.FormatToolOutput(strings.Join(lines, "\n")))
 
-	assert.Contains(t, rendered, "Tool output (last 10/12 lines)")
-	assert.NotContains(t, rendered, "│ line 1 ")
-	assert.NotContains(t, rendered, "│ line 2 ")
+	assert.NotContains(t, rendered, "Tool output")
+	assert.NotContains(t, rendered, "┌")
+	assert.NotContains(t, rendered, "└")
+	assert.NotContains(t, rendered, "line 1\n")
+	assert.NotContains(t, rendered, "line 2\n")
 	for _, line := range lines[2:] {
 		assert.Contains(t, rendered, line)
 	}
 }
 
-func TestFormatToolOutput_LeavesShortOutputUnboxed(t *testing.T) {
+func TestFormatToolOutput_LeavesShortOutputPlain(t *testing.T) {
 	t.Parallel()
 
 	rendered := ui.StripColors(ui.FormatToolOutput("alpha\nbeta"))

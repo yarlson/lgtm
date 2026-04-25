@@ -3,6 +3,7 @@ package codex
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -112,6 +113,7 @@ func BuildCommandArgs(args ...string) []string {
 type EventParser struct {
 	writer           io.Writer
 	markdownRenderer *ui.MarkdownRenderer
+	commandViewports map[string]*ui.StreamViewport
 }
 
 // NewEventParser creates a parser that writes to w.
@@ -119,6 +121,7 @@ func NewEventParser(w io.Writer) *EventParser {
 	return &EventParser{
 		writer:           w,
 		markdownRenderer: ui.NewMarkdownRenderer(),
+		commandViewports: make(map[string]*ui.StreamViewport),
 	}
 }
 
@@ -144,6 +147,10 @@ func (p *EventParser) Parse(r io.Reader) error {
 			if err := p.handleItemStarted(event.Item); err != nil {
 				return err
 			}
+		case "item/commandExecution/outputDelta", "item.commandExecution.outputDelta":
+			if err := p.handleCommandOutputDelta(event); err != nil {
+				return err
+			}
 		case "item.completed":
 			if err := p.handleItemCompleted(event.Item); err != nil {
 				return err
@@ -167,6 +174,9 @@ func (p *EventParser) handleItemStarted(item streamItem) error {
 	if item.Type != "command_execution" {
 		return nil
 	}
+	if item.ID != "" {
+		p.commandViewports[item.ID] = ui.NewStreamViewport(p.writer, ui.ToolOutputMaxLines)
+	}
 	if out := formatCommandStart(item.Command); out != "" {
 		if _, err := fmt.Fprint(p.writer, out); err != nil {
 			return err
@@ -189,6 +199,23 @@ func (p *EventParser) handleItemCompleted(item streamItem) error {
 			return err
 		}
 	case "command_execution":
+		if viewport, ok := p.commandViewports[item.ID]; ok {
+			defer delete(p.commandViewports, item.ID)
+
+			failed := strings.EqualFold(item.Status, "failed") || (item.ExitCode != nil && *item.ExitCode != 0)
+			if viewport.HasOutput() {
+				if !viewport.IsTTY() {
+					rendered := ui.FormatToolOutput(viewport.FinalText())
+					if failed {
+						rendered = ui.FormatToolError(viewport.FinalText())
+					}
+					if _, err := fmt.Fprint(p.writer, rendered); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+		}
 		if out := formatCommandResult(item); out != "" {
 			if _, err := fmt.Fprint(p.writer, out); err != nil {
 				return err
@@ -196,6 +223,37 @@ func (p *EventParser) handleItemCompleted(item streamItem) error {
 		}
 	}
 	return nil
+}
+
+func (p *EventParser) handleCommandOutputDelta(event streamEvent) error {
+	itemID := event.ItemID
+	if itemID == "" {
+		itemID = event.ItemIDCamel
+	}
+	if itemID == "" {
+		return nil
+	}
+
+	viewport, ok := p.commandViewports[itemID]
+	if !ok {
+		viewport = ui.NewStreamViewport(p.writer, ui.ToolOutputMaxLines)
+		p.commandViewports[itemID] = viewport
+	}
+
+	delta := event.Delta
+	if delta == "" && event.DeltaBase64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(event.DeltaBase64)
+		if err != nil {
+			delta = ""
+		} else {
+			delta = string(decoded)
+		}
+	}
+	if delta == "" {
+		return nil
+	}
+
+	return viewport.Append(delta, false)
 }
 
 func formatCommandStart(command string) string {
@@ -233,8 +291,14 @@ func formatCommandResult(item streamItem) string {
 }
 
 type streamEvent struct {
-	Type string     `json:"type"`
-	Item streamItem `json:"item"`
+	Type   string     `json:"type"`
+	Item   streamItem `json:"item"`
+	ItemID string     `json:"item_id"`
+	//nolint:tagliatelle // Codex output-delta events may use camelCase itemId.
+	ItemIDCamel string `json:"itemId"`
+	Delta       string `json:"delta"`
+	//nolint:tagliatelle // Codex output-delta events may use camelCase deltaBase64.
+	DeltaBase64 string `json:"deltaBase64"`
 }
 
 type streamItem struct {
