@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::Error;
 
-const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/snap-*", ".codex-log/"];
+const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/lgtm-*", ".codex-log/"];
 
 struct Skill {
     name: &'static str,
@@ -24,22 +24,22 @@ macro_rules! skill_registry {
 }
 
 skill_registry! {
-    PHASE_IMPLEMENT => "snap-phase-implement", "../skills/snap-phase-implement/SKILL.md";
-    PHASE_VALIDATE => "snap-phase-validate", "../skills/snap-phase-validate/SKILL.md";
-    PHASE_REVIEW => "snap-phase-review", "../skills/snap-phase-review/SKILL.md";
-    CONTEXT_MAP => "snap-context-map", "../skills/snap-context-map/SKILL.md";
-    CLI_CONTROL => "snap-cli-control", "../skills/snap-cli-control/SKILL.md";
-    UI_CONTROL => "snap-ui-control", "../skills/snap-ui-control/SKILL.md";
-    TECHNICAL_SPIKE => "snap-technical-spike", "../skills/snap-technical-spike/SKILL.md";
-    REFACTOR_PLAN => "snap-refactor-plan", "../skills/snap-refactor-plan/SKILL.md";
-    PLAN_UPDATE => "snap-plan-update", "../skills/snap-plan-update/SKILL.md";
-    SPEC_UPDATE => "snap-spec-update", "../skills/snap-spec-update/SKILL.md";
-    SECURITY_REVIEW => "snap-security-review", "../skills/snap-security-review/SKILL.md";
-    TEST_GAP_REVIEW => "snap-test-gap-review", "../skills/snap-test-gap-review/SKILL.md";
-    DOCS_DRIFT_REVIEW => "snap-docs-drift-review", "../skills/snap-docs-drift-review/SKILL.md";
-    ROLLOUT_REVIEW => "snap-rollout-review", "../skills/snap-rollout-review/SKILL.md";
-    DEPENDENCY_REVIEW => "snap-dependency-review", "../skills/snap-dependency-review/SKILL.md";
-    FINAL_REVIEW => "snap-final-review", "../skills/snap-final-review/SKILL.md";
+    PHASE_IMPLEMENT => "lgtm-phase-implement", "../skills/lgtm-phase-implement/SKILL.md";
+    PHASE_VALIDATE => "lgtm-phase-validate", "../skills/lgtm-phase-validate/SKILL.md";
+    PHASE_REVIEW => "lgtm-phase-review", "../skills/lgtm-phase-review/SKILL.md";
+    CONTEXT_MAP => "lgtm-context-map", "../skills/lgtm-context-map/SKILL.md";
+    CLI_CONTROL => "lgtm-cli-control", "../skills/lgtm-cli-control/SKILL.md";
+    UI_CONTROL => "lgtm-ui-control", "../skills/lgtm-ui-control/SKILL.md";
+    TECHNICAL_SPIKE => "lgtm-technical-spike", "../skills/lgtm-technical-spike/SKILL.md";
+    REFACTOR_PLAN => "lgtm-refactor-plan", "../skills/lgtm-refactor-plan/SKILL.md";
+    PLAN_UPDATE => "lgtm-plan-update", "../skills/lgtm-plan-update/SKILL.md";
+    SPEC_UPDATE => "lgtm-spec-update", "../skills/lgtm-spec-update/SKILL.md";
+    SECURITY_REVIEW => "lgtm-security-review", "../skills/lgtm-security-review/SKILL.md";
+    TEST_GAP_REVIEW => "lgtm-test-gap-review", "../skills/lgtm-test-gap-review/SKILL.md";
+    DOCS_DRIFT_REVIEW => "lgtm-docs-drift-review", "../skills/lgtm-docs-drift-review/SKILL.md";
+    ROLLOUT_REVIEW => "lgtm-rollout-review", "../skills/lgtm-rollout-review/SKILL.md";
+    DEPENDENCY_REVIEW => "lgtm-dependency-review", "../skills/lgtm-dependency-review/SKILL.md";
+    FINAL_REVIEW => "lgtm-final-review", "../skills/lgtm-final-review/SKILL.md";
 }
 
 pub fn install(root: &Path) -> Result<(), Error> {
@@ -70,7 +70,7 @@ pub(crate) fn preflight(root: &Path) -> Result<(), Error> {
             fs::read_to_string(&skill_path).map_err(|source| Error::io(&skill_path, source))?;
         if !is_managed_skill(skill.name, &existing) {
             return Err(Error::message(format!(
-                "{} exists but is not managed by snap-rs",
+                "{} exists but is not managed by lgtm",
                 skill_path.display()
             )));
         }
@@ -108,7 +108,7 @@ fn ensure_gitignore(root: &Path) -> Result<(), Error> {
 
 fn is_managed_skill(expected_name: &str, body: &str) -> bool {
     frontmatter_value(body, "name").as_deref() == Some(expected_name)
-        && frontmatter_value(body, "managed-by").as_deref() == Some("snap-rs")
+        && frontmatter_value(body, "managed-by").as_deref() == Some("lgtm")
 }
 
 fn frontmatter_value(body: &str, key: &str) -> Option<String> {
@@ -130,7 +130,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_skills_have_snap_frontmatter() {
+    fn bundled_skills_have_lgtm_frontmatter() {
         for skill in SKILLS {
             assert!(is_managed_skill(skill.name, skill.body), "{}", skill.name);
         }
@@ -155,7 +155,7 @@ mod tests {
             assert_eq!(body, skill.body, "{}", skill.name);
         }
 
-        for expected in ["snap-phase-review", "snap-cli-control", "snap-ui-control"] {
+        for expected in ["lgtm-phase-review", "lgtm-cli-control", "lgtm-ui-control"] {
             assert!(
                 temp.path()
                     .join(".agents")
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_non_snap_skills() {
+    fn preserves_non_lgtm_skills() {
         let temp = tempfile::tempdir().expect("tempdir");
         let custom_skill = temp
             .path()
@@ -201,20 +201,20 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_overwrite_unmanaged_snap_skill() {
+    fn refuses_to_overwrite_unmanaged_lgtm_skill() {
         let temp = tempfile::tempdir().expect("tempdir");
         let skill_dir = temp
             .path()
             .join(".agents")
             .join("skills")
-            .join("snap-phase-implement");
+            .join("lgtm-phase-implement");
         fs::create_dir_all(&skill_dir).expect("create skill dir");
         let skill_path = skill_dir.join("SKILL.md");
         fs::write(&skill_path, "user owned").expect("write skill");
 
-        let error = install(temp.path()).expect_err("should reject unmanaged snap skill");
+        let error = install(temp.path()).expect_err("should reject unmanaged lgtm skill");
 
-        assert!(error.to_string().contains("is not managed by snap-rs"));
+        assert!(error.to_string().contains("is not managed by lgtm"));
         assert_eq!(
             fs::read_to_string(skill_path).expect("skill body"),
             "user owned"
@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_unmanaged_snap_skill_before_writing_any_skill() {
+    fn refuses_unmanaged_lgtm_skill_before_writing_any_skill() {
         let temp = tempfile::tempdir().expect("tempdir");
         let managed_dir = temp
             .path()
@@ -233,7 +233,7 @@ mod tests {
         let managed_path = managed_dir.join("SKILL.md");
         fs::write(
             &managed_path,
-            "---\nname: snap-phase-implement\nmanaged-by: snap-rs\n---\nold\n",
+            "---\nname: lgtm-phase-implement\nmanaged-by: lgtm\n---\nold\n",
         )
         .expect("write managed skill");
 
@@ -245,26 +245,26 @@ mod tests {
         fs::create_dir_all(&unmanaged_dir).expect("create unmanaged skill dir");
         fs::write(unmanaged_dir.join("SKILL.md"), "user owned").expect("write unmanaged skill");
 
-        let error = install(temp.path()).expect_err("should reject unmanaged snap skill");
+        let error = install(temp.path()).expect_err("should reject unmanaged lgtm skill");
 
-        assert!(error.to_string().contains("is not managed by snap-rs"));
+        assert!(error.to_string().contains("is not managed by lgtm"));
         assert_eq!(
             fs::read_to_string(managed_path).expect("managed skill"),
-            "---\nname: snap-phase-implement\nmanaged-by: snap-rs\n---\nold\n"
+            "---\nname: lgtm-phase-implement\nmanaged-by: lgtm\n---\nold\n"
         );
     }
 
     #[test]
     fn marker_text_outside_frontmatter_does_not_grant_ownership() {
-        let body = "team note\nmanaged-by: snap-rs\n";
+        let body = "team note\nmanaged-by: lgtm\n";
 
-        assert!(!is_managed_skill("snap-phase-implement", body));
+        assert!(!is_managed_skill("lgtm-phase-implement", body));
     }
 
     #[test]
     fn mismatched_frontmatter_name_does_not_grant_ownership() {
-        let body = "---\nname: snap-other\nmanaged-by: snap-rs\n---\n";
+        let body = "---\nname: lgtm-other\nmanaged-by: lgtm\n---\n";
 
-        assert!(!is_managed_skill("snap-phase-implement", body));
+        assert!(!is_managed_skill("lgtm-phase-implement", body));
     }
 }

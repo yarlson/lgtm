@@ -54,7 +54,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
     perms.set_mode(0o755);
     fs::set_permissions(&fake_codex, perms).expect("chmod fake codex");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_snap-rs"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
         .arg("--root")
         .arg(&repo)
         .arg("--end-phase")
@@ -66,7 +66,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
         .arg("--run-stamp")
         .arg("test")
         .output()
-        .expect("run snap-rs");
+        .expect("run lgtm");
 
     assert!(
         output.status.success(),
@@ -93,9 +93,9 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
         assert!(prompt.contains("## Phase 1: Skeleton"));
         assert!(!prompt.contains("## Phase 1 - Skeleton"));
     }
-    assert!(implement_prompt.contains("$snap-phase-implement"));
-    assert!(validate_prompt.contains("$snap-phase-validate"));
-    assert!(review_prompt.contains("$snap-phase-review"));
+    assert!(implement_prompt.contains("$lgtm-phase-implement"));
+    assert!(validate_prompt.contains("$lgtm-phase-validate"));
+    assert!(review_prompt.contains("$lgtm-phase-review"));
 
     let default_logs = repo.join(".codex-log");
     assert!(default_logs.join("test-phase-01-implement.jsonl").is_file());
@@ -104,14 +104,14 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
     assert!(
         repo.join(".agents")
             .join("skills")
-            .join("snap-phase-implement")
+            .join("lgtm-phase-implement")
             .join("SKILL.md")
             .is_file()
     );
     assert!(
         repo.join(".agents")
             .join("skills")
-            .join("snap-phase-review")
+            .join("lgtm-phase-review")
             .join("SKILL.md")
             .is_file()
     );
@@ -119,7 +119,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
         fs::read_to_string(repo.join(".gitignore"))
             .expect("read gitignore")
             .lines()
-            .any(|line| line == ".agents/skills/snap-*")
+            .any(|line| line == ".agents/skills/lgtm-*")
     );
     assert!(
         fs::read_to_string(repo.join(".gitignore"))
@@ -168,7 +168,7 @@ fi
 n=$((n + 1))
 printf '%s\n' "$n" >"$counter"
 if [ "$n" = 1 ]; then
-  printf '# Plan\n\n## Phase 1: One\n\n## Phase 2: Changed Two\n' >"$SNAP_TEST_REPO/PLAN.md"
+  printf '# Plan\n\n## Phase 1: One\n\n## Phase 2: Changed Two\n' >"$LGTM_TEST_REPO/PLAN.md"
 fi
 cat >/dev/null
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
@@ -181,7 +181,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
     perms.set_mode(0o755);
     fs::set_permissions(&fake_codex, perms).expect("chmod fake codex");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_snap-rs"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
         .arg("--root")
         .arg(&repo)
         .arg("--end-phase")
@@ -192,9 +192,9 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
         .arg(&fake_codex)
         .arg("--run-stamp")
         .arg("test")
-        .env("SNAP_TEST_REPO", &repo)
+        .env("LGTM_TEST_REPO", &repo)
         .output()
-        .expect("run snap-rs");
+        .expect("run lgtm");
 
     assert!(
         output.status.success(),

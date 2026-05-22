@@ -149,15 +149,15 @@ mod tests {
 
         assert!(prompt.contains("source of any linked project-contract context"));
         assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
-        assert!(prompt.contains("$snap-context-map"));
-        assert!(prompt.contains("$snap-phase-implement"));
-        assert!(prompt.contains("$snap-technical-spike"));
-        assert!(prompt.contains("$snap-refactor-plan"));
-        assert!(prompt.contains("$snap-cli-control"));
-        assert!(prompt.contains("$snap-ui-control"));
-        assert!(prompt.contains("$snap-security-review"));
-        assert!(prompt.contains("$snap-plan-update"));
-        assert!(prompt.contains("$snap-spec-update"));
+        assert!(prompt.contains("$lgtm-context-map"));
+        assert!(prompt.contains("$lgtm-phase-implement"));
+        assert!(prompt.contains("$lgtm-technical-spike"));
+        assert!(prompt.contains("$lgtm-refactor-plan"));
+        assert!(prompt.contains("$lgtm-cli-control"));
+        assert!(prompt.contains("$lgtm-ui-control"));
+        assert!(prompt.contains("$lgtm-security-review"));
+        assert!(prompt.contains("$lgtm-plan-update"));
+        assert!(prompt.contains("$lgtm-spec-update"));
         assert!(prompt.contains("current target repo"));
         assert!(prompt.contains("Do not commit or push"));
     }
@@ -172,13 +172,13 @@ mod tests {
         );
 
         assert!(prompt.contains("## Phase 2 - Verification Loop"));
-        assert!(prompt.contains("$snap-phase-validate"));
-        assert!(prompt.contains("$snap-test-gap-review"));
-        assert!(!prompt.contains("$snap-final-review"));
-        assert!(prompt.contains("$snap-security-review"));
-        assert!(prompt.contains("$snap-docs-drift-review"));
-        assert!(prompt.contains("$snap-rollout-review"));
-        assert!(prompt.contains("$snap-dependency-review"));
+        assert!(prompt.contains("$lgtm-phase-validate"));
+        assert!(prompt.contains("$lgtm-test-gap-review"));
+        assert!(!prompt.contains("$lgtm-final-review"));
+        assert!(prompt.contains("$lgtm-security-review"));
+        assert!(prompt.contains("$lgtm-docs-drift-review"));
+        assert!(prompt.contains("$lgtm-rollout-review"));
+        assert!(prompt.contains("$lgtm-dependency-review"));
         assert!(prompt.contains("current target repo"));
     }
 
@@ -192,10 +192,10 @@ mod tests {
         );
 
         assert!(prompt.contains("## Phase 3 - Output Polish"));
-        assert!(prompt.contains("$snap-phase-review"));
-        assert!(prompt.contains("$snap-final-review"));
-        assert!(prompt.contains("$snap-cli-control"));
-        assert!(prompt.contains("$snap-ui-control"));
+        assert!(prompt.contains("$lgtm-phase-review"));
+        assert!(prompt.contains("$lgtm-final-review"));
+        assert!(prompt.contains("$lgtm-cli-control"));
+        assert!(prompt.contains("$lgtm-ui-control"));
         assert!(prompt.contains("Fix only small, high-confidence, phase-scoped"));
         assert!(prompt.contains("broad redesign"));
     }

@@ -553,6 +553,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "lgtm"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "dialoguer",
+ "serde_json",
+ "supports-color",
+ "tempfile",
+ "termimad",
+ "thiserror",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -871,20 +885,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "snap-rs"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "dialoguer",
- "serde_json",
- "supports-color",
- "tempfile",
- "termimad",
- "thiserror",
-]
 
 [[package]]
 name = "strict"

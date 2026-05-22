@@ -1,4 +1,4 @@
-# snap-rs
+# lgtm
 
 <div align="center">
 
@@ -11,7 +11,7 @@
 
 </div>
 
-`snap-rs` is a small Rust CLI for running a repo-local `PLAN.md` through a
+`lgtm` is a small Rust CLI for running a repo-local `PLAN.md` through a
 repeatable Codex execution loop. It treats each `## Phase N - ...` or
 `## Phase N: ...` heading as one bounded unit of work and runs that phase
 through three local Codex passes:
@@ -27,26 +27,26 @@ CI on its own, and every pass tells Codex not to commit or push unless the user
 explicitly requested that run.
 
 > [!WARNING]
-> `snap-rs` runs `codex exec` with
+> `lgtm` runs `codex exec` with
 > `--dangerously-bypass-approvals-and-sandbox` inside the target repository.
 > Use it only on repositories where fully autonomous local file and command
 > execution is acceptable.
 
 ## Overview
 
-`snap-rs` provides a controlled local harness around `codex exec`:
+`lgtm` provides a controlled local harness around `codex exec`:
 
 - detects phase headings such as `## Phase 1 - Skeleton` or
   `## Phase 1: Skeleton`
 - runs implement, validate, and review prompts for each selected phase
-- injects phase-specific instructions through snap-managed Codex skills
+- injects phase-specific instructions through lgtm-managed Codex skills
 - keeps every prompt anchored to `PLAN.md`, `AGENTS.md`, and the exact phase
   heading
 - reloads `PLAN.md` before each phase so earlier work can correct later phase
   definitions
 - writes raw Codex JSONL logs into `.codex-log/`
 - renders the live JSONL stream as a compact terminal transcript by default
-- refuses to overwrite project-owned `snap-*` skills
+- refuses to overwrite project-owned `lgtm-*` skills
 - prompts before initializing Git in a target root that is not already a Git
   repository
 
@@ -56,32 +56,32 @@ and local review while preserving the target repository's scope boundaries.
 
 ## Execution Model
 
-Before running any phase, `snap-rs` verifies the target root has the configured
-plan and agent instruction files, checks that existing `snap-*` skills are
-managed by `snap-rs`, ensures the target root is a Git root, and installs the
-bundled skills into `.agents/skills/snap-*`. If Git is not initialized, it asks
+Before running any phase, `lgtm` verifies the target root has the configured
+plan and agent instruction files, checks that existing `lgtm-*` skills are
+managed by `lgtm`, ensures the target root is a Git root, and installs the
+bundled skills into `.agents/skills/lgtm-*`. If Git is not initialized, it asks
 before running `git init` and renaming the branch to `main`.
 
 For each selected phase, it starts three separate `codex exec` processes:
 
 | Pass        | Primary skill                                | Purpose                                                                                                                                                                  |
 | ----------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `implement` | `snap-phase-implement`                       | Read the selected phase, map relevant files, implement only that phase, and run required checks.                                                                         |
-| `validate`  | `snap-phase-validate`                        | Re-read the phase independently, compare behavior against the phase contract, fix correctness/test/docs/security/dependency/rollout gaps inside scope, and verify again. |
-| `review`    | `snap-phase-review` plus `snap-final-review` | Review the final diff for maintainability, scope drift, AI slop, and closeout quality; fix only small, high-confidence phase-scoped findings.                            |
+| `implement` | `lgtm-phase-implement`                       | Read the selected phase, map relevant files, implement only that phase, and run required checks.                                                                         |
+| `validate`  | `lgtm-phase-validate`                        | Re-read the phase independently, compare behavior against the phase contract, fix correctness/test/docs/security/dependency/rollout gaps inside scope, and verify again. |
+| `review`    | `lgtm-phase-review` plus `lgtm-final-review` | Review the final diff for maintainability, scope drift, AI slop, and closeout quality; fix only small, high-confidence phase-scoped findings.                            |
 
 The generated prompts also call supporting skills when relevant:
 
-- `snap-context-map` before implementation edits
-- `snap-technical-spike` for unknown or version-sensitive behavior
-- `snap-refactor-plan` for refactors, migrations, cleanup, decomposition, or
+- `lgtm-context-map` before implementation edits
+- `lgtm-technical-spike` for unknown or version-sensitive behavior
+- `lgtm-refactor-plan` for refactors, migrations, cleanup, decomposition, or
   behavior-preserving changes
-- `snap-cli-control` and `snap-ui-control` for user-visible CLI/TUI or UI
+- `lgtm-cli-control` and `lgtm-ui-control` for user-visible CLI/TUI or UI
   behavior
-- `snap-security-review`, `snap-dependency-review`, `snap-rollout-review`,
-  `snap-test-gap-review`, and `snap-docs-drift-review` for risk-specific
+- `lgtm-security-review`, `lgtm-dependency-review`, `lgtm-rollout-review`,
+  `lgtm-test-gap-review`, and `lgtm-docs-drift-review` for risk-specific
   checks
-- `snap-plan-update` and `snap-spec-update` only when the selected phase exposes
+- `lgtm-plan-update` and `lgtm-spec-update` only when the selected phase exposes
   a real plan or contract gap
 
 ## Getting Started
@@ -126,7 +126,7 @@ Create the initial implementation and verification path.
 ```
 
 > [!NOTE]
-> If the target root is not a Git repository, `snap-rs` asks before running
+> If the target root is not a Git repository, `lgtm` asks before running
 > `git init` and `git branch -M main`. Declining the prompt aborts the run.
 
 ## Usage
@@ -140,19 +140,19 @@ cargo run -- --root ../lnk --start-phase 1 --end-phase 1 --sleep-seconds 0
 Run phases from the current directory:
 
 ```bash
-snap-rs --start-phase 1 --end-phase 3
+lgtm --start-phase 1 --end-phase 3
 ```
 
-Let `snap-rs` detect the final phase from `PLAN.md`:
+Let `lgtm` detect the final phase from `PLAN.md`:
 
 ```bash
-snap-rs --root /path/to/repo --start-phase 2
+lgtm --root /path/to/repo --start-phase 2
 ```
 
 Use raw JSONL output instead of the formatted transcript:
 
 ```bash
-snap-rs --stream-mode raw
+lgtm --stream-mode raw
 ```
 
 ### Options
@@ -172,7 +172,7 @@ snap-rs --stream-mode raw
 
 ## Safety Model
 
-`snap-rs` is a strong local automation harness. It improves repeatability and
+`lgtm` is a strong local automation harness. It improves repeatability and
 scope control, but it does not sandbox Codex. The process is intentionally
 explicit:
 
@@ -191,18 +191,18 @@ Logs are written as:
 ```
 
 Managed skills are embedded into the binary at compile time from
-`skills/snap-*/SKILL.md`. During preflight, `snap-rs` refreshes those skills in
+`skills/lgtm-*/SKILL.md`. During preflight, `lgtm` refreshes those skills in
 the target repository and ensures these entries exist in the target
 `.gitignore`:
 
 ```gitignore
-.agents/skills/snap-*
+.agents/skills/lgtm-*
 .codex-log/
 ```
 
 Skill installation is deliberately conservative. If a target repository already
-has a `snap-*` skill without the expected `name` and `managed-by: snap-rs`
-frontmatter, `snap-rs` aborts instead of overwriting project-owned instructions.
+has a `lgtm-*` skill without the expected `name` and `managed-by: lgtm`
+frontmatter, `lgtm` aborts instead of overwriting project-owned instructions.
 
 The bundled skills repeatedly tell Codex to keep work phase-scoped, avoid
 unrelated cleanup, avoid later-phase work, avoid commits and pushes unless

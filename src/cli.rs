@@ -10,7 +10,7 @@ use crate::Error;
 #[command(
     version,
     about = "Run a Codex-backed phase plan with formatted JSONL output",
-    after_long_help = "Execution policy:\n  snap-rs runs `codex exec` with `--dangerously-bypass-approvals-and-sandbox` inside the target root. Use it only for repositories where that level of local filesystem and command execution autonomy is acceptable."
+    after_long_help = "Execution policy:\n  lgtm runs `codex exec` with `--dangerously-bypass-approvals-and-sandbox` inside the target root. Use it only for repositories where that level of local filesystem and command execution autonomy is acceptable."
 )]
 pub struct Args {
     #[arg(long, env = "ROOT_DIR")]

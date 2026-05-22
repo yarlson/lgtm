@@ -1,11 +1,11 @@
 [package]
-name = "snap-rs"
+name = "lgtm"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [[bin]]
-name = "snap-rs"
+name = "lgtm"
 path = "src/main.rs"
 
 [dependencies]

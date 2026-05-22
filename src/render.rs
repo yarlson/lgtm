@@ -77,7 +77,7 @@ impl Renderer {
 
     pub fn system(&self, message: impl Into<String>) {
         self.emit(text(vec![
-            header("Snap-rs", Color::DarkGray, message),
+            header("lgtm", Color::DarkGray, message),
             blank(),
         ]));
     }

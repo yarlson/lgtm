@@ -19,7 +19,7 @@ fn ensure_initialized_with(
 
     if !confirm(root)? {
         return Err(Error::message(format!(
-            "{} is not a git repository; initialize git before running snap-rs",
+            "{} is not a git repository; initialize git before running lgtm",
             root.display()
         )));
     }

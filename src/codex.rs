@@ -265,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn run_plan_rejects_unmanaged_snap_skill_before_git_init() {
+    fn run_plan_rejects_unmanaged_lgtm_skill_before_git_init() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         fs::write(root.join("PLAN.md"), "# Plan\n\n## Phase 1: Test\n").expect("plan");
@@ -293,7 +293,7 @@ mod tests {
 
         let error = run_plan(config).expect_err("unmanaged skill should abort");
 
-        assert!(error.to_string().contains("is not managed by snap-rs"));
+        assert!(error.to_string().contains("is not managed by lgtm"));
         assert!(!root.join(".git").exists());
     }
 }
