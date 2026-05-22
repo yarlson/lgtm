@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          crate_version="$(cargo pkgid --locked | sed 's/.*@//')"
+          crate_version="$(cargo pkgid --locked | sed 's/.*[#@]//')"
 
           if [[ "$version" != "$crate_version" ]]; then
             echo "Tag ${GITHUB_REF_NAME} does not match Cargo package version ${crate_version}."
