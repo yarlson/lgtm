@@ -2,6 +2,8 @@
 
 <div align="center">
 
+<img src="assets/banner.png" alt="lgtm banner" width="100%">
+
 **Run Codex through local, plan-scoped implementation, validation, and review passes.**
 
 ![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust)
