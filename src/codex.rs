@@ -38,10 +38,10 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
         })?,
     };
 
-    for phase in config.start_phase..=end_phase {
-        let title = plan::phase_title(&plan_text, phase).ok_or_else(|| {
+    for phase_number in config.start_phase..=end_phase {
+        let phase = plan::phase(&plan_text, phase_number).ok_or_else(|| {
             Error::message(format!(
-                "Phase {phase} was not found in {}",
+                "Phase {phase_number} was not found in {}",
                 config.plan_path.display()
             ))
         })?;
@@ -49,50 +49,44 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
         run_phase_prompt(
             &config,
             &renderer,
-            phase,
-            &title,
+            &phase,
             "implement",
             prompt::implementation_prompt(
                 &config.plan_path,
                 &config.agents_path,
                 &config.design_path,
-                phase,
-                &title,
+                &phase,
             ),
         )?;
 
         run_phase_prompt(
             &config,
             &renderer,
-            phase,
-            &title,
+            &phase,
             "validate",
             prompt::validation_prompt(
                 &config.plan_path,
                 &config.agents_path,
                 &config.design_path,
-                phase,
-                &title,
+                &phase,
             ),
         )?;
 
         run_phase_prompt(
             &config,
             &renderer,
-            phase,
-            &title,
+            &phase,
             "review",
             prompt::review_prompt(
                 &config.plan_path,
                 &config.agents_path,
                 &config.design_path,
-                phase,
-                &title,
+                &phase,
             ),
         )?;
 
-        if phase < end_phase {
-            renderer.sleep(config.sleep_seconds, phase + 1);
+        if phase.number < end_phase {
+            renderer.sleep(config.sleep_seconds, phase.number + 1);
             thread::sleep(Duration::from_secs(config.sleep_seconds));
         }
     }
@@ -103,16 +97,19 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
 fn run_phase_prompt(
     config: &Config,
     renderer: &Renderer,
-    phase: u32,
-    title: &str,
+    phase: &plan::Phase,
     action: &str,
     prompt: String,
 ) -> Result<(), Error> {
-    let log_name = format!("{}-phase-{phase:02}-{action}.jsonl", config.run_stamp,);
+    let log_name = format!(
+        "{}-phase-{phase:02}-{action}.jsonl",
+        config.run_stamp,
+        phase = phase.number
+    );
     let log_path = config.log_dir.join(log_name);
     let log_display = log_path.display().to_string();
 
-    renderer.phase_header(phase, title, action, &log_display);
+    renderer.phase_header(phase.number, &phase.title, action, &log_display);
     renderer.system(format!("raw_jsonl {}", log_path.display()));
 
     fs::create_dir_all(&config.log_dir).map_err(|source| Error::io(&config.log_dir, source))?;

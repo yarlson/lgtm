@@ -1,16 +1,17 @@
 use std::path::Path;
 
+use crate::plan::Phase;
+
 pub fn implementation_prompt(
     plan_path: &Path,
     agents_path: &Path,
     design_path: &Path,
-    phase: u32,
-    title: &str,
+    phase: &Phase,
 ) -> String {
     format!(
         "{}\n\n{}\n",
         context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(plan_path, phase, title, PhaseTask::Implement)
+        phase_task_block(plan_path, phase, PhaseTask::Implement)
     )
 }
 
@@ -18,13 +19,12 @@ pub fn validation_prompt(
     plan_path: &Path,
     agents_path: &Path,
     design_path: &Path,
-    phase: u32,
-    title: &str,
+    phase: &Phase,
 ) -> String {
     format!(
         "{}\n\n{}\n",
         context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(plan_path, phase, title, PhaseTask::Validate)
+        phase_task_block(plan_path, phase, PhaseTask::Validate)
     )
 }
 
@@ -32,13 +32,12 @@ pub fn review_prompt(
     plan_path: &Path,
     agents_path: &Path,
     design_path: &Path,
-    phase: u32,
-    title: &str,
+    phase: &Phase,
 ) -> String {
     format!(
         "{}\n\n{}\n",
         context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(plan_path, phase, title, PhaseTask::Review)
+        phase_task_block(plan_path, phase, PhaseTask::Review)
     )
 }
 
@@ -66,13 +65,13 @@ enum PhaseTask {
     Review,
 }
 
-fn phase_task_block(plan_path: &Path, phase: u32, title: &str, task: PhaseTask) -> String {
+fn phase_task_block(plan_path: &Path, phase: &Phase, task: PhaseTask) -> String {
     match task {
         PhaseTask::Implement => format!(
             "\
 Open {plan} and locate exactly:
 
-## Phase {phase} - {title}
+{heading}
 
 Use $snap-context-map before editing.
 Use $snap-phase-implement for the implementation pass.
@@ -84,14 +83,16 @@ Use $snap-security-review if the phase touches auth, secrets, command execution,
 Use $snap-plan-update only if PLAN.md needs a correction to make this selected phase implementable or verifiable.
 Use $snap-spec-update only if DESIGN.md has a real product or architecture contract gap exposed by this selected phase.
 
-Implement Phase {phase} completely in the current target repo. Do not commit or push unless the user explicitly requested it for this run.",
+Implement Phase {number} completely in the current target repo. Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
+            heading = phase.heading.as_str(),
+            number = phase.number,
         ),
         PhaseTask::Validate => format!(
             "\
 Open {plan} and locate exactly:
 
-## Phase {phase} - {title}
+{heading}
 
 Use $snap-phase-validate for the validation pass.
 Use $snap-test-gap-review to check whether verification proves the selected phase works.
@@ -100,27 +101,31 @@ Use $snap-docs-drift-review if changed behavior may affect README, AGENTS.md, DE
 Use $snap-rollout-review if the phase affects deployment, infrastructure, runtime config, migrations, observability, rollback, or production failure modes.
 Use $snap-dependency-review if the phase changes dependencies, lockfiles, package manager config, generated files, CI security config, tool versions, or plugin/MCP/tool installation.
 
-Validate that Phase {phase} was implemented fully and correctly in the current target repo.
+Validate that Phase {number} was implemented fully and correctly in the current target repo.
 Fix only correctness, test, docs, security, dependency, or rollout gaps needed to complete this selected phase.
 Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
+            heading = phase.heading.as_str(),
+            number = phase.number,
         ),
         PhaseTask::Review => format!(
             "\
 Open {plan} and locate exactly:
 
-## Phase {phase} - {title}
+{heading}
 
 Use $snap-phase-review for the local phase review pass.
 Use $snap-cli-control if the phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos and validation did not already prove the user-visible behavior.
 Use $snap-ui-control if the phase changes browser, Electron, or local UI behavior and validation did not already prove the user-visible behavior.
 Use $snap-final-review before finishing.
 
-Review Phase {phase} in the current target repo after implementation and validation.
+Review Phase {number} in the current target repo after implementation and validation.
 Fix only small, high-confidence, phase-scoped review findings.
 If a finding requires broad redesign, unrelated refactor, new product behavior, PR/CI workflow, or later-phase work, report it as out of scope or blocked instead of fixing it.
 Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
+            heading = phase.heading.as_str(),
+            number = phase.number,
         ),
     }
 }
@@ -135,8 +140,7 @@ mod tests {
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
-            4,
-            "Path And Environment Resolution",
+            &phase(4, "Path And Environment Resolution", '-'),
         );
 
         assert!(prompt.contains("Treat DESIGN.md as the product contract"));
@@ -160,8 +164,7 @@ mod tests {
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
-            2,
-            "Verification Loop",
+            &phase(2, "Verification Loop", '-'),
         );
 
         assert!(prompt.contains("## Phase 2 - Verification Loop"));
@@ -181,8 +184,7 @@ mod tests {
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
-            3,
-            "Output Polish",
+            &phase(3, "Output Polish", '-'),
         );
 
         assert!(prompt.contains("## Phase 3 - Output Polish"));
@@ -192,5 +194,32 @@ mod tests {
         assert!(prompt.contains("$snap-ui-control"));
         assert!(prompt.contains("Fix only small, high-confidence, phase-scoped"));
         assert!(prompt.contains("broad redesign"));
+    }
+
+    #[test]
+    fn prompts_preserve_original_phase_heading_separator() {
+        let prompt = implementation_prompt(
+            Path::new("PLAN.md"),
+            Path::new("AGENTS.md"),
+            Path::new("DESIGN.md"),
+            &phase(12, "Polish", ':'),
+        );
+
+        assert!(prompt.contains("## Phase 12: Polish"));
+        assert!(!prompt.contains("## Phase 12 - Polish"));
+    }
+
+    fn phase(number: u32, title: &str, separator: char) -> Phase {
+        let heading = match separator {
+            ':' => format!("## Phase {number}: {title}"),
+            '-' => format!("## Phase {number} - {title}"),
+            _ => unreachable!("unsupported test phase separator"),
+        };
+
+        Phase {
+            number,
+            title: title.to_string(),
+            heading,
+        }
     }
 }

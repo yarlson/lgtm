@@ -7,6 +7,7 @@ use crate::Error;
 pub struct Phase {
     pub number: u32,
     pub title: String,
+    pub heading: String,
 }
 
 pub fn load(path: &Path) -> Result<String, Error> {
@@ -31,11 +32,10 @@ pub fn detect_end_phase(plan: &str) -> Option<u32> {
         .max()
 }
 
-pub fn phase_title(plan: &str, phase: u32) -> Option<String> {
+pub fn phase(plan: &str, phase: u32) -> Option<Phase> {
     phase_headings(plan)
         .into_iter()
         .find(|heading| heading.number == phase)
-        .map(|heading| heading.title)
 }
 
 pub fn phase_headings(plan: &str) -> Vec<Phase> {
@@ -43,7 +43,8 @@ pub fn phase_headings(plan: &str) -> Vec<Phase> {
 }
 
 fn parse_phase_heading(line: &str) -> Option<Phase> {
-    let rest = line.strip_prefix("## Phase ")?;
+    let heading = line.trim_end().to_string();
+    let rest = heading.strip_prefix("## Phase ")?;
     let digits_len = rest
         .char_indices()
         .take_while(|(_, ch)| ch.is_ascii_digit())
@@ -61,6 +62,7 @@ fn parse_phase_heading(line: &str) -> Option<Phase> {
     Some(Phase {
         number,
         title: title.to_string(),
+        heading,
     })
 }
 
@@ -84,14 +86,19 @@ body
                 Phase {
                     number: 1,
                     title: "Skeleton".to_string(),
+                    heading: "## Phase 1 - Skeleton".to_string(),
                 },
                 Phase {
                     number: 12,
                     title: "Polish".to_string(),
+                    heading: "## Phase 12: Polish".to_string(),
                 },
             ]
         );
         assert_eq!(detect_end_phase(plan), Some(12));
-        assert_eq!(phase_title(plan, 1).as_deref(), Some("Skeleton"));
+        assert_eq!(
+            phase(plan, 12).map(|phase| phase.heading),
+            Some("## Phase 12: Polish".to_string())
+        );
     }
 }

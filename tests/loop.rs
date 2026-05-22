@@ -21,7 +21,7 @@ fn runs_implementation_validation_and_review_prompts_with_formatted_output() {
         .expect("rename branch");
     fs::write(
         repo.join("PLAN.md"),
-        "# Plan\n\n## Phase 1 - Skeleton\n\nGoal: test.\n",
+        "# Plan\n\n## Phase 1: Skeleton\n\nGoal: test.\n",
     )
     .expect("write plan");
     fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
@@ -32,7 +32,16 @@ fn runs_implementation_validation_and_review_prompts_with_formatted_output() {
         &fake_codex,
         r#"#!/usr/bin/env sh
 set -eu
-cat >/dev/null
+dir=$(dirname "$0")
+counter="$dir/counter"
+if [ -f "$counter" ]; then
+  n=$(cat "$counter")
+else
+  n=0
+fi
+n=$((n + 1))
+printf '%s\n' "$n" >"$counter"
+cat >"$dir/prompt-$n.txt"
 printf '%s\n' '{"type":"thread.started","thread_id":"thread-test"}'
 printf '%s\n' '{"type":"turn.started"}'
 printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"done"}}'
@@ -72,6 +81,20 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
     assert!(stdout.contains("thread"));
     assert!(stdout.contains("codex"));
     assert!(stdout.contains("turn"));
+
+    let implement_prompt =
+        fs::read_to_string(temp.path().join("prompt-1.txt")).expect("implementation prompt");
+    let validate_prompt =
+        fs::read_to_string(temp.path().join("prompt-2.txt")).expect("validation prompt");
+    let review_prompt =
+        fs::read_to_string(temp.path().join("prompt-3.txt")).expect("review prompt");
+    for prompt in [&implement_prompt, &validate_prompt, &review_prompt] {
+        assert!(prompt.contains("## Phase 1: Skeleton"));
+        assert!(!prompt.contains("## Phase 1 - Skeleton"));
+    }
+    assert!(implement_prompt.contains("$snap-phase-implement"));
+    assert!(validate_prompt.contains("$snap-phase-validate"));
+    assert!(review_prompt.contains("$snap-phase-review"));
 
     let default_logs = repo.join(".codex-log");
     assert!(default_logs.join("test-phase-01-implement.jsonl").is_file());

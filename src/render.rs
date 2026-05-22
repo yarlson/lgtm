@@ -9,6 +9,9 @@ use termimad::MadSkin;
 
 use crate::events::CodexEvent;
 use crate::events::CodexItem;
+use crate::events::EventKind;
+use crate::events::ItemKind;
+use crate::events::ItemStatus;
 use crate::events::Usage;
 
 #[derive(Debug, Clone)]
@@ -88,16 +91,16 @@ impl Renderer {
 }
 
 fn render_event(event: &CodexEvent, color: bool) -> Text<'static> {
-    match event.event_type.as_str() {
-        "thread.started" => single(
+    match event.kind {
+        EventKind::ThreadStarted => single(
             "run",
             Color::Cyan,
             "thread",
             format!("thread {}", event.string_at("thread_id").unwrap_or("")),
         ),
-        "turn.started" => single("run", Color::Cyan, "turn", "begin"),
-        "turn.completed" => render_turn_completed(event.usage()),
-        "turn.failed" => single(
+        EventKind::TurnStarted => single("run", Color::Cyan, "turn", "begin"),
+        EventKind::TurnCompleted => render_turn_completed(event.usage()),
+        EventKind::TurnFailed => single(
             "fail",
             Color::Red,
             "turn",
@@ -108,7 +111,7 @@ fn render_event(event: &CodexEvent, color: bool) -> Text<'static> {
                     .unwrap_or_else(|| "unknown error".to_string())
             ),
         ),
-        "error" => single(
+        EventKind::Error => single(
             "fail",
             Color::Red,
             "codex",
@@ -116,14 +119,14 @@ fn render_event(event: &CodexEvent, color: bool) -> Text<'static> {
                 .error_message()
                 .unwrap_or_else(|| "unknown error".to_string()),
         ),
-        "item.started" | "item.updated" | "item.completed" => {
+        EventKind::ItemStarted | EventKind::ItemUpdated | EventKind::ItemCompleted => {
             if let Some(item) = event.item() {
-                render_item(event.event_type.as_str(), &item, color)
+                render_item(event.kind, &item, color)
             } else {
                 single("..", Color::DarkGray, "event", event.event_type.clone())
             }
         }
-        _ => single("..", Color::DarkGray, "event", event.event_type.clone()),
+        EventKind::Unknown => single("..", Color::DarkGray, "event", event.event_type.clone()),
     }
 }
 
@@ -142,29 +145,29 @@ fn render_turn_completed(usage: Usage) -> Text<'static> {
     )
 }
 
-fn render_item(event_type: &str, item: &CodexItem, color: bool) -> Text<'static> {
-    match item.item_type.as_str() {
-        "agent_message" => render_agent_message(item.text().unwrap_or(""), color),
-        "reasoning" => render_block("reason", Color::DarkGray, item.text().unwrap_or("")),
-        "command_execution" => render_command(event_type, item),
-        "file_change" => render_file_change(event_type, item),
-        "mcp_tool_call" => render_mcp(event_type, item),
-        "collab_tool_call" => render_collab(event_type, item),
-        "web_search" => single(
-            event_status(event_type, item.status()),
-            event_status_color(event_type, item.status()),
+fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text<'static> {
+    match item.kind {
+        ItemKind::AgentMessage => render_agent_message(item.text().unwrap_or(""), color),
+        ItemKind::Reasoning => render_block("reason", Color::DarkGray, item.text().unwrap_or("")),
+        ItemKind::CommandExecution => render_command(event_kind, item),
+        ItemKind::FileChange => render_file_change(event_kind, item),
+        ItemKind::McpToolCall => render_mcp(event_kind, item),
+        ItemKind::CollabToolCall => render_collab(event_kind, item),
+        ItemKind::WebSearch => single(
+            event_status(event_kind, item.status),
+            event_status_color(event_kind, item.status),
             "web",
             item.string_at("query").unwrap_or(""),
         ),
-        "todo_list" => render_todos(event_type, item),
-        "error" => single(
+        ItemKind::TodoList => render_todos(event_kind, item),
+        ItemKind::Error => single(
             "fail",
             Color::Red,
             "codex",
             item.error_message().unwrap_or("unknown error"),
         ),
-        _ => single(
-            event_status(event_type, item.status()),
+        ItemKind::Unknown => single(
+            event_status(event_kind, item.status),
             Color::DarkGray,
             "item",
             item.item_type.clone(),
@@ -192,8 +195,7 @@ fn render_agent_message(message: &str, color: bool) -> Text<'static> {
     text(lines)
 }
 
-fn render_command(event_type: &str, item: &CodexItem) -> Text<'static> {
-    let status = item.status().unwrap_or("unknown");
+fn render_command(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
     let command = item.string_at("command").unwrap_or("");
     let mut message = format!("exec {command}{}", exit_field(item));
     if let Some(summary) = output_summary(item.command_output()) {
@@ -202,20 +204,19 @@ fn render_command(event_type: &str, item: &CodexItem) -> Text<'static> {
     }
 
     text(vec![row(
-        event_status(event_type, Some(status)),
-        command_status_color(status),
+        event_status(event_kind, item.status),
+        command_status_color(item.status),
         "tool",
         Color::Cyan,
         message,
     )])
 }
 
-fn render_file_change(event_type: &str, item: &CodexItem) -> Text<'static> {
-    let status = item.status().unwrap_or("unknown");
+fn render_file_change(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
     let changes = item.changes();
     let mut lines = vec![row(
-        event_status(event_type, Some(status)),
-        command_status_color(status),
+        event_status(event_kind, item.status),
+        command_status_color(item.status),
         "files",
         Color::Yellow,
         format!("patch files={}", changes.len()),
@@ -244,11 +245,10 @@ fn render_file_change(event_type: &str, item: &CodexItem) -> Text<'static> {
     text(lines)
 }
 
-fn render_mcp(event_type: &str, item: &CodexItem) -> Text<'static> {
-    let status = item.status().unwrap_or("unknown");
+fn render_mcp(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
     let mut lines = vec![row(
-        event_status(event_type, Some(status)),
-        command_status_color(status),
+        event_status(event_kind, item.status),
+        command_status_color(item.status),
         "mcp",
         Color::LightBlue,
         format!(
@@ -263,10 +263,10 @@ fn render_mcp(event_type: &str, item: &CodexItem) -> Text<'static> {
     text(lines)
 }
 
-fn render_collab(event_type: &str, item: &CodexItem) -> Text<'static> {
+fn render_collab(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
     single(
-        event_status(event_type, item.status()),
-        event_status_color(event_type, item.status()),
+        event_status(event_kind, item.status),
+        event_status_color(event_kind, item.status),
         "collab",
         format!(
             "{} receiver_threads={}",
@@ -276,11 +276,11 @@ fn render_collab(event_type: &str, item: &CodexItem) -> Text<'static> {
     )
 }
 
-fn render_todos(event_type: &str, item: &CodexItem) -> Text<'static> {
+fn render_todos(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
     let todos = item.todos();
     let mut lines = vec![row(
-        event_status(event_type, item.status()),
-        event_status_color(event_type, item.status()),
+        event_status(event_kind, item.status),
+        event_status_color(event_kind, item.status),
         "todo",
         Color::Yellow,
         format!("items={}", todos.len()),
@@ -359,31 +359,33 @@ fn exit_field(item: &CodexItem) -> String {
         .unwrap_or_default()
 }
 
-fn command_status_color(status: &str) -> Color {
+fn command_status_color(status: ItemStatus) -> Color {
     match status {
-        "completed" => Color::Green,
-        "failed" => Color::Red,
-        "declined" => Color::Yellow,
-        "in_progress" => Color::Cyan,
+        ItemStatus::Completed => Color::Green,
+        ItemStatus::Failed => Color::Red,
+        ItemStatus::Declined => Color::Yellow,
+        ItemStatus::InProgress => Color::Cyan,
         _ => Color::DarkGray,
     }
 }
 
-fn event_status(event_type: &str, item_status: Option<&str>) -> &'static str {
+fn event_status(event_kind: EventKind, item_status: ItemStatus) -> &'static str {
     match item_status {
-        Some("completed") => "ok",
-        Some("failed") => "fail",
-        Some("declined") => "skip",
-        Some("in_progress") => "run",
-        _ if event_type.ends_with(".started") => "run",
-        _ if event_type.ends_with(".completed") => "ok",
-        _ if event_type.ends_with(".updated") => "..",
-        _ => "..",
+        ItemStatus::Completed => "ok",
+        ItemStatus::Failed => "fail",
+        ItemStatus::Declined => "skip",
+        ItemStatus::InProgress => "run",
+        ItemStatus::Missing | ItemStatus::Unknown => match event_kind {
+            EventKind::ItemStarted => "run",
+            EventKind::ItemCompleted => "ok",
+            EventKind::ItemUpdated => "..",
+            _ => "..",
+        },
     }
 }
 
-fn event_status_color(event_type: &str, item_status: Option<&str>) -> Color {
-    match event_status(event_type, item_status) {
+fn event_status_color(event_kind: EventKind, item_status: ItemStatus) -> Color {
+    match event_status(event_kind, item_status) {
         "ok" => Color::Green,
         "fail" => Color::Red,
         "skip" => Color::Yellow,

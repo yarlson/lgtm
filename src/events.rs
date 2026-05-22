@@ -3,6 +3,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodexEvent {
     pub event_type: String,
+    pub kind: EventKind,
     pub raw: Value,
 }
 
@@ -10,7 +11,92 @@ pub struct CodexEvent {
 pub struct CodexItem {
     pub id: String,
     pub item_type: String,
+    pub kind: ItemKind,
+    pub status: ItemStatus,
     pub raw: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventKind {
+    ThreadStarted,
+    TurnStarted,
+    TurnCompleted,
+    TurnFailed,
+    Error,
+    ItemStarted,
+    ItemUpdated,
+    ItemCompleted,
+    Unknown,
+}
+
+impl EventKind {
+    fn from_str(value: &str) -> Self {
+        match value {
+            "thread.started" => Self::ThreadStarted,
+            "turn.started" => Self::TurnStarted,
+            "turn.completed" => Self::TurnCompleted,
+            "turn.failed" => Self::TurnFailed,
+            "error" => Self::Error,
+            "item.started" => Self::ItemStarted,
+            "item.updated" => Self::ItemUpdated,
+            "item.completed" => Self::ItemCompleted,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemKind {
+    AgentMessage,
+    Reasoning,
+    CommandExecution,
+    FileChange,
+    McpToolCall,
+    CollabToolCall,
+    WebSearch,
+    TodoList,
+    Error,
+    Unknown,
+}
+
+impl ItemKind {
+    fn from_str(value: &str) -> Self {
+        match value {
+            "agent_message" => Self::AgentMessage,
+            "reasoning" => Self::Reasoning,
+            "command_execution" => Self::CommandExecution,
+            "file_change" => Self::FileChange,
+            "mcp_tool_call" => Self::McpToolCall,
+            "collab_tool_call" => Self::CollabToolCall,
+            "web_search" => Self::WebSearch,
+            "todo_list" => Self::TodoList,
+            "error" => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemStatus {
+    Completed,
+    Failed,
+    Declined,
+    InProgress,
+    Missing,
+    Unknown,
+}
+
+impl ItemStatus {
+    fn from_value(value: Option<&Value>) -> Self {
+        match value.and_then(Value::as_str) {
+            Some("completed") => Self::Completed,
+            Some("failed") => Self::Failed,
+            Some("declined") => Self::Declined,
+            Some("in_progress") => Self::InProgress,
+            Some(_) => Self::Unknown,
+            None => Self::Missing,
+        }
+    }
 }
 
 impl CodexEvent {
@@ -21,18 +107,31 @@ impl CodexEvent {
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-        Ok(Self { event_type, raw })
+        let kind = EventKind::from_str(&event_type);
+        Ok(Self {
+            event_type,
+            kind,
+            raw,
+        })
     }
 
     pub fn item(&self) -> Option<CodexItem> {
         let raw = self.raw.get("item")?.clone();
         let item_type = raw.get("type")?.as_str()?.to_string();
+        let kind = ItemKind::from_str(&item_type);
+        let status = ItemStatus::from_value(raw.get("status"));
         let id = raw
             .get("id")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        Some(CodexItem { id, item_type, raw })
+        Some(CodexItem {
+            id,
+            item_type,
+            kind,
+            status,
+            raw,
+        })
     }
 
     pub fn string_at(&self, key: &str) -> Option<&str> {
@@ -70,10 +169,6 @@ pub struct Usage {
 impl CodexItem {
     pub fn string_at(&self, key: &str) -> Option<&str> {
         self.raw.get(key).and_then(Value::as_str)
-    }
-
-    pub fn status(&self) -> Option<&str> {
-        self.string_at("status")
     }
 
     pub fn text(&self) -> Option<&str> {
@@ -172,7 +267,10 @@ mod tests {
 
         let item = event.item().unwrap();
         assert_eq!(event.event_type, "item.completed");
+        assert_eq!(event.kind, EventKind::ItemCompleted);
         assert_eq!(item.item_type, "command_execution");
+        assert_eq!(item.kind, ItemKind::CommandExecution);
+        assert_eq!(item.status, ItemStatus::Completed);
         assert_eq!(item.string_at("command"), Some("cargo check"));
         assert_eq!(item.command_output(), Some("ok\n"));
         assert_eq!(item.exit_code(), Some(0));

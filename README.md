@@ -43,8 +43,10 @@ Ratatui text/style primitives for terminal rendering instead of a `jq` filter.
 Before phase execution, snap-rs refreshes its managed Codex project skills under
 the target repo's `.agents/skills/snap-*` directories and adds
 `.agents/skills/snap-*` and `.codex-log/` to the target `.gitignore` if needed.
-Only skills marked `managed-by: snap-rs` are overwritten; project-owned skills
-are left alone.
+Only skills whose frontmatter has the expected `name` and `managed-by: snap-rs`
+are overwritten; project-owned skills are left alone. The bundled skill sources
+live in this repo under `skills/snap-*/SKILL.md` and are embedded into the
+binary at compile time.
 
 If the target root is not a Git repository, snap-rs prompts before running
 `git init` and `git branch -M main`. Declining the prompt aborts the run.
