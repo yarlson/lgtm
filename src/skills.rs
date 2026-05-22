@@ -5,6 +5,23 @@ use crate::Error;
 
 const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/snap-*", ".codex-log/"];
 
+pub(crate) const PHASE_IMPLEMENT: &str = "snap-phase-implement";
+pub(crate) const PHASE_VALIDATE: &str = "snap-phase-validate";
+pub(crate) const PHASE_REVIEW: &str = "snap-phase-review";
+pub(crate) const CONTEXT_MAP: &str = "snap-context-map";
+pub(crate) const CLI_CONTROL: &str = "snap-cli-control";
+pub(crate) const UI_CONTROL: &str = "snap-ui-control";
+pub(crate) const TECHNICAL_SPIKE: &str = "snap-technical-spike";
+pub(crate) const REFACTOR_PLAN: &str = "snap-refactor-plan";
+pub(crate) const PLAN_UPDATE: &str = "snap-plan-update";
+pub(crate) const SPEC_UPDATE: &str = "snap-spec-update";
+pub(crate) const SECURITY_REVIEW: &str = "snap-security-review";
+pub(crate) const TEST_GAP_REVIEW: &str = "snap-test-gap-review";
+pub(crate) const DOCS_DRIFT_REVIEW: &str = "snap-docs-drift-review";
+pub(crate) const ROLLOUT_REVIEW: &str = "snap-rollout-review";
+pub(crate) const DEPENDENCY_REVIEW: &str = "snap-dependency-review";
+pub(crate) const FINAL_REVIEW: &str = "snap-final-review";
+
 struct Skill {
     name: &'static str,
     body: &'static str,
@@ -15,18 +32,23 @@ pub fn install(root: &Path) -> Result<(), Error> {
     fs::create_dir_all(&skills_dir).map_err(|source| Error::io(&skills_dir, source))?;
 
     for skill in SKILLS {
+        let skill_path = skills_dir.join(skill.name).join("SKILL.md");
+        if !skill_path.exists() {
+            continue;
+        }
+        let existing =
+            fs::read_to_string(&skill_path).map_err(|source| Error::io(&skill_path, source))?;
+        if !is_managed_skill(skill.name, &existing) {
+            return Err(Error::message(format!(
+                "{} exists but is not managed by snap-rs",
+                skill_path.display()
+            )));
+        }
+    }
+
+    for skill in SKILLS {
         let skill_dir = skills_dir.join(skill.name);
         let skill_path = skill_dir.join("SKILL.md");
-        if skill_path.exists() {
-            let existing =
-                fs::read_to_string(&skill_path).map_err(|source| Error::io(&skill_path, source))?;
-            if !is_managed_skill(skill.name, &existing) {
-                return Err(Error::message(format!(
-                    "{} exists but is not managed by snap-rs",
-                    skill_path.display()
-                )));
-            }
-        }
         fs::create_dir_all(&skill_dir).map_err(|source| Error::io(&skill_dir, source))?;
         fs::write(&skill_path, skill.body).map_err(|source| Error::io(&skill_path, source))?;
     }
@@ -82,67 +104,67 @@ fn frontmatter_value(body: &str, key: &str) -> Option<String> {
 
 const SKILLS: &[Skill] = &[
     Skill {
-        name: "snap-phase-implement",
+        name: PHASE_IMPLEMENT,
         body: include_str!("../skills/snap-phase-implement/SKILL.md"),
     },
     Skill {
-        name: "snap-phase-validate",
+        name: PHASE_VALIDATE,
         body: include_str!("../skills/snap-phase-validate/SKILL.md"),
     },
     Skill {
-        name: "snap-phase-review",
+        name: PHASE_REVIEW,
         body: include_str!("../skills/snap-phase-review/SKILL.md"),
     },
     Skill {
-        name: "snap-context-map",
+        name: CONTEXT_MAP,
         body: include_str!("../skills/snap-context-map/SKILL.md"),
     },
     Skill {
-        name: "snap-cli-control",
+        name: CLI_CONTROL,
         body: include_str!("../skills/snap-cli-control/SKILL.md"),
     },
     Skill {
-        name: "snap-ui-control",
+        name: UI_CONTROL,
         body: include_str!("../skills/snap-ui-control/SKILL.md"),
     },
     Skill {
-        name: "snap-technical-spike",
+        name: TECHNICAL_SPIKE,
         body: include_str!("../skills/snap-technical-spike/SKILL.md"),
     },
     Skill {
-        name: "snap-refactor-plan",
+        name: REFACTOR_PLAN,
         body: include_str!("../skills/snap-refactor-plan/SKILL.md"),
     },
     Skill {
-        name: "snap-plan-update",
+        name: PLAN_UPDATE,
         body: include_str!("../skills/snap-plan-update/SKILL.md"),
     },
     Skill {
-        name: "snap-spec-update",
+        name: SPEC_UPDATE,
         body: include_str!("../skills/snap-spec-update/SKILL.md"),
     },
     Skill {
-        name: "snap-security-review",
+        name: SECURITY_REVIEW,
         body: include_str!("../skills/snap-security-review/SKILL.md"),
     },
     Skill {
-        name: "snap-test-gap-review",
+        name: TEST_GAP_REVIEW,
         body: include_str!("../skills/snap-test-gap-review/SKILL.md"),
     },
     Skill {
-        name: "snap-docs-drift-review",
+        name: DOCS_DRIFT_REVIEW,
         body: include_str!("../skills/snap-docs-drift-review/SKILL.md"),
     },
     Skill {
-        name: "snap-rollout-review",
+        name: ROLLOUT_REVIEW,
         body: include_str!("../skills/snap-rollout-review/SKILL.md"),
     },
     Skill {
-        name: "snap-dependency-review",
+        name: DEPENDENCY_REVIEW,
         body: include_str!("../skills/snap-dependency-review/SKILL.md"),
     },
     Skill {
-        name: "snap-final-review",
+        name: FINAL_REVIEW,
         body: include_str!("../skills/snap-final-review/SKILL.md"),
     },
 ];
@@ -240,6 +262,39 @@ mod tests {
         assert_eq!(
             fs::read_to_string(skill_path).expect("skill body"),
             "user owned"
+        );
+    }
+
+    #[test]
+    fn refuses_unmanaged_snap_skill_before_writing_any_skill() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join(PHASE_IMPLEMENT);
+        fs::create_dir_all(&managed_dir).expect("create managed skill dir");
+        let managed_path = managed_dir.join("SKILL.md");
+        fs::write(
+            &managed_path,
+            "---\nname: snap-phase-implement\nmanaged-by: snap-rs\n---\nold\n",
+        )
+        .expect("write managed skill");
+
+        let unmanaged_dir = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join(PHASE_REVIEW);
+        fs::create_dir_all(&unmanaged_dir).expect("create unmanaged skill dir");
+        fs::write(unmanaged_dir.join("SKILL.md"), "user owned").expect("write unmanaged skill");
+
+        let error = install(temp.path()).expect_err("should reject unmanaged snap skill");
+
+        assert!(error.to_string().contains("is not managed by snap-rs"));
+        assert_eq!(
+            fs::read_to_string(managed_path).expect("managed skill"),
+            "---\nname: snap-phase-implement\nmanaged-by: snap-rs\n---\nold\n"
         );
     }
 

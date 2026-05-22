@@ -5,6 +5,7 @@ use crate::events::CodexEvent;
 use crate::events::CodexItem;
 use crate::events::EventKind;
 use crate::events::EventPayload;
+use crate::events::FileChange;
 use crate::events::ItemPayload;
 use crate::events::ItemStatus;
 use crate::events::TodoItem;
@@ -139,10 +140,33 @@ fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text {
     match &item.payload {
         ItemPayload::AgentMessage { text } => render_agent_message(text, color),
         ItemPayload::Reasoning { text } => render_block("reason", Color::DarkGray, text),
-        ItemPayload::CommandExecution { .. } => render_command(event_kind, item),
-        ItemPayload::FileChange { .. } => render_file_change(event_kind, item),
-        ItemPayload::McpToolCall { .. } => render_mcp(event_kind, item),
-        ItemPayload::CollabToolCall { .. } => render_collab(event_kind, item),
+        ItemPayload::CommandExecution {
+            command,
+            output,
+            exit_code,
+        } => render_command(
+            event_kind,
+            item.status,
+            command,
+            output.as_deref(),
+            *exit_code,
+        ),
+        ItemPayload::FileChange { changes } => render_file_change(event_kind, item.status, changes),
+        ItemPayload::McpToolCall {
+            server,
+            tool,
+            error_message,
+        } => render_mcp(
+            event_kind,
+            item.status,
+            server,
+            tool,
+            error_message.as_deref(),
+        ),
+        ItemPayload::CollabToolCall {
+            tool,
+            receiver_count,
+        } => render_collab(event_kind, item.status, tool, *receiver_count),
         ItemPayload::WebSearch { query } => single(
             event_status(event_kind, item.status),
             event_status_color(event_kind, item.status),
@@ -156,11 +180,11 @@ fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text {
             "codex",
             message.as_deref().unwrap_or("unknown error"),
         ),
-        ItemPayload::Unknown => single(
+        ItemPayload::Unknown { item_type } => single(
             event_status(event_kind, item.status),
             Color::DarkGray,
             "item",
-            item.item_type.clone(),
+            item_type,
         ),
     }
 }
@@ -185,37 +209,32 @@ fn render_agent_message(message: &str, color: bool) -> Text {
     text(lines)
 }
 
-fn render_command(event_kind: EventKind, item: &CodexItem) -> Text {
-    let ItemPayload::CommandExecution {
-        command,
-        output,
-        exit_code,
-    } = &item.payload
-    else {
-        return fallback_item(event_kind, item);
-    };
-    let mut message = format!("exec {command}{}", exit_field(*exit_code));
-    if let Some(summary) = output_summary(output.as_deref()) {
+fn render_command(
+    event_kind: EventKind,
+    status: ItemStatus,
+    command: &str,
+    output: Option<&str>,
+    exit_code: Option<i64>,
+) -> Text {
+    let mut message = format!("exec {command}{}", exit_field(exit_code));
+    if let Some(summary) = output_summary(output) {
         message.push(' ');
         message.push_str(&summary);
     }
 
     text(vec![row(
-        event_status(event_kind, item.status),
-        command_status_color(item.status),
+        event_status(event_kind, status),
+        command_status_color(status),
         "tool",
         Color::Cyan,
         message,
     )])
 }
 
-fn render_file_change(event_kind: EventKind, item: &CodexItem) -> Text {
-    let ItemPayload::FileChange { changes } = &item.payload else {
-        return fallback_item(event_kind, item);
-    };
+fn render_file_change(event_kind: EventKind, status: ItemStatus, changes: &[FileChange]) -> Text {
     let mut lines = vec![row(
-        event_status(event_kind, item.status),
-        command_status_color(item.status),
+        event_status(event_kind, status),
+        command_status_color(status),
         "files",
         Color::Yellow,
         format!("patch files={}", changes.len()),
@@ -244,18 +263,16 @@ fn render_file_change(event_kind: EventKind, item: &CodexItem) -> Text {
     text(lines)
 }
 
-fn render_mcp(event_kind: EventKind, item: &CodexItem) -> Text {
-    let ItemPayload::McpToolCall {
-        server,
-        tool,
-        error_message,
-    } = &item.payload
-    else {
-        return fallback_item(event_kind, item);
-    };
+fn render_mcp(
+    event_kind: EventKind,
+    status: ItemStatus,
+    server: &str,
+    tool: &str,
+    error_message: Option<&str>,
+) -> Text {
     let mut lines = vec![row(
-        event_status(event_kind, item.status),
-        command_status_color(item.status),
+        event_status(event_kind, status),
+        command_status_color(status),
         "mcp",
         Color::LightBlue,
         format!("{server}/{tool}"),
@@ -266,17 +283,15 @@ fn render_mcp(event_kind: EventKind, item: &CodexItem) -> Text {
     text(lines)
 }
 
-fn render_collab(event_kind: EventKind, item: &CodexItem) -> Text {
-    let ItemPayload::CollabToolCall {
-        tool,
-        receiver_count,
-    } = &item.payload
-    else {
-        return fallback_item(event_kind, item);
-    };
+fn render_collab(
+    event_kind: EventKind,
+    status: ItemStatus,
+    tool: &str,
+    receiver_count: usize,
+) -> Text {
     single(
-        event_status(event_kind, item.status),
-        event_status_color(event_kind, item.status),
+        event_status(event_kind, status),
+        event_status_color(event_kind, status),
         "collab",
         format!("{tool} receiver_threads={receiver_count}"),
     )
@@ -305,15 +320,6 @@ fn render_todos(event_kind: EventKind, status: ItemStatus, todos: &[TodoItem]) -
         ));
     }
     text(lines)
-}
-
-fn fallback_item(event_kind: EventKind, item: &CodexItem) -> Text {
-    single(
-        event_status(event_kind, item.status),
-        Color::DarkGray,
-        "item",
-        item.item_type.clone(),
-    )
 }
 
 fn render_block(label: &'static str, color: Color, body: &str) -> Text {
@@ -506,6 +512,18 @@ mod tests {
         assert!(rendered.contains("ok   todo     Inspect"));
         assert!(rendered.contains("..   todo     Patch"));
         assert!(!rendered.contains("-- checklist"));
+    }
+
+    #[test]
+    fn renders_unknown_item_from_payload_type() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"new_tool_call","status":"completed"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.contains("ok   item     new_tool_call"));
     }
 
     #[test]

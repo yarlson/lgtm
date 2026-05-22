@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::plan::Phase;
+use crate::skills;
 
 pub fn implementation_prompt(
     plan_path: &Path,
@@ -73,20 +74,29 @@ Open {plan} and locate exactly:
 
 {heading}
 
-Use $snap-context-map before editing.
-Use $snap-phase-implement for the implementation pass.
-Use $snap-technical-spike if the phase depends on unknown or version-sensitive behavior.
-Use $snap-refactor-plan if the phase is a refactor, migration, cleanup, decomposition, rename, or behavior-preserving change.
-Use $snap-cli-control if the phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos.
-Use $snap-ui-control if the phase changes browser, Electron, or local UI behavior.
-Use $snap-security-review if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
-Use $snap-plan-update only if PLAN.md needs a correction to make this selected phase implementable or verifiable.
-Use $snap-spec-update only if DESIGN.md has a real product or architecture contract gap exposed by this selected phase.
+Use ${context_map} before editing.
+Use ${phase_implement} for the implementation pass.
+Use ${technical_spike} if the phase depends on unknown or version-sensitive behavior.
+Use ${refactor_plan} if the phase is a refactor, migration, cleanup, decomposition, rename, or behavior-preserving change.
+Use ${cli_control} if the phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos.
+Use ${ui_control} if the phase changes browser, Electron, or local UI behavior.
+Use ${security_review} if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
+Use ${plan_update} only if PLAN.md needs a correction to make this selected phase implementable or verifiable.
+Use ${spec_update} only if DESIGN.md has a real product or architecture contract gap exposed by this selected phase.
 
 Implement Phase {number} completely in the current target repo. Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
             heading = phase.heading.as_str(),
             number = phase.number,
+            context_map = skills::CONTEXT_MAP,
+            phase_implement = skills::PHASE_IMPLEMENT,
+            technical_spike = skills::TECHNICAL_SPIKE,
+            refactor_plan = skills::REFACTOR_PLAN,
+            cli_control = skills::CLI_CONTROL,
+            ui_control = skills::UI_CONTROL,
+            security_review = skills::SECURITY_REVIEW,
+            plan_update = skills::PLAN_UPDATE,
+            spec_update = skills::SPEC_UPDATE,
         ),
         PhaseTask::Validate => format!(
             "\
@@ -94,12 +104,12 @@ Open {plan} and locate exactly:
 
 {heading}
 
-Use $snap-phase-validate for the validation pass.
-Use $snap-test-gap-review to check whether verification proves the selected phase works.
-Use $snap-security-review if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
-Use $snap-docs-drift-review if changed behavior may affect README, AGENTS.md, DESIGN.md, PLAN.md, API docs, operational docs, examples, or command help.
-Use $snap-rollout-review if the phase affects deployment, infrastructure, runtime config, migrations, observability, rollback, or production failure modes.
-Use $snap-dependency-review if the phase changes dependencies, lockfiles, package manager config, generated files, CI security config, tool versions, or plugin/MCP/tool installation.
+Use ${phase_validate} for the validation pass.
+Use ${test_gap_review} to check whether verification proves the selected phase works.
+Use ${security_review} if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
+Use ${docs_drift_review} if changed behavior may affect README, AGENTS.md, DESIGN.md, PLAN.md, API docs, operational docs, examples, or command help.
+Use ${rollout_review} if the phase affects deployment, infrastructure, runtime config, migrations, observability, rollback, or production failure modes.
+Use ${dependency_review} if the phase changes dependencies, lockfiles, package manager config, generated files, CI security config, tool versions, or plugin/MCP/tool installation.
 
 Validate that Phase {number} was implemented fully and correctly in the current target repo.
 Fix only correctness, test, docs, security, dependency, or rollout gaps needed to complete this selected phase.
@@ -107,6 +117,12 @@ Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
             heading = phase.heading.as_str(),
             number = phase.number,
+            phase_validate = skills::PHASE_VALIDATE,
+            test_gap_review = skills::TEST_GAP_REVIEW,
+            security_review = skills::SECURITY_REVIEW,
+            docs_drift_review = skills::DOCS_DRIFT_REVIEW,
+            rollout_review = skills::ROLLOUT_REVIEW,
+            dependency_review = skills::DEPENDENCY_REVIEW,
         ),
         PhaseTask::Review => format!(
             "\
@@ -114,10 +130,10 @@ Open {plan} and locate exactly:
 
 {heading}
 
-Use $snap-phase-review for the local phase review pass.
-Use $snap-cli-control if the phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos and validation did not already prove the user-visible behavior.
-Use $snap-ui-control if the phase changes browser, Electron, or local UI behavior and validation did not already prove the user-visible behavior.
-Use $snap-final-review before finishing.
+Use ${phase_review} for the local phase review pass.
+Use ${cli_control} if the phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos and validation did not already prove the user-visible behavior.
+Use ${ui_control} if the phase changes browser, Electron, or local UI behavior and validation did not already prove the user-visible behavior.
+Use ${final_review} before finishing.
 
 Review Phase {number} in the current target repo after implementation and validation.
 Fix only small, high-confidence, phase-scoped review findings.
@@ -126,6 +142,10 @@ Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
             heading = phase.heading.as_str(),
             number = phase.number,
+            phase_review = skills::PHASE_REVIEW,
+            cli_control = skills::CLI_CONTROL,
+            ui_control = skills::UI_CONTROL,
+            final_review = skills::FINAL_REVIEW,
         ),
     }
 }

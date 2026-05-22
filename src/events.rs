@@ -8,8 +8,6 @@ pub struct CodexEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodexItem {
     pub id: String,
-    pub item_type: String,
-    pub kind: ItemKind,
     pub status: ItemStatus,
     pub payload: ItemPayload,
 }
@@ -59,7 +57,9 @@ pub enum ItemPayload {
     Error {
         message: Option<String>,
     },
-    Unknown,
+    Unknown {
+        item_type: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +92,7 @@ impl EventKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ItemKind {
+enum ItemKind {
     AgentMessage,
     Reasoning,
     CommandExecution,
@@ -200,17 +200,15 @@ fn parse_item(raw: &serde_json::Value) -> Option<CodexItem> {
     let kind = ItemKind::from_str(&item_type);
     let status = ItemStatus::from_value(raw.get("status"));
     let id = string_at(raw, "id").unwrap_or_default();
-    let payload = item_payload(kind, raw);
+    let payload = item_payload(kind, &item_type, raw);
     Some(CodexItem {
         id,
-        item_type,
-        kind,
         status,
         payload,
     })
 }
 
-fn item_payload(kind: ItemKind, raw: &serde_json::Value) -> ItemPayload {
+fn item_payload(kind: ItemKind, item_type: &str, raw: &serde_json::Value) -> ItemPayload {
     match kind {
         ItemKind::AgentMessage => ItemPayload::AgentMessage {
             text: string_at(raw, "text").unwrap_or_default(),
@@ -248,7 +246,9 @@ fn item_payload(kind: ItemKind, raw: &serde_json::Value) -> ItemPayload {
         ItemKind::Error => ItemPayload::Error {
             message: error_message(raw),
         },
-        ItemKind::Unknown => ItemPayload::Unknown,
+        ItemKind::Unknown => ItemPayload::Unknown {
+            item_type: item_type.to_string(),
+        },
     }
 }
 
@@ -343,8 +343,6 @@ mod tests {
         let EventPayload::Item { item } = event.payload else {
             panic!("expected item payload");
         };
-        assert_eq!(item.item_type, "command_execution");
-        assert_eq!(item.kind, ItemKind::CommandExecution);
         assert_eq!(item.status, ItemStatus::Completed);
         assert_eq!(
             item.payload,
@@ -352,6 +350,24 @@ mod tests {
                 command: "cargo check".to_string(),
                 output: Some("ok\n".to_string()),
                 exit_code: Some(0),
+            }
+        );
+    }
+
+    #[test]
+    fn preserves_unknown_item_type_inside_unknown_payload() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"new_tool_call","status":"completed"}}"#,
+        )
+        .unwrap();
+
+        let EventPayload::Item { item } = event.payload else {
+            panic!("expected item payload");
+        };
+        assert_eq!(
+            item.payload,
+            ItemPayload::Unknown {
+                item_type: "new_tool_call".to_string()
             }
         );
     }

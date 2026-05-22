@@ -3,9 +3,12 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
+use std::process::Child;
+use std::process::ChildStdout;
 use std::process::Command;
 use std::process::Stdio;
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::Error;
@@ -121,42 +124,105 @@ fn run_phase_prompt(
     fs::create_dir_all(&config.log_dir).map_err(|source| Error::io(&config.log_dir, source))?;
     let mut log = File::create(&log_path).map_err(|source| Error::io(&log_path, source))?;
 
-    let mut child = Command::new(&config.codex_bin)
-        .arg("exec")
-        .arg("-C")
-        .arg(&config.root)
-        .arg("--dangerously-bypass-approvals-and-sandbox")
-        .arg("--json")
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|source| Error::io(&config.codex_bin, source))?;
+    let (process, stdout) = CodexProcess::spawn(config, prompt)?;
+    let stream_result = stream_codex_output(config, renderer, &log_path, &mut log, stdout);
+    process.finish(&config.codex_bin, stream_result)
+}
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| Error::message("failed to open codex stdin"))?;
-    let writer = thread::spawn(move || -> std::io::Result<()> {
-        stdin.write_all(prompt.as_bytes())?;
-        stdin.write_all(b"\n")?;
-        Ok(())
-    });
+struct CodexProcess {
+    child: Child,
+    stdin_writer: JoinHandle<std::io::Result<()>>,
+}
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| Error::message("failed to open codex stdout"))?;
+impl CodexProcess {
+    fn spawn(config: &Config, prompt: String) -> Result<(Self, ChildStdout), Error> {
+        let mut child = Command::new(&config.codex_bin)
+            .arg("exec")
+            .arg("-C")
+            .arg(&config.root)
+            .arg("--dangerously-bypass-approvals-and-sandbox")
+            .arg("--json")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|source| Error::io(&config.codex_bin, source))?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| finish_spawn_error(&mut child, "failed to open codex stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| finish_spawn_error(&mut child, "failed to open codex stdout"))?;
+
+        let stdin_writer = thread::spawn(move || -> std::io::Result<()> {
+            stdin.write_all(prompt.as_bytes())?;
+            stdin.write_all(b"\n")?;
+            Ok(())
+        });
+
+        Ok((
+            Self {
+                child,
+                stdin_writer,
+            },
+            stdout,
+        ))
+    }
+
+    fn finish(mut self, codex_bin: &str, stream_result: Result<(), Error>) -> Result<(), Error> {
+        if stream_result.is_err() {
+            let _ = self.child.kill();
+        }
+
+        let writer_result = self
+            .stdin_writer
+            .join()
+            .map_err(|_| Error::message("codex stdin writer panicked"))
+            .and_then(|result| result.map_err(|source| Error::io("<codex stdin>", source)));
+
+        let status_result = self
+            .child
+            .wait()
+            .map_err(|source| Error::io(codex_bin, source));
+
+        stream_result?;
+        writer_result?;
+
+        let status = status_result?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(Error::CodexStatus { status })
+        }
+    }
+}
+
+fn finish_spawn_error(child: &mut Child, message: &'static str) -> Error {
+    let _ = child.kill();
+    let _ = child.wait();
+    Error::message(message)
+}
+
+fn stream_codex_output(
+    config: &Config,
+    renderer: &Renderer,
+    log_path: &std::path::Path,
+    log: &mut File,
+    stdout: ChildStdout,
+) -> Result<(), Error> {
     let reader = BufReader::new(stdout);
     for line in reader.split(b'\n') {
-        let mut line = line.map_err(|source| Error::io(&log_path, source))?;
+        let mut line = line.map_err(|source| Error::io(log_path, source))?;
         if line.is_empty() {
             continue;
         }
         line.push(b'\n');
         log.write_all(&line)
-            .map_err(|source| Error::io(&log_path, source))?;
+            .map_err(|source| Error::io(log_path, source))?;
 
         match config.stream_mode {
             StreamMode::Raw => {
@@ -173,18 +239,28 @@ fn run_phase_prompt(
             }
         }
     }
+    Ok(())
+}
 
-    writer
-        .join()
-        .map_err(|_| Error::message("codex stdin writer panicked"))?
-        .map_err(|source| Error::io("<codex stdin>", source))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let status = child
-        .wait()
-        .map_err(|source| Error::io(&config.codex_bin, source))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Error::CodexStatus { status })
+    #[test]
+    fn finish_kills_child_when_streaming_fails() {
+        let child = Command::new("sh")
+            .args(["-c", "sleep 60"])
+            .spawn()
+            .expect("spawn child");
+        let process = CodexProcess {
+            child,
+            stdin_writer: thread::spawn(|| Ok(())),
+        };
+
+        let error = process
+            .finish("sh", Err(Error::message("stream failed")))
+            .expect_err("stream error should win");
+
+        assert_eq!(error.to_string(), "stream failed");
     }
 }
