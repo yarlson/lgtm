@@ -10,14 +10,7 @@ pub fn implementation_prompt(
     format!(
         "{}\n\n{}\n",
         context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(
-            plan_path,
-            design_path,
-            agents_path,
-            phase,
-            title,
-            PhaseTask::Implement
-        )
+        phase_task_block(plan_path, phase, title, PhaseTask::Implement)
     )
 }
 
@@ -31,14 +24,7 @@ pub fn validation_prompt(
     format!(
         "{}\n\n{}\n",
         context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(
-            plan_path,
-            design_path,
-            agents_path,
-            phase,
-            title,
-            PhaseTask::Validate
-        )
+        phase_task_block(plan_path, phase, title, PhaseTask::Validate)
     )
 }
 
@@ -52,7 +38,7 @@ Read these context files before coding:
 Treat {design} as the product contract and {plan} as the implementation order.
 Treat {agents} as the authoritative agent instructions for this run.
 Use only repo-local files and official docs relevant to the selected phase.
-When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior, search current official docs first and include 2026 in web searches.",
+When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior, check the installed version and repo-local config first; use current official docs when local evidence is not enough.",
         agents = agents_path.display(),
         design = design_path.display(),
         plan = plan_path.display(),
@@ -65,14 +51,7 @@ enum PhaseTask {
     Validate,
 }
 
-fn phase_task_block(
-    plan_path: &Path,
-    design_path: &Path,
-    agents_path: &Path,
-    phase: u32,
-    title: &str,
-    task: PhaseTask,
-) -> String {
+fn phase_task_block(plan_path: &Path, phase: u32, title: &str, task: PhaseTask) -> String {
     match task {
         PhaseTask::Implement => format!(
             "\
@@ -80,20 +59,16 @@ Open {plan} and locate exactly:
 
 ## Phase {phase} - {title}
 
-Implement Phase {phase} completely in the current lnk repo.
-Use the phase's Goal, Steps, Validation, and Web validation sections as the task contract.
-Before coding, inspect the current repo state and the files relevant to this phase.
-Do not skip ahead into later phases unless the selected phase explicitly requires a small prerequisite.
-Keep modules small and concern-based; do not recreate the deleted Go shape or large service files.
-Do not add commands, flags, configuration, workflows, CI, release automation, or features outside {design} and the selected phase.
-Update {design} only if implementation exposes a real product-design gap.
-Update {plan} only if the selected phase needs a corrected implementation order or validation gate.
-Run the checks required by {agents} and the selected phase. Fix failures.
-If a required tool such as cargo-nextest is missing, install it when practical or report the blocker explicitly; do not silently substitute weaker checks.
-Do not commit or push unless the user explicitly requested it for this run.",
+Use $snap-context-map before editing.
+Use $snap-phase-implement for the implementation pass.
+Use $snap-technical-spike if the phase depends on unknown or version-sensitive behavior.
+Use $snap-refactor-plan if the phase is a refactor, migration, cleanup, decomposition, rename, or behavior-preserving change.
+Use $snap-security-review if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
+Use $snap-plan-update only if PLAN.md needs a correction to make this selected phase implementable or verifiable.
+Use $snap-spec-update only if DESIGN.md has a real product or architecture contract gap exposed by this selected phase.
+
+Implement Phase {phase} completely in the current lnk repo. Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
-            design = design_path.display(),
-            agents = agents_path.display(),
         ),
         PhaseTask::Validate => format!(
             "\
@@ -101,20 +76,17 @@ Open {plan} and locate exactly:
 
 ## Phase {phase} - {title}
 
+Use $snap-phase-validate for the validation pass.
+Use $snap-test-gap-review to check whether verification proves the selected phase works.
+Use $snap-security-review if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
+Use $snap-docs-drift-review if changed behavior may affect README, AGENTS.md, DESIGN.md, PLAN.md, API docs, operational docs, examples, or command help.
+Use $snap-rollout-review if the phase affects deployment, infrastructure, runtime config, migrations, observability, rollback, or production failure modes.
+Use $snap-dependency-review if the phase changes dependencies, lockfiles, package manager config, generated files, CI security config, tool versions, or plugin/MCP/tool installation.
+Use $snap-final-review before finishing.
+
 Validate that Phase {phase} was implemented fully and correctly in the current lnk repo.
-Compare the current implementation against the selected phase's Goal, Steps, Validation, and Web validation sections.
-Reinspect the files touched by the phase and the surrounding modules.
-Close whatever gaps are needed to make Phase {phase} complete, correct, and well-verified.
-Do not skip ahead into later phases except for a small prerequisite required to satisfy this phase.
-Do not add commands, flags, configuration, workflows, CI, release automation, or features outside {design} and the selected phase.
-Fix issues, strengthen tests or verification where needed, and keep the work focused on satisfying Phase {phase} end to end.
-Run the checks required by {agents} and the selected phase. Fix failures.
-If a required tool such as cargo-nextest is missing, install it when practical or report the blocker explicitly; do not silently substitute weaker checks.
-Review git diff before finishing.
 Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
-            design = design_path.display(),
-            agents = agents_path.display(),
         ),
     }
 }
@@ -133,8 +105,35 @@ mod tests {
             "Path And Environment Resolution",
         );
 
-        assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
         assert!(prompt.contains("Treat DESIGN.md as the product contract"));
+        assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
+        assert!(prompt.contains("$snap-context-map"));
+        assert!(prompt.contains("$snap-phase-implement"));
+        assert!(prompt.contains("$snap-technical-spike"));
+        assert!(prompt.contains("$snap-refactor-plan"));
+        assert!(prompt.contains("$snap-security-review"));
+        assert!(prompt.contains("$snap-plan-update"));
+        assert!(prompt.contains("$snap-spec-update"));
         assert!(prompt.contains("Do not commit or push"));
+    }
+
+    #[test]
+    fn validation_prompt_requires_independent_evidence_based_check() {
+        let prompt = validation_prompt(
+            Path::new("PLAN.md"),
+            Path::new("AGENTS.md"),
+            Path::new("DESIGN.md"),
+            2,
+            "Verification Loop",
+        );
+
+        assert!(prompt.contains("## Phase 2 - Verification Loop"));
+        assert!(prompt.contains("$snap-phase-validate"));
+        assert!(prompt.contains("$snap-test-gap-review"));
+        assert!(prompt.contains("$snap-final-review"));
+        assert!(prompt.contains("$snap-security-review"));
+        assert!(prompt.contains("$snap-docs-drift-review"));
+        assert!(prompt.contains("$snap-rollout-review"));
+        assert!(prompt.contains("$snap-dependency-review"));
     }
 }

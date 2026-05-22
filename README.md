@@ -8,8 +8,9 @@ It keeps the same implementation/validation loop:
 2. detect `## Phase N - Title` headings
 3. run Codex once to implement each phase
 4. run Codex again to validate each phase
-5. write raw Codex JSONL into `codex-logs/`
-6. render the live JSONL stream as a readable terminal transcript
+5. install snap-rs managed project skills into `.agents/skills/snap-*`
+6. write raw Codex JSONL into `codex-logs/`
+7. render the live JSONL stream as a readable terminal transcript
 
 From this directory, drive the sibling `lnk` repo with:
 
@@ -36,3 +37,8 @@ The formatter is based on the current `codex exec --json` source from
 `codex-rs/exec/src/exec_events.rs` and
 `codex-rs/exec/src/event_processor_with_jsonl_output.rs`. It intentionally uses
 Ratatui text/style primitives for terminal rendering instead of a `jq` filter.
+
+Before phase execution, snap-rs refreshes its managed Codex project skills under
+the target repo's `.agents/skills/snap-*` directories and adds
+`.agents/skills/snap-*` to the target `.gitignore` if needed. Only skills marked
+`managed-by: snap-rs` are overwritten; project-owned skills are left alone.

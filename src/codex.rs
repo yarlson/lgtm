@@ -17,6 +17,7 @@ use crate::events::CodexEvent;
 use crate::plan;
 use crate::prompt;
 use crate::render::Renderer;
+use crate::skills;
 
 pub fn run_plan(config: Config) -> Result<(), Error> {
     let renderer = Renderer::new();
@@ -24,6 +25,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
     plan::require_file(&config.plan_abs(), &config.plan_path)?;
     plan::require_file(&config.agents_abs(), &config.agents_path)?;
     plan::require_file(&config.design_abs(), &config.design_path)?;
+    skills::install(&config.root)?;
 
     let plan_text = plan::load(&config.plan_abs())?;
     let end_phase = match config.end_phase {

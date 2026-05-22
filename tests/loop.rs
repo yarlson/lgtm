@@ -65,4 +65,17 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 
     assert!(logs.join("test-phase-01-implement.jsonl").is_file());
     assert!(logs.join("test-phase-01-validate.jsonl").is_file());
+    assert!(
+        repo.join(".agents")
+            .join("skills")
+            .join("snap-phase-implement")
+            .join("SKILL.md")
+            .is_file()
+    );
+    assert!(
+        fs::read_to_string(repo.join(".gitignore"))
+            .expect("read gitignore")
+            .lines()
+            .any(|line| line == ".agents/skills/snap-*")
+    );
 }

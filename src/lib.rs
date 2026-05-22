@@ -5,6 +5,7 @@ mod events;
 mod plan;
 mod prompt;
 mod render;
+mod skills;
 
 use clap::Parser;
 
