@@ -17,7 +17,9 @@ pub(crate) struct Span {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Style {
     fg: Option<Color>,
-    emphasis: Emphasis,
+    bold: bool,
+    dim: bool,
+    strikethrough: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -37,7 +39,6 @@ pub(crate) enum Color {
     DarkGray,
     LightBlue,
     LightMagenta,
-    LightCyan,
 }
 
 impl Text {
@@ -72,15 +73,32 @@ impl Style {
     fn plain() -> Self {
         Self {
             fg: None,
-            emphasis: Emphasis::Plain,
+            bold: false,
+            dim: false,
+            strikethrough: false,
         }
     }
 }
 
 pub(crate) fn style(color: Color, emphasis: Emphasis) -> Style {
+    let mut style = Style {
+        fg: Some(color),
+        ..Style::plain()
+    };
+    match emphasis {
+        Emphasis::Plain => {}
+        Emphasis::Bold => style.bold = true,
+        Emphasis::Dim => style.dim = true,
+    }
+    style
+}
+
+pub(crate) fn decorated_style(color: Color, bold: bool, dim: bool, strikethrough: bool) -> Style {
     Style {
         fg: Some(color),
-        emphasis,
+        bold,
+        dim,
+        strikethrough,
     }
 }
 
@@ -103,10 +121,14 @@ pub(crate) fn text_to_string(text: Text, color: bool) -> String {
 
 fn ansi_start(style: Style) -> String {
     let mut codes = Vec::new();
-    match style.emphasis {
-        Emphasis::Plain => {}
-        Emphasis::Bold => codes.push("1"),
-        Emphasis::Dim => codes.push("2"),
+    if style.bold {
+        codes.push("1");
+    }
+    if style.dim {
+        codes.push("2");
+    }
+    if style.strikethrough {
+        codes.push("9");
     }
     if let Some(color) = style.fg {
         codes.push(ansi_color(color));
@@ -128,6 +150,5 @@ fn ansi_color(color: Color) -> &'static str {
         Color::DarkGray => "90",
         Color::LightBlue => "94",
         Color::LightMagenta => "95",
-        Color::LightCyan => "96",
     }
 }

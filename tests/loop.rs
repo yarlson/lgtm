@@ -78,9 +78,11 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("phase=01"));
     assert!(stdout.contains("pass=review"));
-    assert!(stdout.contains("thread"));
-    assert!(stdout.contains("codex"));
-    assert!(stdout.contains("turn"));
+    assert!(stdout.contains("• Ran thread thread-test"));
+    assert!(stdout.contains("• Ran turn begin"));
+    assert!(stdout.contains("• Codex"));
+    assert!(stdout.contains("  done"));
+    assert!(stdout.contains("• Verification tokens input=1 cached=0 output=2 reasoning=0"));
 
     let implement_prompt =
         fs::read_to_string(temp.path().join("prompt-1.txt")).expect("implementation prompt");

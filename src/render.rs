@@ -1,31 +1,28 @@
-use termimad::MadSkin;
-
 mod format;
+
+use termimad::MadSkin;
 
 use crate::events::CodexEvent;
 use crate::events::CodexItem;
-use crate::events::EventKind;
 use crate::events::EventPayload;
 use crate::events::FileChange;
 use crate::events::ItemPayload;
 use crate::events::ItemStatus;
 use crate::events::TodoItem;
 use crate::events::Usage;
-use crate::render::format::command_status_color;
-use crate::render::format::event_status;
-use crate::render::format::event_status_color;
-use crate::render::format::exit_field;
+use crate::render::format::blank;
+use crate::render::format::block;
+use crate::render::format::child;
+use crate::render::format::continuation;
+use crate::render::format::file_line;
+use crate::render::format::header;
 use crate::render::format::line_count;
-use crate::render::format::output_summary;
-use crate::render::format::row;
-use crate::render::format::single;
+use crate::render::format::output_lines;
+use crate::render::format::raw_body_line;
+use crate::render::format::separator;
 use crate::render::format::text;
 use crate::terminal::Color;
-use crate::terminal::Emphasis;
-use crate::terminal::Line;
-use crate::terminal::Span;
 use crate::terminal::Text;
-use crate::terminal::style;
 use crate::terminal::text_to_string;
 
 #[derive(Debug, Clone)]
@@ -47,46 +44,43 @@ impl Renderer {
 
     pub fn phase_header(&self, phase: u32, title: &str, action: &str, log_path: &str) {
         self.emit(text(vec![
-            row(
-                "run",
-                Color::Cyan,
-                "phase",
+            header(
+                "Ran",
                 Color::LightBlue,
                 format!("phase={phase:02} pass={action} title=\"{title}\""),
             ),
-            row("info", Color::DarkGray, "log", Color::Cyan, log_path),
+            child(format!("raw_jsonl {log_path}")),
+            blank(),
         ]));
     }
 
     pub fn system(&self, message: impl Into<String>) {
-        self.emit(single("info", Color::DarkGray, "snap-rs", message));
+        self.emit(text(vec![
+            header("Snap-rs", Color::DarkGray, message),
+            blank(),
+        ]));
     }
 
     pub fn sleep(&self, seconds: u64, next_phase: u32) {
-        self.emit(single(
-            "wait",
-            Color::DarkGray,
-            "snap-rs",
-            format!("{seconds}s before Phase {next_phase}"),
-        ));
+        self.emit(text(vec![
+            header(
+                "Waiting",
+                Color::DarkGray,
+                format!("{seconds}s before Phase {next_phase}"),
+            ),
+            blank(),
+        ]));
     }
 
     pub fn raw_parse_error(&self, raw_line: &str, error: &serde_json::Error) {
         self.emit(text(vec![
-            row(
-                "fail",
-                Color::Red,
-                "json",
-                Color::Red,
-                format!("parse_error=\"{error}\""),
-            ),
-            row(
-                "warn",
+            header(
+                "Warning",
                 Color::Yellow,
-                "json",
-                Color::DarkGray,
-                raw_line.trim_end(),
+                format!("json parse_error=\"{error}\""),
             ),
+            child(raw_line.trim_end()),
+            blank(),
         ]));
     }
 
@@ -107,36 +101,35 @@ impl Renderer {
 fn render_event(event: &CodexEvent, color: bool) -> Text {
     match &event.payload {
         EventPayload::ThreadStarted { thread_id } => {
-            single("run", Color::Cyan, "thread", format!("thread {thread_id}"))
+            block("Ran", Color::Cyan, format!("thread {thread_id}"))
         }
-        EventPayload::TurnStarted => single("run", Color::Cyan, "turn", "begin"),
+        EventPayload::TurnStarted => block("Ran", Color::Cyan, "turn begin"),
         EventPayload::TurnCompleted { usage } => render_turn_completed(*usage),
-        EventPayload::TurnFailed { message } => single(
-            "fail",
+        EventPayload::TurnFailed { message } => block(
+            "Failed",
             Color::Red,
-            "turn",
             format!(
-                "error=\"{}\"",
+                "turn error=\"{}\"",
                 message.as_deref().unwrap_or("unknown error")
             ),
         ),
-        EventPayload::Error { message } => single(
-            "fail",
+        EventPayload::Error { message } => block(
+            "Failed",
             Color::Red,
-            "codex",
-            message.as_deref().unwrap_or("unknown error"),
+            format!("codex {}", message.as_deref().unwrap_or("unknown error")),
         ),
-        EventPayload::Item { item } => render_item(event.kind, item, color),
-        EventPayload::Malformed { reason } => single("warn", Color::Yellow, "json", reason),
-        EventPayload::Unknown => single("..", Color::DarkGray, "event", event.event_type.clone()),
+        EventPayload::Item { item } => render_item(item, color),
+        EventPayload::Malformed { reason } => {
+            block("Warning", Color::Yellow, format!("json {reason}"))
+        }
+        EventPayload::Unknown => block("Event", Color::DarkGray, event.event_type.clone()),
     }
 }
 
 fn render_turn_completed(usage: Usage) -> Text {
-    single(
-        "ok",
+    block(
+        "Verification",
         Color::Green,
-        "turn",
         format!(
             "tokens input={} cached={} output={} reasoning={}",
             usage.input_tokens,
@@ -147,115 +140,74 @@ fn render_turn_completed(usage: Usage) -> Text {
     )
 }
 
-fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text {
+fn render_item(item: &CodexItem, color: bool) -> Text {
     match &item.payload {
         ItemPayload::AgentMessage { text } => render_agent_message(text, color),
-        ItemPayload::Reasoning { text } => render_block("reason", Color::DarkGray, text),
+        ItemPayload::Reasoning { text } => render_reasoning(text),
         ItemPayload::CommandExecution {
             command,
             output,
             exit_code,
-        } => render_command(
-            event_kind,
-            item.status,
-            command,
-            output.as_deref(),
-            *exit_code,
-        ),
-        ItemPayload::FileChange { changes } => render_file_change(event_kind, item.status, changes),
+        } => render_command(item.status, command, output.as_deref(), *exit_code),
+        ItemPayload::FileChange { changes } => render_file_change(item.status, changes),
         ItemPayload::McpToolCall {
             server,
             tool,
             error_message,
-        } => render_mcp(
-            event_kind,
-            item.status,
-            server,
-            tool,
-            error_message.as_deref(),
-        ),
+        } => render_mcp(item.status, server, tool, error_message.as_deref()),
         ItemPayload::CollabToolCall {
             tool,
             receiver_count,
-        } => render_collab(event_kind, item.status, tool, *receiver_count),
-        ItemPayload::WebSearch { query } => single(
-            event_status(event_kind, item.status),
-            event_status_color(event_kind, item.status),
-            "web",
-            query,
+        } => render_collab(item.status, tool, *receiver_count),
+        ItemPayload::WebSearch { query } => block("Searched", Color::LightBlue, query),
+        ItemPayload::TodoList { items } => render_todos(items),
+        ItemPayload::Error { message } => block(
+            "Failed",
+            status_color(item.status),
+            format!("codex {}", message.as_deref().unwrap_or("unknown error")),
         ),
-        ItemPayload::TodoList { items } => render_todos(event_kind, item.status, items),
-        ItemPayload::Error { message } => single(
-            "fail",
-            Color::Red,
-            "codex",
-            message.as_deref().unwrap_or("unknown error"),
-        ),
-        ItemPayload::Malformed { item_type, reason } => single(
-            "warn",
+        ItemPayload::Malformed { item_type, reason } => block(
+            "Warning",
             Color::Yellow,
-            "item",
             format!("{item_type} malformed: {reason}"),
         ),
-        ItemPayload::Unknown { item_type } => single(
-            event_status(event_kind, item.status),
-            Color::DarkGray,
-            "item",
-            item_type,
-        ),
+        ItemPayload::Unknown { item_type } => block("Event", Color::DarkGray, item_type),
     }
 }
 
 fn render_agent_message(message: &str, color: bool) -> Text {
-    let mut lines = Vec::new();
-    lines.push(row(
-        "msg",
-        Color::LightMagenta,
-        "codex",
-        Color::LightMagenta,
-        "begin",
-    ));
+    let mut lines = vec![
+        separator(),
+        blank(),
+        header("Codex", Color::LightMagenta, ""),
+    ];
     lines.extend(markdown_lines(message, color));
-    lines.push(row(
-        "msg",
-        Color::LightMagenta,
-        "codex",
-        Color::LightMagenta,
-        format!("end lines={}", line_count(message)),
-    ));
+    lines.push(blank());
     text(lines)
 }
 
 fn render_command(
-    event_kind: EventKind,
     status: ItemStatus,
     command: &str,
     output: Option<&str>,
     exit_code: Option<i64>,
 ) -> Text {
-    let mut message = format!("exec {command}{}", exit_field(exit_code));
-    if let Some(summary) = output_summary(output) {
-        message.push(' ');
-        message.push_str(&summary);
+    let mut lines = vec![header("Ran", status_color(status), command)];
+    lines.extend(output_lines(output));
+    if let Some(exit_code) = exit_code.filter(|code| *code != 0) {
+        lines.push(continuation(format!("exit={exit_code}")));
     }
-
-    text(vec![row(
-        event_status(event_kind, status),
-        command_status_color(status),
-        "tool",
-        Color::Cyan,
-        message,
-    )])
+    lines.push(blank());
+    text(lines)
 }
 
-fn render_file_change(event_kind: EventKind, status: ItemStatus, changes: &[FileChange]) -> Text {
-    let mut lines = vec![row(
-        event_status(event_kind, status),
-        command_status_color(status),
-        "files",
-        Color::Yellow,
-        format!("patch files={}", changes.len()),
-    )];
+fn render_file_change(status: ItemStatus, changes: &[FileChange]) -> Text {
+    let title = if changes.len() == 1 {
+        changes[0].path.as_str()
+    } else {
+        "files"
+    };
+    let mut lines = vec![header("Edited", status_color(status), title)];
 
     for change in changes {
         let marker = match change.kind.as_str() {
@@ -268,110 +220,57 @@ fn render_file_change(event_kind: EventKind, status: ItemStatus, changes: &[File
             "-" => Color::Red,
             _ => Color::Yellow,
         };
-        lines.push(row(
-            "..",
-            color,
-            "files",
-            Color::Yellow,
-            format!("{marker} {}", change.path),
-        ));
+        lines.push(file_line(marker, color, change.path.as_str()));
     }
 
+    lines.push(blank());
     text(lines)
 }
 
-fn render_mcp(
-    event_kind: EventKind,
-    status: ItemStatus,
-    server: &str,
-    tool: &str,
-    error_message: Option<&str>,
-) -> Text {
-    let mut lines = vec![row(
-        event_status(event_kind, status),
-        command_status_color(status),
-        "mcp",
-        Color::LightBlue,
+fn render_mcp(status: ItemStatus, server: &str, tool: &str, error_message: Option<&str>) -> Text {
+    let mut lines = vec![header(
+        "Ran",
+        status_color(status),
         format!("{server}/{tool}"),
     )];
     if let Some(error) = error_message {
-        lines.push(row("fail", Color::Red, "mcp", Color::LightBlue, error));
+        lines.push(child(error));
     }
+    lines.push(blank());
     text(lines)
 }
 
-fn render_collab(
-    event_kind: EventKind,
-    status: ItemStatus,
-    tool: &str,
-    receiver_count: usize,
-) -> Text {
-    single(
-        event_status(event_kind, status),
-        event_status_color(event_kind, status),
-        "collab",
+fn render_collab(status: ItemStatus, tool: &str, receiver_count: usize) -> Text {
+    block(
+        "Ran",
+        status_color(status),
         format!("{tool} receiver_threads={receiver_count}"),
     )
 }
 
-fn render_todos(event_kind: EventKind, status: ItemStatus, todos: &[TodoItem]) -> Text {
-    let mut lines = vec![row(
-        event_status(event_kind, status),
-        event_status_color(event_kind, status),
-        "todo",
-        Color::Yellow,
-        format!("items={}", todos.len()),
-    )];
+fn render_todos(todos: &[TodoItem]) -> Text {
+    let mut lines = vec![header("Updated Plan", Color::LightBlue, "")];
     for todo in todos {
-        let (status, color) = if todo.completed {
-            ("ok", Color::Green)
-        } else {
-            ("..", Color::DarkGray)
-        };
-        lines.push(row(
-            status,
-            color,
-            "todo",
-            Color::Yellow,
-            todo.text.as_str(),
-        ));
+        lines.push(format::checklist_line(todo.completed, todo.text.as_str()));
     }
+    lines.push(blank());
     text(lines)
 }
 
-fn render_block(label: &'static str, color: Color, body: &str) -> Text {
-    let mut lines = vec![row("msg", color, label, color, "begin")];
-    lines.extend(block_lines(body, color));
-    lines.push(row(
-        "msg",
-        color,
-        label,
-        color,
-        format!("end lines={}", line_count(body)),
-    ));
-    text(lines)
+fn render_reasoning(reasoning: &str) -> Text {
+    block(
+        "Reasoning",
+        Color::DarkGray,
+        format!("… {} lines hidden", line_count(reasoning)),
+    )
 }
 
-fn block_lines(body: &str, color: Color) -> Vec<Line> {
-    if body.trim().is_empty() {
-        return Vec::new();
-    }
-    body.lines()
-        .map(|line| {
-            Line::from(vec![Span::styled(
-                line.to_string(),
-                style(color, Emphasis::Plain),
-            )])
-        })
-        .collect()
-}
-
-fn markdown_lines(markdown: &str, color: bool) -> Vec<Line> {
+fn markdown_lines(markdown: &str, _color: bool) -> Vec<crate::terminal::Line> {
     if markdown.trim().is_empty() {
         return Vec::new();
     }
 
-    let skin = if color {
+    let skin = if _color {
         MadSkin::default_dark()
     } else {
         MadSkin::no_style()
@@ -380,8 +279,24 @@ fn markdown_lines(markdown: &str, color: bool) -> Vec<Line> {
     skin.term_text(markdown)
         .to_string()
         .lines()
-        .map(|line| Line::from(vec![Span::raw(line.to_string())]))
+        .map(|line| {
+            if line.is_empty() {
+                blank()
+            } else {
+                raw_body_line(line)
+            }
+        })
         .collect()
+}
+
+fn status_color(status: ItemStatus) -> Color {
+    match status {
+        ItemStatus::Completed => Color::Green,
+        ItemStatus::Failed => Color::Red,
+        ItemStatus::Declined => Color::Yellow,
+        ItemStatus::InProgress => Color::Cyan,
+        ItemStatus::Missing | ItemStatus::Unknown => Color::DarkGray,
+    }
 }
 
 #[cfg(test)]
@@ -390,7 +305,7 @@ mod tests {
     use crate::events::CodexEvent;
 
     #[test]
-    fn renders_command_completion_as_collapsed_tool_row() {
+    fn renders_command_completion_as_append_only_run_block() {
         let event = CodexEvent::parse(
             r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"cargo check","aggregated_output":"Finished\n","exit_code":0,"status":"completed"}}"#,
         )
@@ -398,31 +313,34 @@ mod tests {
 
         let rendered = Renderer::without_color().render_to_string(&event);
 
-        assert!(rendered.contains("ok   tool"));
-        assert!(rendered.contains("exec cargo check exit=0 lines=1 hidden=true raw=true"));
-        assert!(!rendered.contains("\nFinished"));
+        assert!(rendered.contains("• Ran cargo check"));
+        assert!(rendered.contains("  └ Finished"));
+        assert!(!rendered.contains("exit=0"));
         assert!(!rendered.contains("| Finished"));
     }
 
     #[test]
-    fn renders_agent_message_markdown_at_left_edge() {
+    fn renders_agent_message_as_codex_block() {
         let event = CodexEvent::parse(
-            r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Implemented Phase 6\n\nChanged:\n- Makefile"}}"#,
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"**Implemented** Phase 6\n\nChanged:\n- Makefile"}}"#,
         )
         .unwrap();
 
         let rendered = Renderer::without_color().render_to_string(&event);
 
-        assert!(rendered.contains("msg  codex"));
-        assert!(rendered.contains("begin"));
-        assert!(rendered.contains("end lines=4"));
-        assert!(rendered.lines().any(|line| line == "Implemented Phase 6"));
-        assert!(!rendered.contains("    Implemented Phase 6"));
+        assert!(rendered.contains("────────────────"));
+        assert!(rendered.contains("• Codex"));
+        assert!(rendered.contains("  Implemented Phase 6"));
+        assert!(rendered.contains("  Changed:"));
+        assert!(rendered.contains("Makefile"));
+        assert!(!rendered.contains("**Implemented**"));
+        assert!(!rendered.contains("begin"));
+        assert!(!rendered.contains("end lines="));
         assert!(!rendered.contains("| Implemented"));
     }
 
     #[test]
-    fn renders_todo_list_as_append_only_rows() {
+    fn renders_todo_list_as_plan_block() {
         let event = CodexEvent::parse(
             r#"{"type":"item.updated","item":{"id":"item_1","type":"todo_list","items":[{"text":"Inspect","completed":true},{"text":"Patch","completed":false}]}}"#,
         )
@@ -430,9 +348,9 @@ mod tests {
 
         let rendered = Renderer::without_color().render_to_string(&event);
 
-        assert!(rendered.contains("..   todo     items=2"));
-        assert!(rendered.contains("ok   todo     Inspect"));
-        assert!(rendered.contains("..   todo     Patch"));
+        assert!(rendered.contains("• Updated Plan"));
+        assert!(rendered.contains("  ✓ Inspect"));
+        assert!(rendered.contains("  □ Patch"));
         assert!(!rendered.contains("-- checklist"));
     }
 
@@ -445,7 +363,7 @@ mod tests {
 
         let rendered = Renderer::without_color().render_to_string(&event);
 
-        assert!(rendered.contains("ok   item     new_tool_call"));
+        assert!(rendered.contains("• Event new_tool_call"));
     }
 
     #[test]
@@ -457,13 +375,15 @@ mod tests {
 
         let rendered = Renderer::without_color().render_to_string(&event);
 
-        assert!(rendered.contains(
-            "warn item     command_execution malformed: command_execution missing command"
-        ));
+        assert!(
+            rendered.contains(
+                "• Warning command_execution malformed: command_execution missing command"
+            )
+        );
     }
 
     #[test]
-    fn colors_time_and_dims_detail_column() {
+    fn colors_action_and_keeps_child_output_readable() {
         let event = CodexEvent::parse(
             r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"cargo check","aggregated_output":"Finished\n","exit_code":0,"status":"completed"}}"#,
         )
@@ -471,7 +391,52 @@ mod tests {
 
         let rendered = Renderer { color: true }.render_to_string(&event);
 
-        assert!(rendered.contains("\x1b[96m"));
-        assert!(rendered.contains("\x1b[2;37mexec cargo check"));
+        assert!(rendered.contains("\x1b[32m• "));
+        assert!(rendered.contains("\x1b[1;32mRan"));
+        assert!(rendered.contains("\x1b[90mFinished"));
+        assert!(!rendered.contains("\x1b[2;90mFinished"));
+    }
+
+    #[test]
+    fn colors_completed_plan_items_as_dim_struck_through() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.updated","item":{"id":"item_1","type":"todo_list","items":[{"text":"Inspect","completed":true},{"text":"Patch","completed":false}]}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer { color: true }.render_to_string(&event);
+
+        assert!(rendered.contains("\x1b[2;9;90mInspect"));
+        assert!(rendered.contains("□ "));
+        assert!(!rendered.contains("\x1b[2;9;37mPatch"));
+    }
+
+    #[test]
+    fn renders_representative_unicode_transcript_shape() {
+        let events = [
+            r#"{"type":"item.completed","item":{"id":"cmd","type":"command_execution","command":"make check","aggregated_output":"cargo fmt --all --check\ncargo clippy --all-targets --all-features -- -D warnings\ncargo test --all-features\nFinished tests\ncargo build --all-targets --all-features\nFinished build\n","exit_code":0,"status":"completed"}}"#,
+            r#"{"type":"item.completed","item":{"id":"todo","type":"todo_list","items":[{"text":"Make target setup preflight non-mutating before Git init and skill install","completed":true},{"text":"Fix repo ignore drift and run full verification","completed":false}],"status":"completed"}}"#,
+            r#"{"type":"item.completed","item":{"id":"file","type":"file_change","changes":[{"path":".gitignore","kind":"update"}],"status":"completed"}}"#,
+            r#"{"type":"item.completed","item":{"id":"bad","type":"command_execution","status":"completed"}}"#,
+            r#"{"type":"item.completed","item":{"id":"msg","type":"agent_message","text":"Implemented all five fixes.\n\nVerification: make check passed."}}"#,
+        ];
+        let rendered = events
+            .into_iter()
+            .map(|event| {
+                Renderer::without_color()
+                    .render_to_string(&CodexEvent::parse(event).expect("event"))
+            })
+            .collect::<String>();
+
+        assert!(rendered.contains("• Ran make check"));
+        assert!(rendered.contains("    … +2 lines hidden"));
+        assert!(rendered.contains("• Updated Plan"));
+        assert!(rendered.contains("  ✓ Make target setup preflight"));
+        assert!(rendered.contains("  □ Fix repo ignore drift"));
+        assert!(rendered.contains("• Edited .gitignore"));
+        assert!(rendered.contains("  └ ~ .gitignore"));
+        assert!(rendered.contains("• Warning command_execution malformed"));
+        assert!(rendered.contains("• Codex"));
+        assert!(rendered.contains("  Verification: make check passed."));
     }
 }

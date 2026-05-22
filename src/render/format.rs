@@ -1,103 +1,120 @@
-use chrono::Local;
-
-use crate::events::EventKind;
-use crate::events::ItemStatus;
 use crate::terminal::Color;
 use crate::terminal::Emphasis;
 use crate::terminal::Line;
 use crate::terminal::Span;
 use crate::terminal::Text;
+use crate::terminal::decorated_style;
 use crate::terminal::style;
 
-pub(super) fn output_summary(output: Option<&str>) -> Option<String> {
-    let output = output?;
-    if output.trim().is_empty() {
-        return None;
+const PREVIEW_LINES: usize = 4;
+
+pub(super) fn block(action: &'static str, color: Color, message: impl Into<String>) -> Text {
+    text(vec![header(action, color, message)])
+}
+
+pub(super) fn header(action: &'static str, color: Color, message: impl Into<String>) -> Line {
+    let message = message.into();
+    let mut spans = vec![
+        Span::styled("• ", style(Color::Green, Emphasis::Plain)),
+        Span::styled(action, style(color, Emphasis::Bold)),
+    ];
+    if !message.is_empty() {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(message, style(Color::Gray, Emphasis::Plain)));
     }
-    Some(format!("lines={} hidden=true raw=true", line_count(output)))
+    Line::from(spans)
+}
+
+pub(super) fn child(message: impl Into<String>) -> Line {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled("└ ", style(Color::DarkGray, Emphasis::Plain)),
+        Span::styled(message.into(), style(Color::DarkGray, Emphasis::Plain)),
+    ])
+}
+
+pub(super) fn continuation(message: impl Into<String>) -> Line {
+    Line::from(vec![
+        Span::raw("    "),
+        Span::styled(message.into(), style(Color::DarkGray, Emphasis::Plain)),
+    ])
+}
+
+pub(super) fn raw_body_line(message: impl Into<String>) -> Line {
+    Line::from(vec![Span::raw("  "), Span::raw(message)])
+}
+
+pub(super) fn checklist_line(completed: bool, message: impl Into<String>) -> Line {
+    let marker = if completed { "✓ " } else { "□ " };
+    let color = if completed {
+        Color::Green
+    } else {
+        Color::DarkGray
+    };
+    let text_color = if completed {
+        Color::DarkGray
+    } else {
+        Color::Gray
+    };
+
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(marker, style(color, Emphasis::Plain)),
+        Span::styled(
+            message.into(),
+            decorated_style(text_color, false, completed, completed),
+        ),
+    ])
+}
+
+pub(super) fn file_line(marker: &'static str, color: Color, message: impl Into<String>) -> Line {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled("└ ", style(Color::DarkGray, Emphasis::Plain)),
+        Span::styled(marker, style(color, Emphasis::Plain)),
+        Span::raw(" "),
+        Span::styled(message.into(), style(color, Emphasis::Plain)),
+    ])
+}
+
+pub(super) fn separator() -> Line {
+    Line::from(vec![Span::styled(
+        "────────────────────────────────────────────────────────────────".to_string(),
+        style(Color::DarkGray, Emphasis::Dim),
+    )])
+}
+
+pub(super) fn blank() -> Line {
+    Line::from(Vec::new())
+}
+
+pub(super) fn output_lines(output: Option<&str>) -> Vec<Line> {
+    let Some(output) = output else {
+        return vec![child("no output")];
+    };
+    if output.trim().is_empty() {
+        return vec![child("no output")];
+    }
+
+    let mut lines = Vec::new();
+    let output_lines: Vec<&str> = output.lines().collect();
+    for (index, line) in output_lines.iter().take(PREVIEW_LINES).enumerate() {
+        if index == 0 {
+            lines.push(child(line.trim_end()));
+        } else {
+            lines.push(continuation(line.trim_end()));
+        }
+    }
+
+    let hidden = output_lines.len().saturating_sub(PREVIEW_LINES);
+    if hidden > 0 {
+        lines.push(continuation(format!("… +{hidden} lines hidden")));
+    }
+    lines
 }
 
 pub(super) fn line_count(body: &str) -> usize {
     body.lines().count()
-}
-
-pub(super) fn exit_field(exit_code: Option<i64>) -> String {
-    exit_code
-        .map(|code| format!(" exit={code}"))
-        .unwrap_or_default()
-}
-
-pub(super) fn command_status_color(status: ItemStatus) -> Color {
-    match status {
-        ItemStatus::Completed => Color::Green,
-        ItemStatus::Failed => Color::Red,
-        ItemStatus::Declined => Color::Yellow,
-        ItemStatus::InProgress => Color::Cyan,
-        _ => Color::DarkGray,
-    }
-}
-
-pub(super) fn event_status(event_kind: EventKind, item_status: ItemStatus) -> &'static str {
-    match item_status {
-        ItemStatus::Completed => "ok",
-        ItemStatus::Failed => "fail",
-        ItemStatus::Declined => "skip",
-        ItemStatus::InProgress => "run",
-        ItemStatus::Missing | ItemStatus::Unknown => match event_kind {
-            EventKind::ItemStarted => "run",
-            EventKind::ItemCompleted => "ok",
-            EventKind::ItemUpdated => "..",
-            _ => "..",
-        },
-    }
-}
-
-pub(super) fn event_status_color(event_kind: EventKind, item_status: ItemStatus) -> Color {
-    match event_status(event_kind, item_status) {
-        "ok" => Color::Green,
-        "fail" => Color::Red,
-        "skip" => Color::Yellow,
-        "run" => Color::Cyan,
-        _ => Color::DarkGray,
-    }
-}
-
-pub(super) fn single(
-    label: &'static str,
-    label_color: Color,
-    category: &'static str,
-    message: impl Into<String>,
-) -> Text {
-    text(vec![row(
-        label,
-        label_color,
-        category,
-        Color::DarkGray,
-        message,
-    )])
-}
-
-pub(super) fn row(
-    label: &'static str,
-    label_color: Color,
-    category: &'static str,
-    category_color: Color,
-    message: impl Into<String>,
-) -> Line {
-    Line::from(vec![
-        Span::styled(
-            format!("{} ", Local::now().format("%H:%M:%S%.3f")),
-            style(Color::LightCyan, Emphasis::Plain),
-        ),
-        Span::styled(format!("{label:<4}"), style(label_color, Emphasis::Bold)),
-        Span::raw(" "),
-        Span::styled(
-            format!("{category:<8}"),
-            style(category_color, Emphasis::Plain),
-        ),
-        Span::raw(" "),
-        Span::styled(message.into(), style(Color::Gray, Emphasis::Dim)),
-    ])
 }
 
 pub(super) fn text(lines: Vec<Line>) -> Text {
