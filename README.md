@@ -92,7 +92,13 @@ The generated prompts also call supporting skills when relevant:
 - Git
 - the Codex CLI installed and authenticated as `codex`
 
-### Install Locally
+### Install
+
+Install with Homebrew:
+
+```bash
+brew install yarlson/tap/lgtm
+```
 
 From this repository:
 
@@ -231,3 +237,34 @@ Build a release binary:
 ```bash
 make release
 ```
+
+### Release Automation
+
+Releases are built by GitHub Actions when a `v*` tag is pushed. The tag version
+must match `Cargo.toml`.
+
+The release workflow validates with:
+
+```bash
+cargo fmt --all --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+```
+
+It publishes these GitHub Release assets:
+
+```text
+lgtm-vX.Y.Z-darwin-amd64.tar.gz
+lgtm-vX.Y.Z-darwin-arm64.tar.gz
+lgtm-vX.Y.Z-linux-amd64.tar.gz
+lgtm-vX.Y.Z-linux-arm64.tar.gz
+lgtm-vX.Y.Z-windows-amd64.zip
+```
+
+Each archive has a `.sha256` checksum sidecar. The macOS and Linux checksums
+are used to update `Formula/lgtm.rb` in `yarlson/homebrew-tap`; Windows assets
+are published only to GitHub Releases.
+
+The repository secret `HOMEBREW_TAP_TOKEN` must be configured with permission
+to push to `yarlson/homebrew-tap`. The workflow does not store token values in
+the repository.
