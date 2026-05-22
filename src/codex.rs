@@ -7,6 +7,7 @@ use std::process::Child;
 use std::process::ChildStdout;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::mpsc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -22,7 +23,7 @@ use crate::render::Renderer;
 use crate::skills;
 
 pub fn run_plan(config: Config) -> Result<(), Error> {
-    let renderer = Renderer::new();
+    let mut renderer = Renderer::new();
 
     plan::require_file(&config.plan_abs(), &config.plan_path)?;
     plan::require_file(&config.agents_abs(), &config.agents_path)?;
@@ -56,7 +57,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
 
         run_phase_prompt(
             &config,
-            &renderer,
+            &mut renderer,
             &phase,
             "implement",
             prompt::implementation_prompt(
@@ -69,7 +70,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
 
         run_phase_prompt(
             &config,
-            &renderer,
+            &mut renderer,
             &phase,
             "validate",
             prompt::validation_prompt(
@@ -82,7 +83,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
 
         run_phase_prompt(
             &config,
-            &renderer,
+            &mut renderer,
             &phase,
             "review",
             prompt::review_prompt(
@@ -106,7 +107,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
 
 fn run_phase_prompt(
     config: &Config,
-    renderer: &Renderer,
+    renderer: &mut Renderer,
     phase: &plan::Phase,
     action: &str,
     prompt: String,
@@ -210,14 +211,42 @@ fn finish_spawn_error(child: &mut Child, message: &'static str) -> Error {
 
 fn stream_codex_output(
     config: &Config,
-    renderer: &Renderer,
+    renderer: &mut Renderer,
     log_path: &std::path::Path,
     log: &mut File,
     stdout: ChildStdout,
 ) -> Result<(), Error> {
-    let reader = BufReader::new(stdout);
-    for line in reader.split(b'\n') {
-        let mut line = line.map_err(|source| Error::io(log_path, source))?;
+    let result = stream_codex_output_inner(config, renderer, log_path, log, stdout);
+    renderer.finish();
+    result
+}
+
+fn stream_codex_output_inner(
+    config: &Config,
+    renderer: &mut Renderer,
+    log_path: &std::path::Path,
+    log: &mut File,
+    stdout: ChildStdout,
+) -> Result<(), Error> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.split(b'\n') {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    loop {
+        let mut line = match rx.recv_timeout(Duration::from_millis(120)) {
+            Ok(line) => line.map_err(|source| Error::io(log_path, source))?,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                renderer.tick();
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         if line.is_empty() {
             continue;
         }

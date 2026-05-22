@@ -13,9 +13,19 @@ pub(super) fn block(action: &'static str, color: Color, message: impl Into<Strin
 }
 
 pub(super) fn header(action: &'static str, color: Color, message: impl Into<String>) -> Line {
+    header_with_marker("•", action, color, message)
+}
+
+pub(super) fn header_with_marker(
+    marker: impl Into<String>,
+    action: &'static str,
+    color: Color,
+    message: impl Into<String>,
+) -> Line {
     let message = message.into();
     let mut spans = vec![
-        Span::styled("• ", style(Color::Green, Emphasis::Plain)),
+        Span::styled(marker.into(), style(Color::Green, Emphasis::Plain)),
+        Span::raw(" "),
         Span::styled(action, style(color, Emphasis::Bold)),
     ];
     if !message.is_empty() {

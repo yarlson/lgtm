@@ -257,9 +257,9 @@ fn item_payload(kind: ItemKind, item_type: &str, raw: &serde_json::Value) -> Ite
                     .unwrap_or(0),
             })
             .unwrap_or_else(malformed_item),
-        ItemKind::WebSearch => required_item_string(raw, item_type, "query")
-            .map(|query| ItemPayload::WebSearch { query })
-            .unwrap_or_else(malformed_item),
+        ItemKind::WebSearch => ItemPayload::WebSearch {
+            query: string_at(raw, "query").unwrap_or_default(),
+        },
         ItemKind::TodoList => todo_items(raw, item_type)
             .map(|items| ItemPayload::TodoList { items })
             .unwrap_or_else(malformed_item),
