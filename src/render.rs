@@ -159,13 +159,17 @@ fn render_item(item: &CodexItem, color: bool) -> Text {
             tool,
             receiver_count,
         } => render_collab(item.status, tool, *receiver_count),
-        ItemPayload::WebSearch { query } => block("Searched", Color::LightBlue, query),
+        ItemPayload::WebSearch { query } => render_web_search(query),
         ItemPayload::TodoList { items } => render_todos(items),
         ItemPayload::Error { message } => block(
             "Failed",
             status_color(item.status),
             format!("codex {}", message.as_deref().unwrap_or("unknown error")),
         ),
+        ItemPayload::Malformed {
+            item_type,
+            reason: _,
+        } if is_progress_only_search(item.status, item_type, "") => text(Vec::new()),
         ItemPayload::Malformed { item_type, reason } => block(
             "Warning",
             Color::Yellow,
@@ -192,6 +196,10 @@ fn render_command(
     output: Option<&str>,
     exit_code: Option<i64>,
 ) -> Text {
+    if is_progress_only_command(status, output, exit_code) {
+        return text(Vec::new());
+    }
+
     let mut lines = vec![header("Ran", status_color(status), command)];
     lines.extend(output_lines(output));
     if let Some(exit_code) = exit_code.filter(|code| *code != 0) {
@@ -199,6 +207,35 @@ fn render_command(
     }
     lines.push(blank());
     text(lines)
+}
+
+fn is_progress_only_command(
+    status: ItemStatus,
+    output: Option<&str>,
+    exit_code: Option<i64>,
+) -> bool {
+    is_progress_status(status)
+        && output.is_none_or(|output| output.trim().is_empty())
+        && exit_code.is_none()
+}
+
+fn render_web_search(query: &str) -> Text {
+    if query.trim().is_empty() {
+        text(Vec::new())
+    } else {
+        block("Searched", Color::LightBlue, query)
+    }
+}
+
+fn is_progress_only_search(status: ItemStatus, item_type: &str, query: &str) -> bool {
+    item_type == "web_search" && is_progress_status(status) && query.trim().is_empty()
+}
+
+fn is_progress_status(status: ItemStatus) -> bool {
+    matches!(
+        status,
+        ItemStatus::InProgress | ItemStatus::Missing | ItemStatus::Unknown
+    )
 }
 
 fn render_file_change(status: ItemStatus, changes: &[FileChange]) -> Text {
@@ -317,6 +354,79 @@ mod tests {
         assert!(rendered.contains("  └ Finished"));
         assert!(!rendered.contains("exit=0"));
         assert!(!rendered.contains("| Finished"));
+    }
+
+    #[test]
+    fn skips_progress_only_command_rows() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"cargo check","status":"in_progress"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.is_empty());
+    }
+
+    #[test]
+    fn skips_progress_command_rows_with_blank_output() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.updated","item":{"id":"item_0","type":"command_execution","command":"cargo check","aggregated_output":"","status":"in_progress"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.is_empty());
+    }
+
+    #[test]
+    fn renders_completed_command_without_output_once() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"git status --short","status":"completed"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.contains("• Ran git status --short"));
+        assert!(rendered.contains("  └ no output"));
+    }
+
+    #[test]
+    fn skips_empty_web_search_rows() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.updated","item":{"id":"item_0","type":"web_search","query":"","status":"in_progress"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.is_empty());
+    }
+
+    #[test]
+    fn skips_progress_web_search_without_query() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.updated","item":{"id":"item_0","type":"web_search","status":"in_progress"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.is_empty());
+    }
+
+    #[test]
+    fn renders_web_search_with_query() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"web_search","query":"clap derive Parser docs","status":"completed"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.contains("• Searched clap derive Parser docs"));
     }
 
     #[test]
