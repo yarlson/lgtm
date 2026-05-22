@@ -2,15 +2,17 @@
 
 Rust port of `lnk/run-plan.sh`.
 
-It keeps the same implementation/validation loop:
+It runs a phase-scoped implementation/validation/review loop:
 
 1. read `PLAN.md`, `AGENTS.md`, and `DESIGN.md`
 2. detect `## Phase N - Title` headings
-3. run Codex once to implement each phase
-4. run Codex again to validate each phase
-5. install snap-rs managed project skills into `.agents/skills/snap-*`
-6. write raw Codex JSONL into `codex-logs/`
-7. render the live JSONL stream as a readable terminal transcript
+3. confirm the target root is a Git repository
+4. run Codex once to implement each phase
+5. run Codex again to validate each phase
+6. run Codex a third time to review quality, scope, and closeout
+7. install snap-rs managed project skills into `.agents/skills/snap-*`
+8. write raw Codex JSONL into `.codex-log/`
+9. render the live JSONL stream as a readable terminal transcript
 
 From this directory, drive the sibling `lnk` repo with:
 
@@ -40,5 +42,14 @@ Ratatui text/style primitives for terminal rendering instead of a `jq` filter.
 
 Before phase execution, snap-rs refreshes its managed Codex project skills under
 the target repo's `.agents/skills/snap-*` directories and adds
-`.agents/skills/snap-*` to the target `.gitignore` if needed. Only skills marked
-`managed-by: snap-rs` are overwritten; project-owned skills are left alone.
+`.agents/skills/snap-*` and `.codex-log/` to the target `.gitignore` if needed.
+Only skills marked `managed-by: snap-rs` are overwritten; project-owned skills
+are left alone.
+
+If the target root is not a Git repository, snap-rs prompts before running
+`git init` and `git branch -M main`. Declining the prompt aborts the run.
+
+The review pass is local to the selected phase. It may fix small,
+high-confidence review findings, but it does not commit, push, open PRs, run PR
+CI workflows, or expand into later phases unless the user explicitly requests
+that outside snap-rs.

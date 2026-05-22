@@ -73,7 +73,7 @@ impl Config {
             Some(root) => absolutize(root)?,
             None => std::env::current_dir().map_err(|source| Error::io(".", source))?,
         };
-        let log_dir = args.log_dir.unwrap_or_else(|| root.join("codex-logs"));
+        let log_dir = args.log_dir.unwrap_or_else(|| root.join(".codex-log"));
         let run_stamp = args
             .run_stamp
             .unwrap_or_else(|| Local::now().format("%Y%m%d-%H%M%S").to_string());

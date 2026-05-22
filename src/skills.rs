@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::Error;
 
 const MANAGED_MARKER: &str = "managed-by: snap-rs";
-const GITIGNORE_ENTRY: &str = ".agents/skills/snap-*";
+const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/snap-*", ".codex-log/"];
 
 struct Skill {
     name: &'static str,
@@ -43,16 +43,23 @@ fn ensure_gitignore(root: &Path) -> Result<(), Error> {
         Err(error) => return Err(Error::io(&path, error)),
     };
 
-    if content.lines().any(|line| line.trim() == GITIGNORE_ENTRY) {
-        return Ok(());
-    }
-    if !content.is_empty() && !content.ends_with('\n') {
+    let mut changed = false;
+    for entry in GITIGNORE_ENTRIES {
+        if content.lines().any(|line| line.trim() == *entry) {
+            continue;
+        }
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(entry);
         content.push('\n');
+        changed = true;
     }
-    content.push_str(GITIGNORE_ENTRY);
-    content.push('\n');
 
-    fs::write(&path, content).map_err(|source| Error::io(&path, source))
+    if changed {
+        fs::write(&path, content).map_err(|source| Error::io(&path, source))?;
+    }
+    Ok(())
 }
 
 const SKILLS: &[Skill] = &[
@@ -156,13 +163,24 @@ Treat validation as an independent review, not a continuation of implementation 
 7. Fix only gaps needed to complete the selected phase.
 8. Strengthen tests or verification when existing checks do not prove the phase works.
 9. Run required checks again after fixes.
-10. Review the final diff before finishing.
+10. If compile or type-check commands fail, group errors by file and category, fix the highest-confidence selected-phase issues first, and rerun until clean or blocked.
+11. Leave structural quality and final closeout to the review pass.
 
 ## Validation Standard
 
 Do not accept a phase because code exists. Accept it only when behavior is verified against the phase contract.
 
 If the phase cannot be validated because a tool, service, credential, fixture, or environment is missing, report the blocker explicitly and explain what remains unverified.
+
+## Compiler And Typecheck Failures
+
+When validation fails at compile or type-check time:
+
+1. Identify the failing command.
+2. Summarize errors by file and category.
+3. Fix the highest-confidence selected-phase errors first.
+4. Re-run the same command after each focused fix.
+5. Stop and report a blocker if the remaining failure requires unrelated work or missing environment.
 
 ## Completion Criteria
 
@@ -172,7 +190,81 @@ Validation is complete only when:
 - concrete checks were run or blockers were reported
 - any fixes stayed within selected-phase scope
 - no later-phase work was added
-- final diff was reviewed
+- compile or type-check failures were resolved or explicitly blocked
+"#,
+    },
+    Skill {
+        name: "snap-phase-review",
+        body: r#"---
+name: snap-phase-review
+description: "snap-rs local phase review pass. Use after implementation and validation for exactly one PLAN.md phase. Reviews final diff for structural regressions, AI slop, reviewability, scope drift, and maintainability issues; fixes only small, high-confidence phase-scoped findings."
+managed-by: snap-rs
+---
+
+# snap-rs Phase Review
+
+You are reviewing exactly one selected phase after implementation and validation.
+
+This is not a PR workflow, CI workflow, shipping workflow, or broad redesign pass.
+
+## Inputs
+
+snap-rs will provide:
+
+- the selected phase heading
+- the path to `PLAN.md`
+- the path to `AGENTS.md`
+- the path to `DESIGN.md`
+
+Treat the selected phase as the only authorized scope.
+
+## Workflow
+
+1. Re-open `AGENTS.md`, `DESIGN.md`, and `PLAN.md`.
+2. Locate the exact selected phase heading.
+3. Review the current diff and changed files against the selected phase.
+4. Look for structural code-quality regressions:
+   - unnecessary abstraction or wrappers
+   - spaghetti conditionals or one-off branches
+   - logic in the wrong layer or module
+   - duplicated helpers instead of local canonical helpers
+   - needless optionality, casts, loose types, or unclear invariants
+   - large-file growth that should be decomposed before it hardens
+5. Remove AI slop introduced by the phase:
+   - unnecessary comments
+   - abnormal defensive checks
+   - unrelated cleanup
+   - noisy formatting or churn
+   - implementation chatter in user-facing docs
+6. Check reviewability:
+   - the diff is understandable
+   - mechanical and behavior changes are not confusingly mixed when avoidable
+   - tests and docs make the changed behavior clear
+7. Fix only small, high-confidence findings inside selected-phase scope.
+8. Re-run affected checks after any review fix.
+9. Report broad redesign, unrelated refactors, PR work, CI work, or later-phase work as out-of-scope or blocked.
+
+## Approval Bar
+
+Do not accept the phase if the final diff clearly makes the touched area harder to maintain.
+
+The phase review passes only when:
+
+- no obvious structural regression remains
+- no obvious AI slop remains
+- no later-phase or unrelated work was introduced
+- review fixes stayed small and phase-scoped
+- affected checks were rerun after review fixes
+
+## Guardrails
+
+Do not add new product behavior.
+
+Do not broaden the implementation to satisfy a review idea.
+
+Do not rewrite a subsystem just because a cleaner design is imaginable.
+
+Do not commit, push, create branches, open PRs, or inspect PR comments unless the user explicitly requested that outside snap-rs.
 "#,
     },
     Skill {
@@ -228,6 +320,106 @@ Context mapping is complete when you can explain:
 - what files you need to verify
 - what repo conventions constrain the change
 - what risks or unknowns remain
+"#,
+    },
+    Skill {
+        name: "snap-cli-control",
+        body: r#"---
+name: snap-cli-control
+description: "snap-rs local CLI/TUI control skill. Use only when a selected PLAN.md phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos and needs repeatable local evidence."
+managed-by: snap-rs
+---
+
+# snap-rs CLI Control
+
+Use this only when the selected phase needs user-visible CLI or TUI verification.
+
+The goal is a repeatable local harness, not manual poking.
+
+## Workflow
+
+1. Identify the command, workspace, and user-visible behavior under test.
+2. Prefer existing repo-native harnesses:
+   - integration tests
+   - e2e tests
+   - demo scripts
+   - PTY helpers
+   - expect scripts
+3. If no harness exists, use a temporary local harness under `/tmp`.
+4. Drive one action at a time and wait for concrete output before the next action.
+5. Capture the smallest transcript that proves or disproves the behavior.
+6. Clean up temporary sessions, processes, and artifacts unless the user asked to keep them.
+7. Convert findings into a selected-phase fix or explicit blocker.
+
+## Harness Options
+
+Prefer repo-native tools. If needed, use:
+
+- `tmux` for managed terminal sessions
+- a short PTY script for deterministic waits
+- existing runtime profilers for startup, hangs, or memory behavior
+
+Do not add a testing dependency just for a one-off probe unless the selected phase requires it.
+
+## Guardrails
+
+Do not send credentials or destructive commands into a harness.
+
+Do not hardcode paths from another repository.
+
+Do not keep harness code in the repo unless the selected phase requires a reusable test.
+
+Do not treat screenshots or transcripts as sufficient when a stable automated test is practical.
+
+## Completion Criteria
+
+CLI control is complete when the CLI/TUI behavior is verified with local evidence, fixed within selected-phase scope, or blocked with a clear reason.
+"#,
+    },
+    Skill {
+        name: "snap-ui-control",
+        body: r#"---
+name: snap-ui-control
+description: "snap-rs local UI control skill. Use only when a selected PLAN.md phase changes browser, Electron, or local UI behavior and needs screenshot, accessibility, trace, or browser-driven evidence."
+managed-by: snap-rs
+---
+
+# snap-rs UI Control
+
+Use this only when the selected phase needs local browser, Electron, or UI verification.
+
+The goal is evidence from the actual UI surface, using repo-local tooling when available.
+
+## Workflow
+
+1. Identify the UI surface and behavior under test.
+2. Start the app using the repo's documented local command.
+3. Prefer existing repo-native harnesses:
+   - Playwright
+   - Cypress
+   - Storybook tests
+   - browser scripts
+   - Electron launch scripts
+4. Select pages and controls by stable roles, labels, or app markers.
+5. Capture before/after evidence when it proves the selected phase.
+6. Inspect console, network, trace, screenshot, or accessibility output only as needed.
+7. Clean up servers, debug sessions, temp profiles, and artifacts unless the user asked to keep them.
+
+## Guardrails
+
+Do not add Playwright, Cypress, or browser dependencies just for a probe unless the selected phase requires it.
+
+Do not rely on stale selectors after navigation.
+
+Avoid coordinate clicks unless a fresh screenshot was captured immediately before the click.
+
+Do not store screenshots, traces, HTTP bodies, or heap snapshots from sensitive workspaces unless needed and safe.
+
+Do not hardcode ports, selectors, or scripts from another repository.
+
+## Completion Criteria
+
+UI control is complete when the UI behavior is verified with local evidence, fixed within selected-phase scope, or blocked with a clear reason.
 "#,
     },
     Skill {
@@ -561,7 +753,8 @@ The goal is to verify behavior, not implementation trivia.
    - manual verification is claimed without evidence
 5. Add or strengthen tests only where they materially improve confidence.
 6. Run the relevant checks.
-7. If a required check cannot run, report the blocker and residual risk.
+7. For measurable claims, restate the claim in falsifiable form and classify the result as `VERIFIED`, `NOT VERIFIED`, or `INCONCLUSIVE`.
+8. If a required check cannot run, report the blocker and residual risk.
 
 ## Verification Preference
 
@@ -572,6 +765,19 @@ Prefer, in order:
 3. targeted unit or integration tests
 4. focused manual verification with concrete evidence
 5. explicit blocker report
+
+## Verdict Shape
+
+Use this shape when validating a measurable claim:
+
+```md
+VERIFIED | NOT VERIFIED | INCONCLUSIVE
+Claim: ...
+Evidence: ...
+Reasoning: ...
+```
+
+Use `INCONCLUSIVE` when there is no valid baseline, the signal is noisy, the environment differs, or the check failed for reasons unrelated to the claim.
 
 ## Guardrails
 
@@ -585,7 +791,7 @@ Do not broaden test infrastructure unless the selected phase requires it.
 
 ## Completion Criteria
 
-This review is complete when the selected phase's behavior is proven by meaningful checks, or remaining verification gaps are explicitly reported.
+This review is complete when the selected phase's behavior is proven by meaningful checks, disproven clearly, or remaining verification gaps are explicitly reported.
 "#,
     },
     Skill {
@@ -766,13 +972,13 @@ Dependency review is complete when dependency/tool changes are necessary, consis
         name: "snap-final-review",
         body: r#"---
 name: snap-final-review
-description: "snap-rs final phase closeout skill. Use at the end of validation to review the final diff, confirm the selected phase contract is satisfied, summarize verification, and flag out-of-scope follow-ups without expanding work."
+description: "snap-rs final phase closeout skill. Use at the end of the review pass to confirm the selected phase contract is satisfied, summarize verification, and flag out-of-scope follow-ups without expanding work."
 managed-by: snap-rs
 ---
 
 # snap-rs Final Review
 
-Use this at the end of the validation pass.
+Use this at the end of the review pass.
 
 The goal is to close the selected phase cleanly.
 
@@ -785,7 +991,7 @@ The goal is to close the selected phase cleanly.
 5. Confirm fixes stayed within selected-phase scope.
 6. Confirm no later-phase work was added.
 7. Confirm docs were updated only if directly affected.
-8. Confirm security, dependency, rollout, and test-gap reviews were used when triggered.
+8. Confirm security, dependency, rollout, test-gap, CLI-control, UI-control, and phase-review skills were used when triggered.
 9. Identify out-of-scope issues separately without fixing them.
 10. Produce a concise final summary.
 
@@ -858,14 +1064,29 @@ mod tests {
             );
         }
 
+        for expected in ["snap-phase-review", "snap-cli-control", "snap-ui-control"] {
+            assert!(
+                temp.path()
+                    .join(".agents")
+                    .join("skills")
+                    .join(expected)
+                    .join("SKILL.md")
+                    .is_file(),
+                "{expected}"
+            );
+        }
+
         let gitignore = fs::read_to_string(temp.path().join(".gitignore")).expect("gitignore");
-        assert_eq!(
-            gitignore
-                .lines()
-                .filter(|line| line.trim() == GITIGNORE_ENTRY)
-                .count(),
-            1
-        );
+        for entry in GITIGNORE_ENTRIES {
+            assert_eq!(
+                gitignore
+                    .lines()
+                    .filter(|line| line.trim() == *entry)
+                    .count(),
+                1,
+                "{entry}"
+            );
+        }
     }
 
     #[test]

@@ -3,11 +3,22 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[test]
-fn runs_implementation_and_validation_prompts_with_formatted_output() {
+fn runs_implementation_validation_and_review_prompts_with_formatted_output() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let repo = temp.path().join("repo");
-    let logs = temp.path().join("logs");
     fs::create_dir(&repo).expect("create repo");
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .arg("init")
+        .output()
+        .expect("git init");
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["branch", "-M", "main"])
+        .output()
+        .expect("rename branch");
     fs::write(
         repo.join("PLAN.md"),
         "# Plan\n\n## Phase 1 - Skeleton\n\nGoal: test.\n",
@@ -44,8 +55,6 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
         .arg("0")
         .arg("--codex-bin")
         .arg(&fake_codex)
-        .arg("--log-dir")
-        .arg(&logs)
         .arg("--run-stamp")
         .arg("test")
         .output()
@@ -58,13 +67,16 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Phase 01"));
+    assert!(stdout.contains("phase=01"));
+    assert!(stdout.contains("pass=review"));
     assert!(stdout.contains("thread"));
     assert!(stdout.contains("codex"));
     assert!(stdout.contains("turn"));
 
-    assert!(logs.join("test-phase-01-implement.jsonl").is_file());
-    assert!(logs.join("test-phase-01-validate.jsonl").is_file());
+    let default_logs = repo.join(".codex-log");
+    assert!(default_logs.join("test-phase-01-implement.jsonl").is_file());
+    assert!(default_logs.join("test-phase-01-validate.jsonl").is_file());
+    assert!(default_logs.join("test-phase-01-review.jsonl").is_file());
     assert!(
         repo.join(".agents")
             .join("skills")
@@ -73,9 +85,22 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
             .is_file()
     );
     assert!(
+        repo.join(".agents")
+            .join("skills")
+            .join("snap-phase-review")
+            .join("SKILL.md")
+            .is_file()
+    );
+    assert!(
         fs::read_to_string(repo.join(".gitignore"))
             .expect("read gitignore")
             .lines()
             .any(|line| line == ".agents/skills/snap-*")
+    );
+    assert!(
+        fs::read_to_string(repo.join(".gitignore"))
+            .expect("read gitignore")
+            .lines()
+            .any(|line| line == ".codex-log/")
     );
 }

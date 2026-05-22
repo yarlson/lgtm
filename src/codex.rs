@@ -8,12 +8,11 @@ use std::process::Stdio;
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
-
 use crate::Error;
 use crate::cli::Config;
 use crate::cli::StreamMode;
 use crate::events::CodexEvent;
+use crate::git;
 use crate::plan;
 use crate::prompt;
 use crate::render::Renderer;
@@ -25,6 +24,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
     plan::require_file(&config.plan_abs(), &config.plan_path)?;
     plan::require_file(&config.agents_abs(), &config.agents_path)?;
     plan::require_file(&config.design_abs(), &config.design_path)?;
+    git::ensure_initialized(&config.root)?;
     skills::install(&config.root)?;
 
     let plan_text = plan::load(&config.plan_abs())?;
@@ -76,6 +76,21 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
             ),
         )?;
 
+        run_phase_prompt(
+            &config,
+            &renderer,
+            phase,
+            &title,
+            "review",
+            prompt::review_prompt(
+                &config.plan_path,
+                &config.agents_path,
+                &config.design_path,
+                phase,
+                &title,
+            ),
+        )?;
+
         if phase < end_phase {
             renderer.sleep(config.sleep_seconds, phase + 1);
             thread::sleep(Duration::from_secs(config.sleep_seconds));
@@ -98,11 +113,7 @@ fn run_phase_prompt(
     let log_display = log_path.display().to_string();
 
     renderer.phase_header(phase, title, action, &log_display);
-    renderer.system(format!(
-        "[{}] writing raw JSONL to {}",
-        Local::now().format("%Y-%m-%d %H:%M:%S"),
-        log_path.display()
-    ));
+    renderer.system(format!("raw_jsonl {}", log_path.display()));
 
     fs::create_dir_all(&config.log_dir).map_err(|source| Error::io(&config.log_dir, source))?;
     let mut log = File::create(&log_path).map_err(|source| Error::io(&log_path, source))?;

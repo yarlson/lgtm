@@ -2,6 +2,7 @@ mod cli;
 mod codex;
 mod error;
 mod events;
+mod git;
 mod plan;
 mod prompt;
 mod render;
