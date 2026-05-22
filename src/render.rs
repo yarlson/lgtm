@@ -1,5 +1,6 @@
-use chrono::Local;
 use termimad::MadSkin;
+
+mod format;
 
 use crate::events::CodexEvent;
 use crate::events::CodexItem;
@@ -10,6 +11,15 @@ use crate::events::ItemPayload;
 use crate::events::ItemStatus;
 use crate::events::TodoItem;
 use crate::events::Usage;
+use crate::render::format::command_status_color;
+use crate::render::format::event_status;
+use crate::render::format::event_status_color;
+use crate::render::format::exit_field;
+use crate::render::format::line_count;
+use crate::render::format::output_summary;
+use crate::render::format::row;
+use crate::render::format::single;
+use crate::render::format::text;
 use crate::terminal::Color;
 use crate::terminal::Emphasis;
 use crate::terminal::Line;
@@ -117,6 +127,7 @@ fn render_event(event: &CodexEvent, color: bool) -> Text {
             message.as_deref().unwrap_or("unknown error"),
         ),
         EventPayload::Item { item } => render_item(event.kind, item, color),
+        EventPayload::Malformed { reason } => single("warn", Color::Yellow, "json", reason),
         EventPayload::Unknown => single("..", Color::DarkGray, "event", event.event_type.clone()),
     }
 }
@@ -179,6 +190,12 @@ fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text {
             Color::Red,
             "codex",
             message.as_deref().unwrap_or("unknown error"),
+        ),
+        ItemPayload::Malformed { item_type, reason } => single(
+            "warn",
+            Color::Yellow,
+            "item",
+            format!("{item_type} malformed: {reason}"),
         ),
         ItemPayload::Unknown { item_type } => single(
             event_status(event_kind, item.status),
@@ -367,101 +384,6 @@ fn markdown_lines(markdown: &str, color: bool) -> Vec<Line> {
         .collect()
 }
 
-fn output_summary(output: Option<&str>) -> Option<String> {
-    let output = output?;
-    if output.trim().is_empty() {
-        return None;
-    }
-    Some(format!("lines={} hidden=true raw=true", line_count(output)))
-}
-
-fn line_count(body: &str) -> usize {
-    body.lines().count()
-}
-
-fn exit_field(exit_code: Option<i64>) -> String {
-    exit_code
-        .map(|code| format!(" exit={code}"))
-        .unwrap_or_default()
-}
-
-fn command_status_color(status: ItemStatus) -> Color {
-    match status {
-        ItemStatus::Completed => Color::Green,
-        ItemStatus::Failed => Color::Red,
-        ItemStatus::Declined => Color::Yellow,
-        ItemStatus::InProgress => Color::Cyan,
-        _ => Color::DarkGray,
-    }
-}
-
-fn event_status(event_kind: EventKind, item_status: ItemStatus) -> &'static str {
-    match item_status {
-        ItemStatus::Completed => "ok",
-        ItemStatus::Failed => "fail",
-        ItemStatus::Declined => "skip",
-        ItemStatus::InProgress => "run",
-        ItemStatus::Missing | ItemStatus::Unknown => match event_kind {
-            EventKind::ItemStarted => "run",
-            EventKind::ItemCompleted => "ok",
-            EventKind::ItemUpdated => "..",
-            _ => "..",
-        },
-    }
-}
-
-fn event_status_color(event_kind: EventKind, item_status: ItemStatus) -> Color {
-    match event_status(event_kind, item_status) {
-        "ok" => Color::Green,
-        "fail" => Color::Red,
-        "skip" => Color::Yellow,
-        "run" => Color::Cyan,
-        _ => Color::DarkGray,
-    }
-}
-
-fn single(
-    label: &'static str,
-    label_color: Color,
-    category: &'static str,
-    message: impl Into<String>,
-) -> Text {
-    text(vec![row(
-        label,
-        label_color,
-        category,
-        Color::DarkGray,
-        message,
-    )])
-}
-
-fn row(
-    label: &'static str,
-    label_color: Color,
-    category: &'static str,
-    category_color: Color,
-    message: impl Into<String>,
-) -> Line {
-    Line::from(vec![
-        Span::styled(
-            format!("{} ", Local::now().format("%H:%M:%S%.3f")),
-            style(Color::LightCyan, Emphasis::Plain),
-        ),
-        Span::styled(format!("{label:<4}"), style(label_color, Emphasis::Bold)),
-        Span::raw(" "),
-        Span::styled(
-            format!("{category:<8}"),
-            style(category_color, Emphasis::Plain),
-        ),
-        Span::raw(" "),
-        Span::styled(message.into(), style(Color::Gray, Emphasis::Dim)),
-    ])
-}
-
-fn text(lines: Vec<Line>) -> Text {
-    Text::from(lines)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,6 +446,20 @@ mod tests {
         let rendered = Renderer::without_color().render_to_string(&event);
 
         assert!(rendered.contains("ok   item     new_tool_call"));
+    }
+
+    #[test]
+    fn renders_malformed_known_item_as_warning() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","status":"completed"}}"#,
+        )
+        .unwrap();
+
+        let rendered = Renderer::without_color().render_to_string(&event);
+
+        assert!(rendered.contains(
+            "warn item     command_execution malformed: command_execution missing command"
+        ));
     }
 
     #[test]

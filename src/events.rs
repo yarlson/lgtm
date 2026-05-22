@@ -20,6 +20,7 @@ pub enum EventPayload {
     TurnFailed { message: Option<String> },
     Error { message: Option<String> },
     Item { item: CodexItem },
+    Malformed { reason: String },
     Unknown,
 }
 
@@ -56,6 +57,10 @@ pub enum ItemPayload {
     },
     Error {
         message: Option<String>,
+    },
+    Malformed {
+        item_type: String,
+        reason: String,
     },
     Unknown {
         item_type: String,
@@ -165,8 +170,9 @@ impl CodexEvent {
 
 fn event_payload(kind: EventKind, raw: &serde_json::Value) -> EventPayload {
     match kind {
-        EventKind::ThreadStarted => EventPayload::ThreadStarted {
-            thread_id: string_at(raw, "thread_id").unwrap_or_default(),
+        EventKind::ThreadStarted => match string_at(raw, "thread_id") {
+            Some(thread_id) => EventPayload::ThreadStarted { thread_id },
+            None => malformed("thread.started missing thread_id"),
         },
         EventKind::TurnStarted => EventPayload::TurnStarted,
         EventKind::TurnCompleted => EventPayload::TurnCompleted {
@@ -178,11 +184,15 @@ fn event_payload(kind: EventKind, raw: &serde_json::Value) -> EventPayload {
         EventKind::Error => EventPayload::Error {
             message: error_message(raw),
         },
-        EventKind::ItemStarted | EventKind::ItemUpdated | EventKind::ItemCompleted => raw
-            .get("item")
-            .and_then(parse_item)
-            .map(|item| EventPayload::Item { item })
-            .unwrap_or(EventPayload::Unknown),
+        EventKind::ItemStarted | EventKind::ItemUpdated | EventKind::ItemCompleted => {
+            match raw.get("item") {
+                Some(item) => match parse_item(item) {
+                    Ok(item) => EventPayload::Item { item },
+                    Err(reason) => malformed(reason),
+                },
+                None => malformed("item event missing item"),
+            }
+        }
         EventKind::Unknown => EventPayload::Unknown,
     }
 }
@@ -195,13 +205,13 @@ pub struct Usage {
     pub reasoning_output_tokens: i64,
 }
 
-fn parse_item(raw: &serde_json::Value) -> Option<CodexItem> {
-    let item_type = string_at(raw, "type")?;
+fn parse_item(raw: &serde_json::Value) -> Result<CodexItem, String> {
+    let item_type = require_string(raw, "type", "item")?;
     let kind = ItemKind::from_str(&item_type);
     let status = ItemStatus::from_value(raw.get("status"));
     let id = string_at(raw, "id").unwrap_or_default();
     let payload = item_payload(kind, &item_type, raw);
-    Some(CodexItem {
+    Ok(CodexItem {
         id,
         status,
         payload,
@@ -210,39 +220,49 @@ fn parse_item(raw: &serde_json::Value) -> Option<CodexItem> {
 
 fn item_payload(kind: ItemKind, item_type: &str, raw: &serde_json::Value) -> ItemPayload {
     match kind {
-        ItemKind::AgentMessage => ItemPayload::AgentMessage {
-            text: string_at(raw, "text").unwrap_or_default(),
+        ItemKind::AgentMessage => required_item_string(raw, item_type, "text")
+            .map(|text| ItemPayload::AgentMessage { text })
+            .unwrap_or_else(malformed_item),
+        ItemKind::Reasoning => required_item_string(raw, item_type, "text")
+            .map(|text| ItemPayload::Reasoning { text })
+            .unwrap_or_else(malformed_item),
+        ItemKind::CommandExecution => required_item_string(raw, item_type, "command")
+            .map(|command| ItemPayload::CommandExecution {
+                command,
+                output: string_at(raw, "aggregated_output"),
+                exit_code: raw.get("exit_code").and_then(serde_json::Value::as_i64),
+            })
+            .unwrap_or_else(malformed_item),
+        ItemKind::FileChange => file_changes(raw, item_type)
+            .map(|changes| ItemPayload::FileChange { changes })
+            .unwrap_or_else(malformed_item),
+        ItemKind::McpToolCall => match (
+            required_item_string(raw, item_type, "server"),
+            required_item_string(raw, item_type, "tool"),
+        ) {
+            (Ok(server), Ok(tool)) => ItemPayload::McpToolCall {
+                server,
+                tool,
+                error_message: error_message(raw),
+            },
+            (Err(error), _) | (_, Err(error)) => malformed_item(error),
         },
-        ItemKind::Reasoning => ItemPayload::Reasoning {
-            text: string_at(raw, "text").unwrap_or_default(),
-        },
-        ItemKind::CommandExecution => ItemPayload::CommandExecution {
-            command: string_at(raw, "command").unwrap_or_default(),
-            output: string_at(raw, "aggregated_output"),
-            exit_code: raw.get("exit_code").and_then(serde_json::Value::as_i64),
-        },
-        ItemKind::FileChange => ItemPayload::FileChange {
-            changes: file_changes(raw),
-        },
-        ItemKind::McpToolCall => ItemPayload::McpToolCall {
-            server: string_at(raw, "server").unwrap_or_default(),
-            tool: string_at(raw, "tool").unwrap_or_default(),
-            error_message: error_message(raw),
-        },
-        ItemKind::CollabToolCall => ItemPayload::CollabToolCall {
-            tool: string_at(raw, "tool").unwrap_or_else(|| "unknown".to_string()),
-            receiver_count: raw
-                .get("receiver_thread_ids")
-                .and_then(serde_json::Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0),
-        },
-        ItemKind::WebSearch => ItemPayload::WebSearch {
-            query: string_at(raw, "query").unwrap_or_default(),
-        },
-        ItemKind::TodoList => ItemPayload::TodoList {
-            items: todo_items(raw),
-        },
+        ItemKind::CollabToolCall => required_item_string(raw, item_type, "tool")
+            .map(|tool| ItemPayload::CollabToolCall {
+                tool,
+                receiver_count: raw
+                    .get("receiver_thread_ids")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0),
+            })
+            .unwrap_or_else(malformed_item),
+        ItemKind::WebSearch => required_item_string(raw, item_type, "query")
+            .map(|query| ItemPayload::WebSearch { query })
+            .unwrap_or_else(malformed_item),
+        ItemKind::TodoList => todo_items(raw, item_type)
+            .map(|items| ItemPayload::TodoList { items })
+            .unwrap_or_else(malformed_item),
         ItemKind::Error => ItemPayload::Error {
             message: error_message(raw),
         },
@@ -273,11 +293,14 @@ fn usage(parent: Option<&serde_json::Value>) -> Usage {
     }
 }
 
-fn file_changes(raw: &serde_json::Value) -> Vec<FileChange> {
-    raw.get("changes")
+fn file_changes(raw: &serde_json::Value, item_type: &str) -> Result<Vec<FileChange>, ItemError> {
+    let changes = raw
+        .get("changes")
         .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
+        .ok_or_else(|| ItemError::missing(item_type, "changes"))?;
+
+    Ok(changes
+        .iter()
         .filter_map(|change| {
             let path = change.get("path")?.as_str()?.to_string();
             let kind = change
@@ -287,14 +310,17 @@ fn file_changes(raw: &serde_json::Value) -> Vec<FileChange> {
                 .to_string();
             Some(FileChange { path, kind })
         })
-        .collect()
+        .collect())
 }
 
-fn todo_items(raw: &serde_json::Value) -> Vec<TodoItem> {
-    raw.get("items")
+fn todo_items(raw: &serde_json::Value, item_type: &str) -> Result<Vec<TodoItem>, ItemError> {
+    let items = raw
+        .get("items")
         .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
+        .ok_or_else(|| ItemError::missing(item_type, "items"))?;
+
+    Ok(items
+        .iter()
         .filter_map(|item| {
             let text = item.get("text")?.as_str()?.to_string();
             let completed = item
@@ -303,7 +329,7 @@ fn todo_items(raw: &serde_json::Value) -> Vec<TodoItem> {
                 .unwrap_or(false);
             Some(TodoItem { text, completed })
         })
-        .collect()
+        .collect())
 }
 
 fn error_message(raw: &serde_json::Value) -> Option<String> {
@@ -318,6 +344,45 @@ fn string_at(raw: &serde_json::Value, key: &str) -> Option<String> {
     raw.get(key)
         .and_then(serde_json::Value::as_str)
         .map(ToString::to_string)
+}
+
+fn require_string(raw: &serde_json::Value, key: &str, owner: &str) -> Result<String, String> {
+    string_at(raw, key).ok_or_else(|| format!("{owner} missing {key}"))
+}
+
+fn required_item_string(
+    raw: &serde_json::Value,
+    item_type: &str,
+    key: &str,
+) -> Result<String, ItemError> {
+    string_at(raw, key).ok_or_else(|| ItemError::missing(item_type, key))
+}
+
+fn malformed(reason: impl Into<String>) -> EventPayload {
+    EventPayload::Malformed {
+        reason: reason.into(),
+    }
+}
+
+fn malformed_item(error: ItemError) -> ItemPayload {
+    ItemPayload::Malformed {
+        item_type: error.item_type,
+        reason: error.reason,
+    }
+}
+
+struct ItemError {
+    item_type: String,
+    reason: String,
+}
+
+impl ItemError {
+    fn missing(item_type: &str, field: &str) -> Self {
+        Self {
+            item_type: item_type.to_string(),
+            reason: format!("{item_type} missing {field}"),
+        }
+    }
 }
 
 fn number_at(parent: Option<&serde_json::Value>, key: &str) -> i64 {
@@ -368,6 +433,37 @@ mod tests {
             item.payload,
             ItemPayload::Unknown {
                 item_type: "new_tool_call".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn marks_malformed_known_item_payloads() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","status":"completed"}}"#,
+        )
+        .unwrap();
+
+        let EventPayload::Item { item } = event.payload else {
+            panic!("expected item payload");
+        };
+        assert_eq!(
+            item.payload,
+            ItemPayload::Malformed {
+                item_type: "command_execution".to_string(),
+                reason: "command_execution missing command".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn marks_malformed_known_events() {
+        let event = CodexEvent::parse(r#"{"type":"thread.started"}"#).unwrap();
+
+        assert_eq!(
+            event.payload,
+            EventPayload::Malformed {
+                reason: "thread.started missing thread_id".to_string(),
             }
         );
     }

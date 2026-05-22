@@ -28,8 +28,23 @@ struct Skill {
 }
 
 pub fn install(root: &Path) -> Result<(), Error> {
+    preflight(root)?;
+
     let skills_dir = root.join(".agents").join("skills");
     fs::create_dir_all(&skills_dir).map_err(|source| Error::io(&skills_dir, source))?;
+
+    for skill in SKILLS {
+        let skill_dir = skills_dir.join(skill.name);
+        let skill_path = skill_dir.join("SKILL.md");
+        fs::create_dir_all(&skill_dir).map_err(|source| Error::io(&skill_dir, source))?;
+        fs::write(&skill_path, skill.body).map_err(|source| Error::io(&skill_path, source))?;
+    }
+
+    ensure_gitignore(root)
+}
+
+pub(crate) fn preflight(root: &Path) -> Result<(), Error> {
+    let skills_dir = root.join(".agents").join("skills");
 
     for skill in SKILLS {
         let skill_path = skills_dir.join(skill.name).join("SKILL.md");
@@ -46,14 +61,7 @@ pub fn install(root: &Path) -> Result<(), Error> {
         }
     }
 
-    for skill in SKILLS {
-        let skill_dir = skills_dir.join(skill.name);
-        let skill_path = skill_dir.join("SKILL.md");
-        fs::create_dir_all(&skill_dir).map_err(|source| Error::io(&skill_dir, source))?;
-        fs::write(&skill_path, skill.body).map_err(|source| Error::io(&skill_path, source))?;
-    }
-
-    ensure_gitignore(root)
+    Ok(())
 }
 
 fn ensure_gitignore(root: &Path) -> Result<(), Error> {

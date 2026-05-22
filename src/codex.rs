@@ -27,6 +27,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
     plan::require_file(&config.plan_abs(), &config.plan_path)?;
     plan::require_file(&config.agents_abs(), &config.agents_path)?;
     plan::require_file(&config.design_abs(), &config.design_path)?;
+    skills::preflight(&config.root)?;
     git::ensure_initialized(&config.root)?;
     skills::install(&config.root)?;
 
@@ -262,5 +263,40 @@ mod tests {
             .expect_err("stream error should win");
 
         assert_eq!(error.to_string(), "stream failed");
+    }
+
+    #[test]
+    fn run_plan_rejects_unmanaged_snap_skill_before_git_init() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::write(root.join("PLAN.md"), "# Plan\n\n## Phase 1: Test\n").expect("plan");
+        fs::write(root.join("AGENTS.md"), "# Agents\n").expect("agents");
+        fs::write(root.join("DESIGN.md"), "# Design\n").expect("design");
+
+        let skill_dir = root
+            .join(".agents")
+            .join("skills")
+            .join(skills::PHASE_IMPLEMENT);
+        fs::create_dir_all(&skill_dir).expect("skill dir");
+        fs::write(skill_dir.join("SKILL.md"), "team owned").expect("skill");
+
+        let config = Config {
+            root: root.to_path_buf(),
+            plan_path: "PLAN.md".into(),
+            agents_path: "AGENTS.md".into(),
+            design_path: "DESIGN.md".into(),
+            start_phase: 1,
+            end_phase: Some(1),
+            sleep_seconds: 0,
+            codex_bin: "codex".to_string(),
+            stream_mode: StreamMode::Pretty,
+            log_dir: root.join(".codex-log"),
+            run_stamp: "test".to_string(),
+        };
+
+        let error = run_plan(config).expect_err("unmanaged skill should abort");
+
+        assert!(error.to_string().contains("is not managed by snap-rs"));
+        assert!(!root.join(".git").exists());
     }
 }

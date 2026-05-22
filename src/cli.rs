@@ -74,7 +74,10 @@ impl Config {
             Some(root) => absolutize(root)?,
             None => std::env::current_dir().map_err(|source| Error::io(".", source))?,
         };
-        let log_dir = args.log_dir.unwrap_or_else(|| root.join(".codex-log"));
+        let log_dir = args
+            .log_dir
+            .map(|path| resolve_under_root(&root, path))
+            .unwrap_or_else(|| root.join(".codex-log"));
         let run_stamp = args
             .run_stamp
             .unwrap_or_else(|| Local::now().format("%Y%m%d-%H%M%S").to_string());
@@ -113,4 +116,56 @@ fn absolutize(path: PathBuf) -> Result<PathBuf, Error> {
     }
     let cwd = std::env::current_dir().map_err(|source| Error::io(".", source))?;
     Ok(cwd.join(path))
+}
+
+fn resolve_under_root(root: &std::path::Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_with_root(root: PathBuf) -> Args {
+        Args {
+            root: Some(root),
+            plan_path: "PLAN.md".into(),
+            agents_path: "AGENTS.md".into(),
+            design_path: "DESIGN.md".into(),
+            start_phase: 1,
+            end_phase: Some(1),
+            sleep_seconds: 0,
+            codex_bin: "codex".to_string(),
+            stream_mode: StreamMode::Pretty,
+            log_dir: None,
+            run_stamp: Some("test".to_string()),
+        }
+    }
+
+    #[test]
+    fn relative_log_dir_is_resolved_under_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut args = args_with_root(temp.path().to_path_buf());
+        args.log_dir = Some("logs".into());
+
+        let config = Config::from_args(args).expect("config");
+
+        assert_eq!(config.log_dir, temp.path().join("logs"));
+    }
+
+    #[test]
+    fn absolute_log_dir_is_preserved() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_dir = temp.path().join("outside");
+        let mut args = args_with_root(temp.path().join("repo"));
+        args.log_dir = Some(log_dir.clone());
+
+        let config = Config::from_args(args).expect("config");
+
+        assert_eq!(config.log_dir, log_dir);
+    }
 }
