@@ -158,10 +158,10 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/* --clobber
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$tag" dist/* --title "$tag" --generate-notes
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes
           fi
 
   homebrew:
