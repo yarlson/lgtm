@@ -5,26 +5,41 @@ use crate::Error;
 
 const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/snap-*", ".codex-log/"];
 
-pub(crate) const PHASE_IMPLEMENT: &str = "snap-phase-implement";
-pub(crate) const PHASE_VALIDATE: &str = "snap-phase-validate";
-pub(crate) const PHASE_REVIEW: &str = "snap-phase-review";
-pub(crate) const CONTEXT_MAP: &str = "snap-context-map";
-pub(crate) const CLI_CONTROL: &str = "snap-cli-control";
-pub(crate) const UI_CONTROL: &str = "snap-ui-control";
-pub(crate) const TECHNICAL_SPIKE: &str = "snap-technical-spike";
-pub(crate) const REFACTOR_PLAN: &str = "snap-refactor-plan";
-pub(crate) const PLAN_UPDATE: &str = "snap-plan-update";
-pub(crate) const SPEC_UPDATE: &str = "snap-spec-update";
-pub(crate) const SECURITY_REVIEW: &str = "snap-security-review";
-pub(crate) const TEST_GAP_REVIEW: &str = "snap-test-gap-review";
-pub(crate) const DOCS_DRIFT_REVIEW: &str = "snap-docs-drift-review";
-pub(crate) const ROLLOUT_REVIEW: &str = "snap-rollout-review";
-pub(crate) const DEPENDENCY_REVIEW: &str = "snap-dependency-review";
-pub(crate) const FINAL_REVIEW: &str = "snap-final-review";
-
 struct Skill {
     name: &'static str,
     body: &'static str,
+}
+
+macro_rules! skill_registry {
+    ($($constant:ident => $name:literal, $path:literal;)+) => {
+        $(pub(crate) const $constant: &str = $name;)+
+
+        const SKILLS: &[Skill] = &[
+            $(Skill {
+                name: $constant,
+                body: include_str!($path),
+            },)+
+        ];
+    };
+}
+
+skill_registry! {
+    PHASE_IMPLEMENT => "snap-phase-implement", "../skills/snap-phase-implement/SKILL.md";
+    PHASE_VALIDATE => "snap-phase-validate", "../skills/snap-phase-validate/SKILL.md";
+    PHASE_REVIEW => "snap-phase-review", "../skills/snap-phase-review/SKILL.md";
+    CONTEXT_MAP => "snap-context-map", "../skills/snap-context-map/SKILL.md";
+    CLI_CONTROL => "snap-cli-control", "../skills/snap-cli-control/SKILL.md";
+    UI_CONTROL => "snap-ui-control", "../skills/snap-ui-control/SKILL.md";
+    TECHNICAL_SPIKE => "snap-technical-spike", "../skills/snap-technical-spike/SKILL.md";
+    REFACTOR_PLAN => "snap-refactor-plan", "../skills/snap-refactor-plan/SKILL.md";
+    PLAN_UPDATE => "snap-plan-update", "../skills/snap-plan-update/SKILL.md";
+    SPEC_UPDATE => "snap-spec-update", "../skills/snap-spec-update/SKILL.md";
+    SECURITY_REVIEW => "snap-security-review", "../skills/snap-security-review/SKILL.md";
+    TEST_GAP_REVIEW => "snap-test-gap-review", "../skills/snap-test-gap-review/SKILL.md";
+    DOCS_DRIFT_REVIEW => "snap-docs-drift-review", "../skills/snap-docs-drift-review/SKILL.md";
+    ROLLOUT_REVIEW => "snap-rollout-review", "../skills/snap-rollout-review/SKILL.md";
+    DEPENDENCY_REVIEW => "snap-dependency-review", "../skills/snap-dependency-review/SKILL.md";
+    FINAL_REVIEW => "snap-final-review", "../skills/snap-final-review/SKILL.md";
 }
 
 pub fn install(root: &Path) -> Result<(), Error> {
@@ -109,73 +124,6 @@ fn frontmatter_value(body: &str, key: &str) -> Option<String> {
         }
     })
 }
-
-const SKILLS: &[Skill] = &[
-    Skill {
-        name: PHASE_IMPLEMENT,
-        body: include_str!("../skills/snap-phase-implement/SKILL.md"),
-    },
-    Skill {
-        name: PHASE_VALIDATE,
-        body: include_str!("../skills/snap-phase-validate/SKILL.md"),
-    },
-    Skill {
-        name: PHASE_REVIEW,
-        body: include_str!("../skills/snap-phase-review/SKILL.md"),
-    },
-    Skill {
-        name: CONTEXT_MAP,
-        body: include_str!("../skills/snap-context-map/SKILL.md"),
-    },
-    Skill {
-        name: CLI_CONTROL,
-        body: include_str!("../skills/snap-cli-control/SKILL.md"),
-    },
-    Skill {
-        name: UI_CONTROL,
-        body: include_str!("../skills/snap-ui-control/SKILL.md"),
-    },
-    Skill {
-        name: TECHNICAL_SPIKE,
-        body: include_str!("../skills/snap-technical-spike/SKILL.md"),
-    },
-    Skill {
-        name: REFACTOR_PLAN,
-        body: include_str!("../skills/snap-refactor-plan/SKILL.md"),
-    },
-    Skill {
-        name: PLAN_UPDATE,
-        body: include_str!("../skills/snap-plan-update/SKILL.md"),
-    },
-    Skill {
-        name: SPEC_UPDATE,
-        body: include_str!("../skills/snap-spec-update/SKILL.md"),
-    },
-    Skill {
-        name: SECURITY_REVIEW,
-        body: include_str!("../skills/snap-security-review/SKILL.md"),
-    },
-    Skill {
-        name: TEST_GAP_REVIEW,
-        body: include_str!("../skills/snap-test-gap-review/SKILL.md"),
-    },
-    Skill {
-        name: DOCS_DRIFT_REVIEW,
-        body: include_str!("../skills/snap-docs-drift-review/SKILL.md"),
-    },
-    Skill {
-        name: ROLLOUT_REVIEW,
-        body: include_str!("../skills/snap-rollout-review/SKILL.md"),
-    },
-    Skill {
-        name: DEPENDENCY_REVIEW,
-        body: include_str!("../skills/snap-dependency-review/SKILL.md"),
-    },
-    Skill {
-        name: FINAL_REVIEW,
-        body: include_str!("../skills/snap-final-review/SKILL.md"),
-    },
-];
 
 #[cfg(test)]
 mod tests {

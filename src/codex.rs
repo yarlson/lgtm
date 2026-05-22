@@ -55,44 +55,21 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
             ))
         })?;
 
-        run_phase_prompt(
-            &config,
-            &mut renderer,
-            &phase,
-            "implement",
-            prompt::implementation_prompt(
-                &config.plan_path,
-                &config.agents_path,
-                &config.design_path,
+        for pass in prompt::PhasePass::ALL {
+            run_phase_prompt(
+                &config,
+                &mut renderer,
                 &phase,
-            ),
-        )?;
-
-        run_phase_prompt(
-            &config,
-            &mut renderer,
-            &phase,
-            "validate",
-            prompt::validation_prompt(
-                &config.plan_path,
-                &config.agents_path,
-                &config.design_path,
-                &phase,
-            ),
-        )?;
-
-        run_phase_prompt(
-            &config,
-            &mut renderer,
-            &phase,
-            "review",
-            prompt::review_prompt(
-                &config.plan_path,
-                &config.agents_path,
-                &config.design_path,
-                &phase,
-            ),
-        )?;
+                pass.action(),
+                prompt::phase_prompt(
+                    &config.plan_path,
+                    &config.agents_path,
+                    &config.design_path,
+                    &phase,
+                    pass,
+                ),
+            )?;
+        }
 
         if phase.number < end_phase {
             renderer.sleep(config.sleep_seconds, phase.number + 1);

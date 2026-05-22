@@ -3,42 +3,36 @@ use std::path::Path;
 use crate::plan::Phase;
 use crate::skills;
 
-pub fn implementation_prompt(
-    plan_path: &Path,
-    agents_path: &Path,
-    design_path: &Path,
-    phase: &Phase,
-) -> String {
-    format!(
-        "{}\n\n{}\n",
-        context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(plan_path, phase, PhaseTask::Implement)
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhasePass {
+    Implement,
+    Validate,
+    Review,
 }
 
-pub fn validation_prompt(
-    plan_path: &Path,
-    agents_path: &Path,
-    design_path: &Path,
-    phase: &Phase,
-) -> String {
-    format!(
-        "{}\n\n{}\n",
-        context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(plan_path, phase, PhaseTask::Validate)
-    )
+impl PhasePass {
+    pub const ALL: [Self; 3] = [Self::Implement, Self::Validate, Self::Review];
+
+    pub fn action(self) -> &'static str {
+        match self {
+            Self::Implement => "implement",
+            Self::Validate => "validate",
+            Self::Review => "review",
+        }
+    }
 }
 
-pub fn review_prompt(
+pub fn phase_prompt(
     plan_path: &Path,
     agents_path: &Path,
     design_path: &Path,
     phase: &Phase,
+    pass: PhasePass,
 ) -> String {
     format!(
         "{}\n\n{}\n",
         context_docs_block(plan_path, agents_path, design_path),
-        phase_task_block(plan_path, phase, PhaseTask::Review)
+        phase_task_block(plan_path, phase, pass)
     )
 }
 
@@ -59,16 +53,9 @@ When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner b
     )
 }
 
-#[derive(Debug, Clone, Copy)]
-enum PhaseTask {
-    Implement,
-    Validate,
-    Review,
-}
-
-fn phase_task_block(plan_path: &Path, phase: &Phase, task: PhaseTask) -> String {
-    match task {
-        PhaseTask::Implement => format!(
+fn phase_task_block(plan_path: &Path, phase: &Phase, pass: PhasePass) -> String {
+    match pass {
+        PhasePass::Implement => format!(
             "\
 Open {plan} and locate exactly:
 
@@ -98,7 +85,7 @@ Implement Phase {number} completely in the current target repo. Do not commit or
             plan_update = skills::PLAN_UPDATE,
             spec_update = skills::SPEC_UPDATE,
         ),
-        PhaseTask::Validate => format!(
+        PhasePass::Validate => format!(
             "\
 Open {plan} and locate exactly:
 
@@ -124,7 +111,7 @@ Do not commit or push unless the user explicitly requested it for this run.",
             rollout_review = skills::ROLLOUT_REVIEW,
             dependency_review = skills::DEPENDENCY_REVIEW,
         ),
-        PhaseTask::Review => format!(
+        PhasePass::Review => format!(
             "\
 Open {plan} and locate exactly:
 
@@ -156,11 +143,12 @@ mod tests {
 
     #[test]
     fn implementation_prompt_preserves_phase_contract() {
-        let prompt = implementation_prompt(
+        let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
             &phase(4, "Path And Environment Resolution", '-'),
+            PhasePass::Implement,
         );
 
         assert!(prompt.contains("Treat DESIGN.md as the product contract"));
@@ -180,11 +168,12 @@ mod tests {
 
     #[test]
     fn validation_prompt_requires_independent_evidence_based_check() {
-        let prompt = validation_prompt(
+        let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
             &phase(2, "Verification Loop", '-'),
+            PhasePass::Validate,
         );
 
         assert!(prompt.contains("## Phase 2 - Verification Loop"));
@@ -200,11 +189,12 @@ mod tests {
 
     #[test]
     fn review_prompt_runs_quality_review_and_final_closeout() {
-        let prompt = review_prompt(
+        let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
             &phase(3, "Output Polish", '-'),
+            PhasePass::Review,
         );
 
         assert!(prompt.contains("## Phase 3 - Output Polish"));
@@ -218,11 +208,12 @@ mod tests {
 
     #[test]
     fn prompts_preserve_original_phase_heading_separator() {
-        let prompt = implementation_prompt(
+        let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
             Path::new("DESIGN.md"),
             &phase(12, "Polish", ':'),
+            PhasePass::Implement,
         );
 
         assert!(prompt.contains("## Phase 12: Polish"));
