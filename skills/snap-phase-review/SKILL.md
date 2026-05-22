@@ -17,13 +17,12 @@ snap-rs will provide:
 - the selected phase heading
 - the path to `PLAN.md`
 - the path to `AGENTS.md`
-- the path to `DESIGN.md`
 
 Treat the selected phase as the only authorized scope.
 
 ## Workflow
 
-1. Re-open `AGENTS.md`, `DESIGN.md`, and `PLAN.md`.
+1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from the selected phase.
 2. Locate the exact selected phase heading.
 3. Review the current diff and changed files against the selected phase.
 4. Look for structural code-quality regressions:

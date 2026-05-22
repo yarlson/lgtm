@@ -18,7 +18,7 @@ Update `PLAN.md` only when one of these is true:
 - validation proves a required step is missing
 - phase order is incorrect
 - validation gates are insufficient or impossible
-- the phase contradicts `DESIGN.md`
+- the phase contradicts a repo-local product or architecture contract
 - implementation exposes a prerequisite that must be part of this phase
 
 ## Workflow

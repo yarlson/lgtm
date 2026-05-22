@@ -1,6 +1,6 @@
 ---
 name: snap-docs-drift-review
-description: "snap-rs documentation drift review skill. Use when implementation or validation may affect README, AGENTS.md, DESIGN.md, PLAN.md, API docs, operational docs, or other repo-local documentation."
+description: "snap-rs documentation drift review skill. Use when implementation or validation may affect README, AGENTS.md, PLAN.md, phase-linked project docs, API docs, operational docs, or other repo-local documentation."
 managed-by: snap-rs
 ---
 
@@ -18,7 +18,7 @@ The goal is to update only directly affected docs and avoid stale parallel docum
 4. Update only docs directly affected by this phase.
 5. Preserve the repo's documentation style.
 6. Prefer canonical docs over adding new parallel docs.
-7. Do not move product contract out of `DESIGN.md` if that is the established source.
+7. Keep product-contract changes in `PLAN.md` or docs explicitly linked from the selected phase.
 8. Do not put implementation-plan details into user-facing docs unless the repo already does that.
 
 ## Docs To Consider
@@ -27,8 +27,8 @@ Depending on the repo, check:
 
 - `README.md`
 - `AGENTS.md`
-- `DESIGN.md`
 - `PLAN.md`
+- docs linked from the selected phase
 - docs under `docs/`
 - command help text
 - API or schema docs

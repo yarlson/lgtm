@@ -4,7 +4,7 @@ Rust port of `lnk/run-plan.sh`.
 
 It runs a phase-scoped implementation/validation/review loop:
 
-1. read `PLAN.md`, `AGENTS.md`, and `DESIGN.md`
+1. read `PLAN.md`, `AGENTS.md`, and any context docs linked from the selected phase
 2. detect `## Phase N - Title` headings
 3. confirm the target root is a Git repository
 4. run Codex once to implement each phase
@@ -29,7 +29,6 @@ Environment variables mirror the shell harness where practical:
 
 - `PLAN_PATH`
 - `REPO_AGENTS_PATH`
-- `DESIGN_PATH`
 - `START_PHASE`
 - `END_PHASE`
 - `SLEEP_SECONDS`

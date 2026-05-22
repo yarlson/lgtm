@@ -27,7 +27,6 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
 
     plan::require_file(&config.plan_abs(), &config.plan_path)?;
     plan::require_file(&config.agents_abs(), &config.agents_path)?;
-    plan::require_file(&config.design_abs(), &config.design_path)?;
     skills::preflight(&config.root)?;
     git::ensure_initialized(&config.root)?;
     skills::install(&config.root)?;
@@ -61,13 +60,7 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
                 &mut renderer,
                 &phase,
                 pass.action(),
-                prompt::phase_prompt(
-                    &config.plan_path,
-                    &config.agents_path,
-                    &config.design_path,
-                    &phase,
-                    pass,
-                ),
+                prompt::phase_prompt(&config.plan_path, &config.agents_path, &phase, pass),
             )?;
         }
 
@@ -277,7 +270,6 @@ mod tests {
         let root = temp.path();
         fs::write(root.join("PLAN.md"), "# Plan\n\n## Phase 1: Test\n").expect("plan");
         fs::write(root.join("AGENTS.md"), "# Agents\n").expect("agents");
-        fs::write(root.join("DESIGN.md"), "# Design\n").expect("design");
 
         let skill_dir = root
             .join(".agents")
@@ -290,7 +282,6 @@ mod tests {
             root: root.to_path_buf(),
             plan_path: "PLAN.md".into(),
             agents_path: "AGENTS.md".into(),
-            design_path: "DESIGN.md".into(),
             start_phase: 1,
             end_phase: Some(1),
             sleep_seconds: 0,

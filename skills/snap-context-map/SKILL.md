@@ -14,7 +14,7 @@ The goal is to gather enough local context to work safely without reading the wh
 
 1. Read the selected `PLAN.md` phase.
 2. Read `AGENTS.md` for repo instructions.
-3. Read `DESIGN.md` for product or architecture constraints.
+3. Read context docs linked from the selected phase.
 4. Search for files, modules, tests, commands, docs, and config relevant to the selected phase.
 5. Inspect nearby code patterns before deciding how to implement or validate.
 6. Identify unknowns that affect implementation correctness.

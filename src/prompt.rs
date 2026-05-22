@@ -25,30 +25,27 @@ impl PhasePass {
 pub fn phase_prompt(
     plan_path: &Path,
     agents_path: &Path,
-    design_path: &Path,
     phase: &Phase,
     pass: PhasePass,
 ) -> String {
     format!(
         "{}\n\n{}\n",
-        context_docs_block(plan_path, agents_path, design_path),
+        context_docs_block(plan_path, agents_path),
         phase_task_block(plan_path, phase, pass)
     )
 }
 
-fn context_docs_block(plan_path: &Path, agents_path: &Path, design_path: &Path) -> String {
+fn context_docs_block(plan_path: &Path, agents_path: &Path) -> String {
     format!(
         "\
 Read these context files before coding:
 - {agents}
-- {design}
 - {plan}
-Treat {design} as the product contract and {plan} as the implementation order.
+Treat {plan} as the implementation order and the source of any linked project-contract context.
 Treat {agents} as the authoritative agent instructions for this run.
 Use only repo-local files and official docs relevant to the selected phase.
 When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior, check the installed version and repo-local config first; use current official docs when local evidence is not enough.",
         agents = agents_path.display(),
-        design = design_path.display(),
         plan = plan_path.display(),
     )
 }
@@ -69,7 +66,7 @@ Use ${cli_control} if the phase changes CLI/TUI behavior, terminal output, promp
 Use ${ui_control} if the phase changes browser, Electron, or local UI behavior.
 Use ${security_review} if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
 Use ${plan_update} only if PLAN.md needs a correction to make this selected phase implementable or verifiable.
-Use ${spec_update} only if DESIGN.md has a real product or architecture contract gap exposed by this selected phase.
+Use ${spec_update} only if the selected phase exposes a real product or architecture contract gap that belongs in PLAN.md or a doc linked from PLAN.md.
 
 Implement Phase {number} completely in the current target repo. Do not commit or push unless the user explicitly requested it for this run.",
             plan = plan_path.display(),
@@ -94,7 +91,7 @@ Open {plan} and locate exactly:
 Use ${phase_validate} for the validation pass.
 Use ${test_gap_review} to check whether verification proves the selected phase works.
 Use ${security_review} if the phase touches auth, secrets, command execution, file IO, network calls, user input, dependencies, MCP/tool config, or agent/tool boundaries.
-Use ${docs_drift_review} if changed behavior may affect README, AGENTS.md, DESIGN.md, PLAN.md, API docs, operational docs, examples, or command help.
+Use ${docs_drift_review} if changed behavior may affect README, AGENTS.md, PLAN.md, linked project docs, API docs, operational docs, examples, or command help.
 Use ${rollout_review} if the phase affects deployment, infrastructure, runtime config, migrations, observability, rollback, or production failure modes.
 Use ${dependency_review} if the phase changes dependencies, lockfiles, package manager config, generated files, CI security config, tool versions, or plugin/MCP/tool installation.
 
@@ -146,12 +143,11 @@ mod tests {
         let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
-            Path::new("DESIGN.md"),
             &phase(4, "Path And Environment Resolution", '-'),
             PhasePass::Implement,
         );
 
-        assert!(prompt.contains("Treat DESIGN.md as the product contract"));
+        assert!(prompt.contains("source of any linked project-contract context"));
         assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
         assert!(prompt.contains("$snap-context-map"));
         assert!(prompt.contains("$snap-phase-implement"));
@@ -171,7 +167,6 @@ mod tests {
         let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
-            Path::new("DESIGN.md"),
             &phase(2, "Verification Loop", '-'),
             PhasePass::Validate,
         );
@@ -192,7 +187,6 @@ mod tests {
         let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
-            Path::new("DESIGN.md"),
             &phase(3, "Output Polish", '-'),
             PhasePass::Review,
         );
@@ -211,7 +205,6 @@ mod tests {
         let prompt = phase_prompt(
             Path::new("PLAN.md"),
             Path::new("AGENTS.md"),
-            Path::new("DESIGN.md"),
             &phase(12, "Polish", ':'),
             PhasePass::Implement,
         );

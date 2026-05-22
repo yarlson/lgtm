@@ -22,9 +22,6 @@ pub struct Args {
     #[arg(long, env = "REPO_AGENTS_PATH", default_value = "AGENTS.md")]
     pub agents_path: PathBuf,
 
-    #[arg(long, env = "DESIGN_PATH", default_value = "DESIGN.md")]
-    pub design_path: PathBuf,
-
     #[arg(long, env = "START_PHASE", default_value_t = 1)]
     pub start_phase: u32,
 
@@ -58,7 +55,6 @@ pub struct Config {
     pub root: PathBuf,
     pub plan_path: PathBuf,
     pub agents_path: PathBuf,
-    pub design_path: PathBuf,
     pub start_phase: u32,
     pub end_phase: Option<u32>,
     pub sleep_seconds: u64,
@@ -86,7 +82,6 @@ impl Config {
             root,
             plan_path: args.plan_path,
             agents_path: args.agents_path,
-            design_path: args.design_path,
             start_phase: args.start_phase,
             end_phase: args.end_phase,
             sleep_seconds: args.sleep_seconds,
@@ -103,10 +98,6 @@ impl Config {
 
     pub fn agents_abs(&self) -> PathBuf {
         self.root.join(&self.agents_path)
-    }
-
-    pub fn design_abs(&self) -> PathBuf {
-        self.root.join(&self.design_path)
     }
 }
 
@@ -135,7 +126,6 @@ mod tests {
             root: Some(root),
             plan_path: "PLAN.md".into(),
             agents_path: "AGENTS.md".into(),
-            design_path: "DESIGN.md".into(),
             start_phase: 1,
             end_phase: Some(1),
             sleep_seconds: 0,

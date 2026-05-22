@@ -15,13 +15,12 @@ snap-rs will provide:
 - the selected phase heading
 - the path to `PLAN.md`
 - the path to `AGENTS.md`
-- the path to `DESIGN.md`
 
 Treat validation as an independent review, not a continuation of implementation assumptions.
 
 ## Workflow
 
-1. Re-open `AGENTS.md`, `DESIGN.md`, and `PLAN.md`.
+1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from the selected phase.
 2. Locate the exact selected phase heading.
 3. Re-read the selected phase's Goal, Steps, Validation, and Web validation sections.
 4. Inspect files touched by the implementation and surrounding modules.

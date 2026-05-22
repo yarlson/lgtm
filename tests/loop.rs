@@ -25,7 +25,6 @@ fn runs_implementation_validation_and_review_prompts_with_formatted_output() {
     )
     .expect("write plan");
     fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
-    fs::write(repo.join("DESIGN.md"), "# Design\n").expect("write design");
 
     let fake_codex = temp.path().join("codex");
     fs::write(
@@ -153,7 +152,6 @@ fn reloads_plan_before_each_phase() {
     )
     .expect("write plan");
     fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
-    fs::write(repo.join("DESIGN.md"), "# Design\n").expect("write design");
 
     let fake_codex = temp.path().join("codex");
     fs::write(

@@ -1,6 +1,6 @@
 ---
 name: snap-phase-implement
-description: "snap-rs implementation pass for exactly one PLAN.md phase. Use when snap-rs asks Codex to implement a selected phase. Reads PLAN.md, AGENTS.md, and DESIGN.md, maps relevant files, implements only the selected phase, keeps changes surgical, and verifies before finishing."
+description: "snap-rs implementation pass for exactly one PLAN.md phase. Use when snap-rs asks Codex to implement a selected phase. Reads PLAN.md, AGENTS.md, and phase-linked context docs, maps relevant files, implements only the selected phase, keeps changes surgical, and verifies before finishing."
 managed-by: snap-rs
 ---
 
@@ -15,13 +15,12 @@ snap-rs will provide:
 - the target phase heading, for example `## Phase 4 - Path And Environment Resolution`
 - the path to `PLAN.md`
 - the path to `AGENTS.md`
-- the path to `DESIGN.md`
 
 Treat these files as authoritative.
 
 ## Workflow
 
-1. Open `AGENTS.md`, `DESIGN.md`, and `PLAN.md`.
+1. Open `AGENTS.md`, `PLAN.md`, and context docs linked from the selected phase.
 2. Locate the exact selected phase heading in `PLAN.md`.
 3. Read only the selected phase plus any directly referenced sections needed to understand it.
 4. Map the files relevant to this phase before editing.
@@ -38,7 +37,7 @@ Treat these files as authoritative.
 
 Do not add unrelated features, commands, flags, workflows, release automation, CI, configuration, abstractions, or documentation.
 
-Update `DESIGN.md` only when implementation exposes a real product-contract gap.
+Update `PLAN.md` or a phase-linked contract doc only when implementation exposes a real product-contract gap.
 
 Update `PLAN.md` only when the selected phase needs a corrected implementation order or validation gate.
 
