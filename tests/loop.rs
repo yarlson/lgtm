@@ -127,3 +127,82 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
             .any(|line| line == ".codex-log/")
     );
 }
+
+#[test]
+fn reloads_plan_before_each_phase() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .arg("init")
+        .output()
+        .expect("git init");
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["branch", "-M", "main"])
+        .output()
+        .expect("rename branch");
+    fs::write(
+        repo.join("PLAN.md"),
+        "# Plan\n\n## Phase 1: One\n\n## Phase 2: Old Two\n",
+    )
+    .expect("write plan");
+    fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
+    fs::write(repo.join("DESIGN.md"), "# Design\n").expect("write design");
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+dir=$(dirname "$0")
+counter="$dir/counter"
+if [ -f "$counter" ]; then
+  n=$(cat "$counter")
+else
+  n=0
+fi
+n=$((n + 1))
+printf '%s\n' "$n" >"$counter"
+if [ "$n" = 1 ]; then
+  printf '# Plan\n\n## Phase 1: One\n\n## Phase 2: Changed Two\n' >"$SNAP_TEST_REPO/PLAN.md"
+fi
+cat >/dev/null
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
+"#,
+    )
+    .expect("write fake codex");
+    let mut perms = fs::metadata(&fake_codex)
+        .expect("fake metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_codex, perms).expect("chmod fake codex");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_snap-rs"))
+        .arg("--root")
+        .arg(&repo)
+        .arg("--end-phase")
+        .arg("2")
+        .arg("--sleep-seconds")
+        .arg("0")
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("SNAP_TEST_REPO", &repo)
+        .output()
+        .expect("run snap-rs");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("phase=02 pass=implement title=\"Changed Two\""));
+    assert!(!stdout.contains("phase=02 pass=implement title=\"Old Two\""));
+}

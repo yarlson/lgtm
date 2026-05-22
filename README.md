@@ -14,6 +14,11 @@ It runs a phase-scoped implementation/validation/review loop:
 8. write raw Codex JSONL into `.codex-log/`
 9. render the live JSONL stream as a readable terminal transcript
 
+snap-rs runs `codex exec` with
+`--dangerously-bypass-approvals-and-sandbox` in the target root. Use it only for
+repositories where fully autonomous local file and command execution is an
+acceptable operating mode.
+
 From this directory, drive the sibling `lnk` repo with:
 
 ```sh
@@ -37,8 +42,7 @@ Environment variables mirror the shell harness where practical:
 The formatter is based on the current `codex exec --json` source from
 `openai/codex` commit `de80fa6e3194d68b71b0f09be475179922e0f5b8`, especially
 `codex-rs/exec/src/exec_events.rs` and
-`codex-rs/exec/src/event_processor_with_jsonl_output.rs`. It intentionally uses
-Ratatui text/style primitives for terminal rendering instead of a `jq` filter.
+`codex-rs/exec/src/event_processor_with_jsonl_output.rs`.
 
 Before phase execution, snap-rs refreshes its managed Codex project skills under
 the target repo's `.agents/skills/snap-*` directories and adds

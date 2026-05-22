@@ -7,6 +7,7 @@ mod plan;
 mod prompt;
 mod render;
 mod skills;
+mod terminal;
 
 use clap::Parser;
 

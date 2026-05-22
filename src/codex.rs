@@ -27,18 +27,22 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
     git::ensure_initialized(&config.root)?;
     skills::install(&config.root)?;
 
-    let plan_text = plan::load(&config.plan_abs())?;
-    let end_phase = match config.end_phase {
-        Some(end_phase) => end_phase,
-        None => plan::detect_end_phase(&plan_text).ok_or_else(|| {
-            Error::message(format!(
-                "could not detect end phase from {}",
-                config.plan_path.display()
-            ))
-        })?,
-    };
+    let mut phase_number = config.start_phase;
+    loop {
+        let plan_text = plan::load(&config.plan_abs())?;
+        let end_phase = match config.end_phase {
+            Some(end_phase) => end_phase,
+            None => plan::detect_end_phase(&plan_text).ok_or_else(|| {
+                Error::message(format!(
+                    "could not detect end phase from {}",
+                    config.plan_path.display()
+                ))
+            })?,
+        };
+        if phase_number > end_phase {
+            break;
+        }
 
-    for phase_number in config.start_phase..=end_phase {
         let phase = plan::phase(&plan_text, phase_number).ok_or_else(|| {
             Error::message(format!(
                 "Phase {phase_number} was not found in {}",
@@ -89,6 +93,8 @@ pub fn run_plan(config: Config) -> Result<(), Error> {
             renderer.sleep(config.sleep_seconds, phase.number + 1);
             thread::sleep(Duration::from_secs(config.sleep_seconds));
         }
+
+        phase_number += 1;
     }
 
     Ok(())

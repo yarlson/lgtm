@@ -1,18 +1,21 @@
 use chrono::Local;
-use ratatui::style::Color;
-use ratatui::style::Modifier;
-use ratatui::style::Style;
-use ratatui::text::Line;
-use ratatui::text::Span;
-use ratatui::text::Text;
 use termimad::MadSkin;
 
 use crate::events::CodexEvent;
 use crate::events::CodexItem;
 use crate::events::EventKind;
-use crate::events::ItemKind;
+use crate::events::EventPayload;
+use crate::events::ItemPayload;
 use crate::events::ItemStatus;
+use crate::events::TodoItem;
 use crate::events::Usage;
+use crate::terminal::Color;
+use crate::terminal::Emphasis;
+use crate::terminal::Line;
+use crate::terminal::Span;
+use crate::terminal::Text;
+use crate::terminal::style;
+use crate::terminal::text_to_string;
 
 #[derive(Debug, Clone)]
 pub struct Renderer {
@@ -85,52 +88,39 @@ impl Renderer {
         text_to_string(render_event(event, self.color), self.color)
     }
 
-    fn emit(&self, rendered: Text<'static>) {
+    fn emit(&self, rendered: Text) {
         print!("{}", text_to_string(rendered, self.color));
     }
 }
 
-fn render_event(event: &CodexEvent, color: bool) -> Text<'static> {
-    match event.kind {
-        EventKind::ThreadStarted => single(
-            "run",
-            Color::Cyan,
-            "thread",
-            format!("thread {}", event.string_at("thread_id").unwrap_or("")),
-        ),
-        EventKind::TurnStarted => single("run", Color::Cyan, "turn", "begin"),
-        EventKind::TurnCompleted => render_turn_completed(event.usage()),
-        EventKind::TurnFailed => single(
+fn render_event(event: &CodexEvent, color: bool) -> Text {
+    match &event.payload {
+        EventPayload::ThreadStarted { thread_id } => {
+            single("run", Color::Cyan, "thread", format!("thread {thread_id}"))
+        }
+        EventPayload::TurnStarted => single("run", Color::Cyan, "turn", "begin"),
+        EventPayload::TurnCompleted { usage } => render_turn_completed(*usage),
+        EventPayload::TurnFailed { message } => single(
             "fail",
             Color::Red,
             "turn",
             format!(
                 "error=\"{}\"",
-                event
-                    .error_message()
-                    .unwrap_or_else(|| "unknown error".to_string())
+                message.as_deref().unwrap_or("unknown error")
             ),
         ),
-        EventKind::Error => single(
+        EventPayload::Error { message } => single(
             "fail",
             Color::Red,
             "codex",
-            event
-                .error_message()
-                .unwrap_or_else(|| "unknown error".to_string()),
+            message.as_deref().unwrap_or("unknown error"),
         ),
-        EventKind::ItemStarted | EventKind::ItemUpdated | EventKind::ItemCompleted => {
-            if let Some(item) = event.item() {
-                render_item(event.kind, &item, color)
-            } else {
-                single("..", Color::DarkGray, "event", event.event_type.clone())
-            }
-        }
-        EventKind::Unknown => single("..", Color::DarkGray, "event", event.event_type.clone()),
+        EventPayload::Item { item } => render_item(event.kind, item, color),
+        EventPayload::Unknown => single("..", Color::DarkGray, "event", event.event_type.clone()),
     }
 }
 
-fn render_turn_completed(usage: Usage) -> Text<'static> {
+fn render_turn_completed(usage: Usage) -> Text {
     single(
         "ok",
         Color::Green,
@@ -145,28 +135,28 @@ fn render_turn_completed(usage: Usage) -> Text<'static> {
     )
 }
 
-fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text<'static> {
-    match item.kind {
-        ItemKind::AgentMessage => render_agent_message(item.text().unwrap_or(""), color),
-        ItemKind::Reasoning => render_block("reason", Color::DarkGray, item.text().unwrap_or("")),
-        ItemKind::CommandExecution => render_command(event_kind, item),
-        ItemKind::FileChange => render_file_change(event_kind, item),
-        ItemKind::McpToolCall => render_mcp(event_kind, item),
-        ItemKind::CollabToolCall => render_collab(event_kind, item),
-        ItemKind::WebSearch => single(
+fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text {
+    match &item.payload {
+        ItemPayload::AgentMessage { text } => render_agent_message(text, color),
+        ItemPayload::Reasoning { text } => render_block("reason", Color::DarkGray, text),
+        ItemPayload::CommandExecution { .. } => render_command(event_kind, item),
+        ItemPayload::FileChange { .. } => render_file_change(event_kind, item),
+        ItemPayload::McpToolCall { .. } => render_mcp(event_kind, item),
+        ItemPayload::CollabToolCall { .. } => render_collab(event_kind, item),
+        ItemPayload::WebSearch { query } => single(
             event_status(event_kind, item.status),
             event_status_color(event_kind, item.status),
             "web",
-            item.string_at("query").unwrap_or(""),
+            query,
         ),
-        ItemKind::TodoList => render_todos(event_kind, item),
-        ItemKind::Error => single(
+        ItemPayload::TodoList { items } => render_todos(event_kind, item.status, items),
+        ItemPayload::Error { message } => single(
             "fail",
             Color::Red,
             "codex",
-            item.error_message().unwrap_or("unknown error"),
+            message.as_deref().unwrap_or("unknown error"),
         ),
-        ItemKind::Unknown => single(
+        ItemPayload::Unknown => single(
             event_status(event_kind, item.status),
             Color::DarkGray,
             "item",
@@ -175,7 +165,7 @@ fn render_item(event_kind: EventKind, item: &CodexItem, color: bool) -> Text<'st
     }
 }
 
-fn render_agent_message(message: &str, color: bool) -> Text<'static> {
+fn render_agent_message(message: &str, color: bool) -> Text {
     let mut lines = Vec::new();
     lines.push(row(
         "msg",
@@ -195,10 +185,17 @@ fn render_agent_message(message: &str, color: bool) -> Text<'static> {
     text(lines)
 }
 
-fn render_command(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
-    let command = item.string_at("command").unwrap_or("");
-    let mut message = format!("exec {command}{}", exit_field(item));
-    if let Some(summary) = output_summary(item.command_output()) {
+fn render_command(event_kind: EventKind, item: &CodexItem) -> Text {
+    let ItemPayload::CommandExecution {
+        command,
+        output,
+        exit_code,
+    } = &item.payload
+    else {
+        return fallback_item(event_kind, item);
+    };
+    let mut message = format!("exec {command}{}", exit_field(*exit_code));
+    if let Some(summary) = output_summary(output.as_deref()) {
         message.push(' ');
         message.push_str(&summary);
     }
@@ -212,8 +209,10 @@ fn render_command(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
     )])
 }
 
-fn render_file_change(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
-    let changes = item.changes();
+fn render_file_change(event_kind: EventKind, item: &CodexItem) -> Text {
+    let ItemPayload::FileChange { changes } = &item.payload else {
+        return fallback_item(event_kind, item);
+    };
     let mut lines = vec![row(
         event_status(event_kind, item.status),
         command_status_color(item.status),
@@ -245,42 +244,48 @@ fn render_file_change(event_kind: EventKind, item: &CodexItem) -> Text<'static> 
     text(lines)
 }
 
-fn render_mcp(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
+fn render_mcp(event_kind: EventKind, item: &CodexItem) -> Text {
+    let ItemPayload::McpToolCall {
+        server,
+        tool,
+        error_message,
+    } = &item.payload
+    else {
+        return fallback_item(event_kind, item);
+    };
     let mut lines = vec![row(
         event_status(event_kind, item.status),
         command_status_color(item.status),
         "mcp",
         Color::LightBlue,
-        format!(
-            "{}/{}",
-            item.string_at("server").unwrap_or(""),
-            item.string_at("tool").unwrap_or("")
-        ),
+        format!("{server}/{tool}"),
     )];
-    if let Some(error) = item.error_message() {
+    if let Some(error) = error_message {
         lines.push(row("fail", Color::Red, "mcp", Color::LightBlue, error));
     }
     text(lines)
 }
 
-fn render_collab(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
+fn render_collab(event_kind: EventKind, item: &CodexItem) -> Text {
+    let ItemPayload::CollabToolCall {
+        tool,
+        receiver_count,
+    } = &item.payload
+    else {
+        return fallback_item(event_kind, item);
+    };
     single(
         event_status(event_kind, item.status),
         event_status_color(event_kind, item.status),
         "collab",
-        format!(
-            "{} receiver_threads={}",
-            item.string_at("tool").unwrap_or("unknown"),
-            item.receiver_count()
-        ),
+        format!("{tool} receiver_threads={receiver_count}"),
     )
 }
 
-fn render_todos(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
-    let todos = item.todos();
+fn render_todos(event_kind: EventKind, status: ItemStatus, todos: &[TodoItem]) -> Text {
     let mut lines = vec![row(
-        event_status(event_kind, item.status),
-        event_status_color(event_kind, item.status),
+        event_status(event_kind, status),
+        event_status_color(event_kind, status),
         "todo",
         Color::Yellow,
         format!("items={}", todos.len()),
@@ -291,12 +296,27 @@ fn render_todos(event_kind: EventKind, item: &CodexItem) -> Text<'static> {
         } else {
             ("..", Color::DarkGray)
         };
-        lines.push(row(status, color, "todo", Color::Yellow, todo.text));
+        lines.push(row(
+            status,
+            color,
+            "todo",
+            Color::Yellow,
+            todo.text.as_str(),
+        ));
     }
     text(lines)
 }
 
-fn render_block(label: &'static str, color: Color, body: &str) -> Text<'static> {
+fn fallback_item(event_kind: EventKind, item: &CodexItem) -> Text {
+    single(
+        event_status(event_kind, item.status),
+        Color::DarkGray,
+        "item",
+        item.item_type.clone(),
+    )
+}
+
+fn render_block(label: &'static str, color: Color, body: &str) -> Text {
     let mut lines = vec![row("msg", color, label, color, "begin")];
     lines.extend(block_lines(body, color));
     lines.push(row(
@@ -309,7 +329,7 @@ fn render_block(label: &'static str, color: Color, body: &str) -> Text<'static> 
     text(lines)
 }
 
-fn block_lines(body: &str, color: Color) -> Vec<Line<'static>> {
+fn block_lines(body: &str, color: Color) -> Vec<Line> {
     if body.trim().is_empty() {
         return Vec::new();
     }
@@ -317,13 +337,13 @@ fn block_lines(body: &str, color: Color) -> Vec<Line<'static>> {
         .map(|line| {
             Line::from(vec![Span::styled(
                 line.to_string(),
-                style(color, Modifier::empty()),
+                style(color, Emphasis::Plain),
             )])
         })
         .collect()
 }
 
-fn markdown_lines(markdown: &str, color: bool) -> Vec<Line<'static>> {
+fn markdown_lines(markdown: &str, color: bool) -> Vec<Line> {
     if markdown.trim().is_empty() {
         return Vec::new();
     }
@@ -353,8 +373,8 @@ fn line_count(body: &str) -> usize {
     body.lines().count()
 }
 
-fn exit_field(item: &CodexItem) -> String {
-    item.exit_code()
+fn exit_field(exit_code: Option<i64>) -> String {
+    exit_code
         .map(|code| format!(" exit={code}"))
         .unwrap_or_default()
 }
@@ -399,7 +419,7 @@ fn single(
     label_color: Color,
     category: &'static str,
     message: impl Into<String>,
-) -> Text<'static> {
+) -> Text {
     text(vec![row(
         label,
         label_color,
@@ -415,90 +435,25 @@ fn row(
     category: &'static str,
     category_color: Color,
     message: impl Into<String>,
-) -> Line<'static> {
+) -> Line {
     Line::from(vec![
         Span::styled(
             format!("{} ", Local::now().format("%H:%M:%S%.3f")),
-            style(Color::LightCyan, Modifier::empty()),
+            style(Color::LightCyan, Emphasis::Plain),
         ),
-        Span::styled(format!("{label:<4}"), style(label_color, Modifier::BOLD)),
+        Span::styled(format!("{label:<4}"), style(label_color, Emphasis::Bold)),
         Span::raw(" "),
         Span::styled(
             format!("{category:<8}"),
-            style(category_color, Modifier::empty()),
+            style(category_color, Emphasis::Plain),
         ),
         Span::raw(" "),
-        Span::styled(message.into(), style(Color::Gray, Modifier::DIM)),
+        Span::styled(message.into(), style(Color::Gray, Emphasis::Dim)),
     ])
 }
 
-fn text(lines: Vec<Line<'static>>) -> Text<'static> {
+fn text(lines: Vec<Line>) -> Text {
     Text::from(lines)
-}
-
-fn style(color: Color, modifier: Modifier) -> Style {
-    Style::default().fg(color).add_modifier(modifier)
-}
-
-fn text_to_string(text: Text<'static>, color: bool) -> String {
-    let mut out = String::new();
-    for line in text.lines {
-        for span in line.spans {
-            if color {
-                out.push_str(&ansi_start(span.style));
-            }
-            out.push_str(span.content.as_ref());
-            if color {
-                out.push_str("\x1b[0m");
-            }
-        }
-        out.push('\n');
-    }
-    out
-}
-
-fn ansi_start(style: Style) -> String {
-    let mut codes = Vec::new();
-    if style.add_modifier.contains(Modifier::BOLD) {
-        codes.push("1");
-    }
-    if style.add_modifier.contains(Modifier::ITALIC) {
-        codes.push("3");
-    }
-    if style.add_modifier.contains(Modifier::DIM) {
-        codes.push("2");
-    }
-    if let Some(color) = style.fg
-        && let Some(code) = ansi_color(color)
-    {
-        codes.push(code);
-    }
-    if codes.is_empty() {
-        String::new()
-    } else {
-        format!("\x1b[{}m", codes.join(";"))
-    }
-}
-
-fn ansi_color(color: Color) -> Option<&'static str> {
-    match color {
-        Color::Black => Some("30"),
-        Color::Red => Some("31"),
-        Color::Green => Some("32"),
-        Color::Yellow => Some("33"),
-        Color::Blue => Some("34"),
-        Color::Magenta => Some("35"),
-        Color::Cyan => Some("36"),
-        Color::Gray | Color::White => Some("37"),
-        Color::DarkGray => Some("90"),
-        Color::LightRed => Some("91"),
-        Color::LightGreen => Some("92"),
-        Color::LightYellow => Some("93"),
-        Color::LightBlue => Some("94"),
-        Color::LightMagenta => Some("95"),
-        Color::LightCyan => Some("96"),
-        Color::Indexed(_) | Color::Rgb(_, _, _) | Color::Reset => None,
-    }
 }
 
 #[cfg(test)]
