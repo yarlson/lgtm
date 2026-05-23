@@ -2,22 +2,23 @@
 
 <div align="center">
 
-<img src="assets/banner.png" alt="lgtm workflow banner showing PLAN.md and AGENTS.md before implementation, validation, and review" width="100%">
+<img src="assets/banner.png" alt="lgtm workflow banner showing plan, PLAN.md, AGENTS.md, implementation, validation, and review" width="100%">
 
-**Create repo-local planning artifacts, then run Codex through scoped implementation, validation, and review passes.**
+**Turn Codex from a one-off coding prompt into a local plan, execution, validation, and review loop.**
 
 ![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust)
 ![CLI](https://img.shields.io/badge/CLI-Codex-blue?style=flat-square)
 
-[Overview](#overview) • [Execution Model](#execution-model) • [Getting Started](#getting-started) • [Usage](#usage) • [Safety Model](#safety-model) • [Development](#development)
+[Overview](#overview) • [Where It Fits](#where-it-fits) • [Execution Model](#execution-model) • [Getting Started](#getting-started) • [Usage](#usage) • [Safety Model](#safety-model) • [Development](#development)
 
 </div>
 
-`lgtm` is a small Rust CLI for creating repo-local `PLAN.md` and, when missing,
-`AGENTS.md` files with Codex, then running that plan through a repeatable Codex
-execution loop. Run mode
-treats each `## Phase N - ...` or `## Phase N: ...` heading as one bounded unit
-of work and runs that phase through three local Codex passes:
+`lgtm` is a small Rust CLI for teams and solo developers who want Codex to work
+from explicit repo-local instructions instead of a loose chat thread. It can
+create `PLAN.md` and, when missing, `AGENTS.md` with Codex, then run that plan
+through a repeatable execution loop. Run mode treats each `## Phase N - ...` or
+`## Phase N: ...` heading as one bounded unit of work and runs that phase
+through three local Codex passes:
 
 1. implement the selected phase
 2. validate the phase against the plan and local checks
@@ -58,6 +59,25 @@ explicitly requested that run.
 It is intentionally not a general task runner. Its job is to move one
 plan-defined phase at a time through implementation, independent validation,
 and local review while preserving the target repository's scope boundaries.
+
+## Where It Fits
+
+Use `lgtm` when the work is larger than one prompt but still belongs on one
+machine: migrations, cleanup plans, feature slices, test hardening, docs drift,
+or any change where you want Codex to implement only the next planned phase and
+then verify its own work through separate passes.
+
+It is useful when you want:
+
+- a repo-local plan before code changes start
+- persistent instructions in `AGENTS.md`, not hidden in chat history
+- phase-scoped Codex runs that can update later phases as work reveals facts
+- raw JSONL logs for audit or debugging
+- a clear boundary between local automation and branch, PR, or CI workflows
+
+It is not a hosted agent, CI orchestrator, PR bot, or sandbox. It is a local
+wrapper for developers who are comfortable giving Codex broad filesystem and
+command execution authority inside a target repository.
 
 ## Execution Model
 
