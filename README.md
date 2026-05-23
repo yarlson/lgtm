@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<img src="assets/banner.png" alt="lgtm banner" width="100%">
+<img src="assets/banner.png" alt="lgtm workflow banner showing PLAN.md and AGENTS.md before implementation, validation, and review" width="100%">
 
-**Run Codex through local, plan-scoped implementation, validation, and review passes.**
+**Create repo-local planning artifacts, then run Codex through scoped implementation, validation, and review passes.**
 
 ![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust)
 ![CLI](https://img.shields.io/badge/CLI-Codex-blue?style=flat-square)
@@ -13,8 +13,9 @@
 
 </div>
 
-`lgtm` is a small Rust CLI for creating a repo-local `PLAN.md` with Codex and
-then running that plan through a repeatable Codex execution loop. Run mode
+`lgtm` is a small Rust CLI for creating repo-local `PLAN.md` and, when missing,
+`AGENTS.md` files with Codex, then running that plan through a repeatable Codex
+execution loop. Run mode
 treats each `## Phase N - ...` or `## Phase N: ...` heading as one bounded unit
 of work and runs that phase through three local Codex passes:
 
