@@ -29,6 +29,8 @@ use crate::git;
 use crate::plan;
 use crate::prompt;
 use crate::render::Renderer;
+use crate::render::Spinner;
+use crate::render::random_spinner_text;
 use crate::skills;
 
 pub fn run_plan(config: Config) -> Result<(), Error> {
@@ -205,13 +207,19 @@ fn run_planning_turn(
     };
 
     let (process, stdout) = CodexProcess::spawn(invocation)?;
+    let mut spinner =
+        Spinner::new(random_spinner_text()).map_err(|source| Error::io("<terminal>", source))?;
+    spinner.tick();
     let mut output = PlanningTurnOutput {
         thread_id: None,
         last_agent_message: None,
         plan_changed: false,
     };
-    let stream_result = stream_planning_output(&log_path, &mut log, stdout, &mut output);
-    process.finish(&config.codex_bin, stream_result)?;
+    let stream_result =
+        stream_planning_output(&log_path, &mut log, stdout, &mut output, &mut spinner);
+    let finish_result = process.finish(&config.codex_bin, stream_result);
+    spinner.finish();
+    finish_result?;
 
     if require_thread_id && output.thread_id.is_none() {
         return Err(Error::message(
@@ -430,10 +438,15 @@ fn stream_planning_output(
     log: &mut File,
     stdout: ChildStdout,
     output: &mut PlanningTurnOutput,
+    spinner: &mut Spinner,
 ) -> Result<(), Error> {
     stream_codex_jsonl(log_path, log, stdout, |event| {
-        let JsonlStreamEvent::Line(line) = event else {
-            return Ok(());
+        let line = match event {
+            JsonlStreamEvent::Idle => {
+                spinner.tick();
+                return Ok(());
+            }
+            JsonlStreamEvent::Line(line) => line,
         };
         let line_str = String::from_utf8_lossy(line);
         if let Ok(event) = CodexEvent::parse(&line_str) {

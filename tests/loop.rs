@@ -420,7 +420,7 @@ fi
         fs::read_to_string(temp.path().join("plan-counter")).expect("counter"),
         "2\n"
     );
-    let stdout = output.stdout.replace("\r\n", "\n");
+    let stdout = stable_plan_stdout(&output.stdout);
     assert!(stdout.starts_with("Choose A or B?\n"), "stdout:\n{stdout}");
     assert!(
         !stdout.starts_with("Choose A or B?\n\n"),
@@ -529,6 +529,124 @@ fi
         "3\n"
     );
     assert!(!temp.path().join("plan-prompt-4.txt").exists());
+}
+
+#[test]
+fn plan_mode_shows_spinner_while_waiting_for_codex() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+cat >/dev/null
+sleep 1
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-plan"}'
+cat >"$LGTM_TEST_REPO/PLAN.md" <<'PLAN'
+# Plan
+
+## Phase 1 - Done
+
+Goal: Done.
+
+Steps:
+
+- Done.
+
+Validation:
+
+- Done.
+PLAN
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("plan")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .env("LGTM_TEST_REPO", &repo);
+    let output = run_with_pty(command, "");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert!(
+        contains_italic_spinner_frame(&output.stdout, "."),
+        "stdout:\n{}",
+        output.stdout
+    );
+    assert!(
+        contains_italic_spinner_frame(&output.stdout, ".."),
+        "stdout:\n{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("\u{1b}[?25l"),
+        "stdout:\n{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("\u{1b}[?25h"),
+        "stdout:\n{}",
+        output.stdout
+    );
+}
+
+#[test]
+fn plan_mode_restores_terminal_on_ctrl_c_while_spinner_active() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+cat >/dev/null
+sleep 1
+kill -INT "$PPID"
+sleep 1
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("plan")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .env("LGTM_TEST_REPO", &repo);
+    let output = run_with_pty(command, "");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(130));
+    assert!(
+        output.stdout.contains("\u{1b}[?25l"),
+        "stdout:\n{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("\r\u{1b}[2K\u{1b}[?25h"),
+        "stdout:\n{}",
+        output.stdout
+    );
 }
 
 #[test]
@@ -800,6 +918,65 @@ fn make_executable(path: &std::path::Path) {
     let mut perms = fs::metadata(path).expect("metadata").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(path, perms).expect("chmod");
+}
+
+fn stable_plan_stdout(stdout: &str) -> String {
+    let mut stable = stdout.replace("\r\n", "\n");
+    for frame in ["...", "..", "."] {
+        stable = stable.replace(&format!("\r\x1b[2Kworking {frame}"), "");
+        stable = stable.replace(&format!("\r\x1b[2K\x1b[3mworking\x1b[0m {frame}"), "");
+    }
+    while let Some(start) = stable.find("\r\x1b[2K\x1b[3m") {
+        let Some(reset) = stable[start..].find("\x1b[0m ") else {
+            break;
+        };
+        let dots_start = start + reset + "\x1b[0m ".len();
+        let dots_len = stable[dots_start..]
+            .chars()
+            .take_while(|value| *value == '.')
+            .count();
+        if dots_len == 0 {
+            break;
+        }
+        stable.replace_range(start..dots_start + dots_len, "");
+    }
+    while let Some(start) = stable.find("\r\x1b[2K\x1b[3;37m") {
+        let Some(reset) = stable[start..].find("\x1b[0m \x1b[37m") else {
+            break;
+        };
+        let dots_start = start + reset + "\x1b[0m \x1b[37m".len();
+        let dots_len = stable[dots_start..]
+            .chars()
+            .take_while(|value| *value == '.')
+            .count();
+        if dots_len == 0 {
+            break;
+        }
+        let reset_len = if stable[dots_start + dots_len..].starts_with("\x1b[0m") {
+            "\x1b[0m".len()
+        } else {
+            0
+        };
+        stable.replace_range(start..dots_start + dots_len + reset_len, "");
+    }
+    stable = stable.replace("\x1b[?25l", "");
+    stable = stable.replace("\x1b[?25h", "");
+    stable.replace("\r\x1b[2K", "")
+}
+
+fn contains_italic_spinner_frame(stdout: &str, frame: &str) -> bool {
+    let suffix = format!("\x1b[0m \x1b[37m{frame}\x1b[0m");
+    stdout.split("\r\x1b[2K\x1b[3;37m").skip(1).any(|part| {
+        let Some(end) = part.find(&suffix) else {
+            return false;
+        };
+        let label = &part[..end];
+        !label.is_empty()
+            && label != "working"
+            && label
+                .chars()
+                .all(|value| value.is_ascii_lowercase() || value == '-')
+    })
 }
 
 struct PtyOutput {

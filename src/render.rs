@@ -1,6 +1,7 @@
 mod event;
 mod format;
 mod markdown;
+mod spinner;
 
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -21,6 +22,9 @@ use crate::render::format::text;
 use crate::terminal::Color;
 use crate::terminal::Text;
 use crate::terminal::text_to_string;
+
+pub(crate) use spinner::Spinner;
+pub(crate) use spinner::random_text as random_spinner_text;
 
 #[derive(Debug, Clone)]
 pub struct Renderer {

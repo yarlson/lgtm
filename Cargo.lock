@@ -561,6 +561,7 @@ dependencies = [
  "crossterm",
  "dialoguer",
  "serde_json",
+ "signal-hook",
  "supports-color",
  "tempfile",
  "termimad",
