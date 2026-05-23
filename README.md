@@ -4,7 +4,7 @@
 
 <img src="assets/banner.png" alt="lgtm workflow banner showing plan, PLAN.md, AGENTS.md, implementation, validation, and review" width="100%">
 
-**Make Codex create a repo plan, execute one phase, validate it, and review the diff.**
+**Plan the work. Execute one phase. Verify the result.**
 
 ![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust)
 ![CLI](https://img.shields.io/badge/CLI-Codex-blue?style=flat-square)
@@ -13,20 +13,15 @@
 
 </div>
 
-`lgtm` is a Rust CLI for running Codex against explicit repo-local instructions
-instead of a loose chat thread. It can create `PLAN.md` and, when missing,
-`AGENTS.md`, then execute the plan phase by phase.
+Codex is useful, but long repo changes drift: context gets buried, scope grows,
+and validation becomes an afterthought.
 
-Run mode treats each `## Phase N - ...` or `## Phase N: ...` heading as one
-bounded unit of work and runs three Codex passes:
+`lgtm` gives Codex a local operating loop: turn the request into a repo plan,
+execute the next phase, validate the result, and review the diff before moving
+on.
 
-1. implement the selected phase
-2. validate the phase against the plan and local checks
-3. review the result for scope, maintainability, and closeout issues
-
-The harness is local by design. It does not create branches, commit, push, open
-PRs, or manage CI, and every pass tells Codex not to commit or push unless the
-user explicitly requested that run.
+Use it for work that is too large for one prompt and too local for a hosted
+workflow: migrations, cleanup, feature slices, test hardening, and docs drift.
 
 > [!WARNING]
 > `lgtm` runs `codex exec` with
