@@ -5,7 +5,6 @@ use crate::events::FileChange;
 use crate::events::ItemPayload;
 use crate::events::ItemStatus;
 use crate::events::TodoItem;
-use crate::events::Usage;
 use crate::render::format;
 use crate::render::format::blank;
 use crate::render::format::block;
@@ -13,7 +12,6 @@ use crate::render::format::child;
 use crate::render::format::continuation;
 use crate::render::format::file_line;
 use crate::render::format::header;
-use crate::render::format::line_count;
 use crate::render::format::output_lines;
 use crate::render::format::raw_body_line;
 use crate::render::format::separator;
@@ -23,11 +21,9 @@ use crate::terminal::Text;
 
 pub(super) fn render_event(event: &CodexEvent, color: bool) -> Text {
     match &event.payload {
-        EventPayload::ThreadStarted { thread_id } => {
-            block("Ran", Color::Cyan, format!("thread {thread_id}"))
-        }
-        EventPayload::TurnStarted => block("Ran", Color::Cyan, "turn begin"),
-        EventPayload::TurnCompleted { usage } => render_turn_completed(*usage),
+        EventPayload::ThreadStarted { .. }
+        | EventPayload::TurnStarted
+        | EventPayload::TurnCompleted { .. } => text(Vec::new()),
         EventPayload::TurnFailed { message } => block(
             "Failed",
             Color::Red,
@@ -47,20 +43,6 @@ pub(super) fn render_event(event: &CodexEvent, color: bool) -> Text {
         }
         EventPayload::Unknown => block("Event", Color::DarkGray, event.event_type.clone()),
     }
-}
-
-fn render_turn_completed(usage: Usage) -> Text {
-    block(
-        "Verification",
-        Color::Green,
-        format!(
-            "tokens input={} cached={} output={} reasoning={}",
-            usage.input_tokens,
-            usage.cached_input_tokens,
-            usage.output_tokens,
-            usage.reasoning_output_tokens
-        ),
-    )
 }
 
 fn render_item(item: &CodexItem, color: bool) -> Text {
@@ -83,7 +65,7 @@ fn render_item(item: &CodexItem, color: bool) -> Text {
             receiver_count,
         } => render_collab(item.status, tool, *receiver_count),
         ItemPayload::WebSearch { query } => render_web_search(query),
-        ItemPayload::TodoList { items } => render_todos(items),
+        ItemPayload::TodoList { items } => render_todos(item.status, items),
         ItemPayload::Error { message } => block(
             "Failed",
             status_color(item.status),
@@ -115,12 +97,14 @@ fn render_command(
     output: Option<&str>,
     exit_code: Option<i64>,
 ) -> Text {
-    if is_progress_only_command(status, output, exit_code) {
+    if matches!(status, ItemStatus::InProgress) {
         return text(Vec::new());
     }
 
     let mut lines = vec![header("Ran", status_color(status), command)];
-    lines.extend(output_lines(output));
+    if should_show_command_output(status, output, exit_code) {
+        lines.extend(output_lines(output));
+    }
     if let Some(exit_code) = exit_code.filter(|code| *code != 0) {
         lines.push(continuation(format!("exit={exit_code}")));
     }
@@ -128,14 +112,14 @@ fn render_command(
     text(lines)
 }
 
-fn is_progress_only_command(
+fn should_show_command_output(
     status: ItemStatus,
     output: Option<&str>,
     exit_code: Option<i64>,
 ) -> bool {
-    super::is_progress_status(status)
-        && output.is_none_or(|output| output.trim().is_empty())
-        && exit_code.is_none()
+    output.is_some_and(|output| !output.trim().is_empty())
+        || exit_code.is_some_and(|code| code != 0)
+        || !matches!(status, ItemStatus::Completed)
 }
 
 fn render_web_search(query: &str) -> Text {
@@ -147,6 +131,10 @@ fn render_web_search(query: &str) -> Text {
 }
 
 fn render_file_change(status: ItemStatus, changes: &[FileChange]) -> Text {
+    if changes.is_empty() || matches!(status, ItemStatus::InProgress) {
+        return text(Vec::new());
+    }
+
     let title = if changes.len() == 1 {
         changes[0].path.as_str()
     } else {
@@ -173,6 +161,10 @@ fn render_file_change(status: ItemStatus, changes: &[FileChange]) -> Text {
 }
 
 fn render_mcp(status: ItemStatus, server: &str, tool: &str, error_message: Option<&str>) -> Text {
+    if matches!(status, ItemStatus::Completed | ItemStatus::InProgress) && error_message.is_none() {
+        return text(Vec::new());
+    }
+
     let mut lines = vec![header(
         "Ran",
         status_color(status),
@@ -186,6 +178,10 @@ fn render_mcp(status: ItemStatus, server: &str, tool: &str, error_message: Optio
 }
 
 fn render_collab(status: ItemStatus, tool: &str, receiver_count: usize) -> Text {
+    if matches!(status, ItemStatus::Completed | ItemStatus::InProgress) {
+        return text(Vec::new());
+    }
+
     block(
         "Ran",
         status_color(status),
@@ -193,7 +189,11 @@ fn render_collab(status: ItemStatus, tool: &str, receiver_count: usize) -> Text 
     )
 }
 
-fn render_todos(todos: &[TodoItem]) -> Text {
+fn render_todos(status: ItemStatus, todos: &[TodoItem]) -> Text {
+    if matches!(status, ItemStatus::InProgress) {
+        return text(Vec::new());
+    }
+
     let mut lines = vec![header("Updated Plan", Color::LightBlue, "")];
     for todo in todos {
         lines.push(format::checklist_line(todo.completed, todo.text.as_str()));
@@ -202,12 +202,8 @@ fn render_todos(todos: &[TodoItem]) -> Text {
     text(lines)
 }
 
-fn render_reasoning(reasoning: &str) -> Text {
-    block(
-        "Reasoning",
-        Color::DarkGray,
-        format!("… {} lines hidden", line_count(reasoning)),
-    )
+fn render_reasoning(_reasoning: &str) -> Text {
+    text(Vec::new())
 }
 
 fn markdown_lines(markdown: &str, color: bool) -> Vec<crate::terminal::Line> {

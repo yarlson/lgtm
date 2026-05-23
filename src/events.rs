@@ -223,9 +223,9 @@ fn item_payload(kind: ItemKind, item_type: &str, raw: &serde_json::Value) -> Ite
         ItemKind::AgentMessage => required_item_string(raw, item_type, "text")
             .map(|text| ItemPayload::AgentMessage { text })
             .unwrap_or_else(malformed_item),
-        ItemKind::Reasoning => required_item_string(raw, item_type, "text")
-            .map(|text| ItemPayload::Reasoning { text })
-            .unwrap_or_else(malformed_item),
+        ItemKind::Reasoning => ItemPayload::Reasoning {
+            text: string_at(raw, "text").unwrap_or_default(),
+        },
         ItemKind::CommandExecution => required_item_string(raw, item_type, "command")
             .map(|command| ItemPayload::CommandExecution {
                 command,
@@ -452,6 +452,24 @@ mod tests {
             ItemPayload::Malformed {
                 item_type: "command_execution".to_string(),
                 reason: "command_execution missing command".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn accepts_reasoning_without_text() {
+        let event = CodexEvent::parse(
+            r#"{"type":"item.updated","item":{"id":"item_0","type":"reasoning","status":"in_progress"}}"#,
+        )
+        .unwrap();
+
+        let EventPayload::Item { item } = event.payload else {
+            panic!("expected item payload");
+        };
+        assert_eq!(
+            item.payload,
+            ItemPayload::Reasoning {
+                text: String::new()
             }
         );
     }

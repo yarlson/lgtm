@@ -169,10 +169,8 @@ fn run_phase_prompt(
         phase = phase.number
     );
     let log_path = config.log_dir.join(log_name);
-    let log_display = log_path.display().to_string();
 
-    renderer.phase_header(phase.number, &phase.title, action, &log_display);
-    renderer.system(format!("raw_jsonl {}", log_path.display()));
+    renderer.phase_header(phase.number, &phase.title, action);
 
     fs::create_dir_all(&config.log_dir).map_err(|source| Error::io(&config.log_dir, source))?;
     let mut log = File::create(&log_path).map_err(|source| Error::io(&log_path, source))?;

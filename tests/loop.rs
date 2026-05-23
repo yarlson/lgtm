@@ -82,13 +82,15 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("phase=01"));
-    assert!(stdout.contains("pass=review"));
-    assert!(stdout.contains("• Ran thread thread-test"));
-    assert!(stdout.contains("• Ran turn begin"));
+    assert!(stdout.contains("• Phase 01 implementation: Skeleton"));
+    assert!(stdout.contains("• Phase 01 validation: Skeleton"));
+    assert!(stdout.contains("• Phase 01 review: Skeleton"));
+    assert!(!stdout.contains("• Ran thread thread-test"));
+    assert!(!stdout.contains("• Ran turn begin"));
     assert!(stdout.contains("• Codex"));
     assert!(stdout.contains("  done"));
-    assert!(stdout.contains("• Verification tokens input=1 cached=0 output=2 reasoning=0"));
+    assert!(!stdout.contains("• Usage tokens"));
+    assert!(!stdout.contains("raw_jsonl"));
 
     let implement_prompt =
         fs::read_to_string(temp.path().join("prompt-1.txt")).expect("implementation prompt");
@@ -134,6 +136,193 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
             .lines()
             .any(|line| line == ".codex-log/")
     );
+}
+
+#[test]
+fn run_mode_shows_current_pass_while_waiting_for_codex() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+    fs::write(
+        repo.join("PLAN.md"),
+        "# Plan\n\n## Phase 1: Skeleton\n\nGoal: test.\n",
+    )
+    .expect("write plan");
+    fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+dir=$(dirname "$0")
+counter="$dir/counter"
+if [ -f "$counter" ]; then
+  n=$(cat "$counter")
+else
+  n=0
+fi
+n=$((n + 1))
+printf '%s\n' "$n" >"$counter"
+if [ "$n" = 1 ]; then
+  sleep 1
+fi
+cat >/dev/null
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("run")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--end-phase")
+        .arg("1")
+        .arg("--sleep-seconds")
+        .arg("0")
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("NO_COLOR", "1");
+    let output = run_with_pty(command, "");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert!(
+        output.stdout.contains("Phase 1 implementation"),
+        "stdout:\n{}",
+        output.stdout
+    );
+    assert!(output.stdout.contains("..."), "stdout:\n{}", output.stdout);
+}
+
+#[test]
+fn run_mode_restores_terminal_on_ctrl_c_while_spinner_active() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+    fs::write(
+        repo.join("PLAN.md"),
+        "# Plan\n\n## Phase 1: Skeleton\n\nGoal: test.\n",
+    )
+    .expect("write plan");
+    fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+cat >/dev/null
+sleep 1
+kill -INT "$PPID"
+sleep 1
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("run")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--end-phase")
+        .arg("1")
+        .arg("--sleep-seconds")
+        .arg("0")
+        .arg("--codex-bin")
+        .arg(&fake_codex);
+    let output = run_with_pty(command, "");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(130));
+    assert!(
+        output.stdout.contains("\u{1b}[?25l"),
+        "stdout:\n{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("\r\u{1b}[2K\u{1b}[?25h"),
+        "stdout:\n{}",
+        output.stdout
+    );
+}
+
+#[test]
+fn run_mode_shows_safe_live_activity_without_sensitive_command() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+    fs::write(
+        repo.join("PLAN.md"),
+        "# Plan\n\n## Phase 1: Skeleton\n\nGoal: test.\n",
+    )
+    .expect("write plan");
+    fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("write agents");
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+dir=$(dirname "$0")
+counter="$dir/counter"
+if [ -f "$counter" ]; then
+  n=$(cat "$counter")
+else
+  n=0
+fi
+n=$((n + 1))
+printf '%s\n' "$n" >"$counter"
+if [ "$n" = 1 ]; then
+  cat >/dev/null
+  printf '%s\n' '{"type":"item.started","item":{"id":"cmd_0","type":"command_execution","command":"deploy --token SECRET_TOKEN","status":"in_progress"}}'
+  sleep 1
+else
+  cat >/dev/null
+fi
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("run")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--end-phase")
+        .arg("1")
+        .arg("--sleep-seconds")
+        .arg("0")
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("NO_COLOR", "1");
+    let output = run_with_pty(command, "");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert!(output.stdout.contains("running command"));
+    assert!(!output.stdout.contains("SECRET_TOKEN"));
 }
 
 #[test]
@@ -207,8 +396,8 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("phase=02 pass=implement title=\"Changed Two\""));
-    assert!(!stdout.contains("phase=02 pass=implement title=\"Old Two\""));
+    assert!(stdout.contains("• Phase 02 implementation: Changed Two"));
+    assert!(!stdout.contains("• Phase 02 implementation: Old Two"));
 }
 
 #[test]
@@ -423,9 +612,9 @@ fi
     assert!(contains_spinner_frame_with_text(
         &output.stdout,
         "exploring directory",
-        "."
+        ".  "
     ));
-    assert!(contains_random_spinner_frame(&output.stdout, "."));
+    assert!(contains_random_spinner_frame(&output.stdout, ".  "));
     let stdout = stable_plan_stdout(&output.stdout);
     assert!(stdout.starts_with("Choose A or B?\n"), "stdout:\n{stdout}");
     assert!(
@@ -589,12 +778,12 @@ PLAN
         output.stderr
     );
     assert!(
-        contains_spinner_frame_with_text(&output.stdout, "exploring directory", "."),
+        contains_spinner_frame_with_text(&output.stdout, "exploring directory", ".  "),
         "stdout:\n{}",
         output.stdout
     );
     assert!(
-        contains_spinner_frame_with_text(&output.stdout, "exploring directory", ".."),
+        contains_spinner_frame_with_text(&output.stdout, "exploring directory", ".. "),
         "stdout:\n{}",
         output.stdout
     );
@@ -1086,11 +1275,11 @@ fn stable_plan_stdout(stdout: &str) -> String {
         }
         stable.replace_range(start..dots_start + dots_len, "");
     }
-    while let Some(start) = stable.find("\r\x1b[2K\x1b[3;37m") {
-        let Some(reset) = stable[start..].find("\x1b[0m \x1b[37m") else {
+    while let Some(start) = stable.find("\r\x1b[2K\x1b[3;38;5;208m") {
+        let Some(reset) = stable[start..].find("\x1b[0m \x1b[38;5;214m") else {
             break;
         };
-        let dots_start = start + reset + "\x1b[0m \x1b[37m".len();
+        let dots_start = start + reset + "\x1b[0m \x1b[38;5;214m".len();
         let dots_len = stable[dots_start..]
             .chars()
             .take_while(|value| *value == '.')
@@ -1098,12 +1287,10 @@ fn stable_plan_stdout(stdout: &str) -> String {
         if dots_len == 0 {
             break;
         }
-        let reset_len = if stable[dots_start + dots_len..].starts_with("\x1b[0m") {
-            "\x1b[0m".len()
-        } else {
-            0
+        let Some(reset_end) = stable[dots_start..].find("\x1b[0m") else {
+            break;
         };
-        stable.replace_range(start..dots_start + dots_len + reset_len, "");
+        stable.replace_range(start..dots_start + reset_end + "\x1b[0m".len(), "");
     }
     stable = stable.replace("\x1b[?25l", "");
     stable = stable.replace("\x1b[?25h", "");
@@ -1111,24 +1298,27 @@ fn stable_plan_stdout(stdout: &str) -> String {
 }
 
 fn contains_spinner_frame_with_text(stdout: &str, text: &str, frame: &str) -> bool {
-    let expected = format!("\r\x1b[2K\x1b[3;37m{text}\x1b[0m \x1b[37m{frame}\x1b[0m");
+    let expected = format!("\r\x1b[2K\x1b[3;38;5;208m{text}\x1b[0m \x1b[38;5;214m{frame}");
     stdout.contains(&expected)
 }
 
 fn contains_random_spinner_frame(stdout: &str, frame: &str) -> bool {
-    let suffix = format!("\x1b[0m \x1b[37m{frame}\x1b[0m");
-    stdout.split("\r\x1b[2K\x1b[3;37m").skip(1).any(|part| {
-        let Some(end) = part.find(&suffix) else {
-            return false;
-        };
-        let label = &part[..end];
-        !label.is_empty()
-            && label != "working"
-            && label != "exploring directory"
-            && label
-                .chars()
-                .all(|value| value.is_ascii_lowercase() || value == '-')
-    })
+    let suffix = format!("\x1b[0m \x1b[38;5;214m{frame}");
+    stdout
+        .split("\r\x1b[2K\x1b[3;38;5;208m")
+        .skip(1)
+        .any(|part| {
+            let Some(end) = part.find(&suffix) else {
+                return false;
+            };
+            let label = &part[..end];
+            !label.is_empty()
+                && label != "working"
+                && label != "exploring directory"
+                && label
+                    .chars()
+                    .all(|value| value.is_ascii_lowercase() || value == '-')
+        })
 }
 
 struct PtyOutput {

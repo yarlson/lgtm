@@ -123,10 +123,6 @@ pub(super) fn output_lines(output: Option<&str>) -> Vec<Line> {
     lines
 }
 
-pub(super) fn line_count(body: &str) -> usize {
-    body.lines().count()
-}
-
 pub(super) fn text(lines: Vec<Line>) -> Text {
     Text::from(lines)
 }
