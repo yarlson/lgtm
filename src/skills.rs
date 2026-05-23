@@ -35,6 +35,7 @@ skill_registry! {
     PLAN_UPDATE => "lgtm-plan-update", "../skills/lgtm-plan-update/SKILL.md";
     SPEC_UPDATE => "lgtm-spec-update", "../skills/lgtm-spec-update/SKILL.md";
     SECURITY_REVIEW => "lgtm-security-review", "../skills/lgtm-security-review/SKILL.md";
+    PLAN_CREATE => "lgtm-plan-create", "../skills/lgtm-plan-create/SKILL.md";
     TEST_GAP_REVIEW => "lgtm-test-gap-review", "../skills/lgtm-test-gap-review/SKILL.md";
     DOCS_DRIFT_REVIEW => "lgtm-docs-drift-review", "../skills/lgtm-docs-drift-review/SKILL.md";
     ROLLOUT_REVIEW => "lgtm-rollout-review", "../skills/lgtm-rollout-review/SKILL.md";
@@ -61,6 +62,8 @@ pub fn install(root: &Path) -> Result<(), Error> {
 pub(crate) fn preflight(root: &Path) -> Result<(), Error> {
     let skills_dir = root.join(".agents").join("skills");
 
+    reject_unmanaged_lgtm_skills(&skills_dir)?;
+
     for skill in SKILLS {
         let skill_path = skills_dir.join(skill.name).join("SKILL.md");
         if !skill_path.exists() {
@@ -69,6 +72,52 @@ pub(crate) fn preflight(root: &Path) -> Result<(), Error> {
         let existing =
             fs::read_to_string(&skill_path).map_err(|source| Error::io(&skill_path, source))?;
         if !is_managed_skill(skill.name, &existing) {
+            return Err(Error::message(format!(
+                "{} exists but is not managed by lgtm",
+                skill_path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn reject_unmanaged_lgtm_skills(skills_dir: &Path) -> Result<(), Error> {
+    let entries = match fs::read_dir(skills_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(Error::io(skills_dir, error)),
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|source| Error::io(skills_dir, source))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|source| Error::io(entry.path(), source))?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with("lgtm-") {
+            continue;
+        }
+
+        let skill_path = entry.path().join("SKILL.md");
+        let existing = match fs::read_to_string(&skill_path) {
+            Ok(existing) => existing,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::message(format!(
+                    "{} exists but is not managed by lgtm",
+                    skill_path.display()
+                )));
+            }
+            Err(error) => return Err(Error::io(&skill_path, error)),
+        };
+        if !is_managed_skill(name, &existing) {
             return Err(Error::message(format!(
                 "{} exists but is not managed by lgtm",
                 skill_path.display()
@@ -155,7 +204,12 @@ mod tests {
             assert_eq!(body, skill.body, "{}", skill.name);
         }
 
-        for expected in ["lgtm-phase-review", "lgtm-cli-control", "lgtm-ui-control"] {
+        for expected in [
+            "lgtm-phase-review",
+            "lgtm-cli-control",
+            "lgtm-ui-control",
+            "lgtm-plan-create",
+        ] {
             assert!(
                 temp.path()
                     .join(".agents")
@@ -252,6 +306,22 @@ mod tests {
             fs::read_to_string(managed_path).expect("managed skill"),
             "---\nname: lgtm-phase-implement\nmanaged-by: lgtm\n---\nold\n"
         );
+    }
+
+    #[test]
+    fn refuses_unknown_unmanaged_lgtm_skill() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let skill_dir = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("lgtm-team-owned");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(skill_dir.join("SKILL.md"), "team owned").expect("write unmanaged skill");
+
+        let error = preflight(temp.path()).expect_err("unmanaged lgtm-* skill should abort");
+
+        assert!(error.to_string().contains("is not managed by lgtm"));
     }
 
     #[test]

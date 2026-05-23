@@ -558,6 +558,7 @@ version = "0.10.0"
 dependencies = [
  "chrono",
  "clap",
+ "crossterm",
  "dialoguer",
  "serde_json",
  "supports-color",

@@ -1,5 +1,6 @@
 mod cli;
 mod codex;
+mod composer;
 mod error;
 mod events;
 mod git;
@@ -15,6 +16,14 @@ pub use error::Error;
 
 pub fn run() -> Result<(), Error> {
     let args = cli::Args::parse();
-    let config = cli::Config::from_args(args)?;
-    codex::run_plan(config)
+    match args.command {
+        cli::Command::Run(run_args) => {
+            let config = cli::Config::from_args(run_args)?;
+            codex::run_plan(config)
+        }
+        cli::Command::Plan(plan_args) => {
+            let config = cli::PlanConfig::from_args(plan_args)?;
+            codex::run_planning(config)
+        }
+    }
 }

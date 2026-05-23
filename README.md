@@ -13,16 +13,16 @@
 
 </div>
 
-`lgtm` is a small Rust CLI for running a repo-local `PLAN.md` through a
-repeatable Codex execution loop. It treats each `## Phase N - ...` or
-`## Phase N: ...` heading as one bounded unit of work and runs that phase
-through three local Codex passes:
+`lgtm` is a small Rust CLI for creating a repo-local `PLAN.md` with Codex and
+then running that plan through a repeatable Codex execution loop. Run mode
+treats each `## Phase N - ...` or `## Phase N: ...` heading as one bounded unit
+of work and runs that phase through three local Codex passes:
 
 1. implement the selected phase
 2. validate the phase against the plan and local checks
 3. review the result for scope, maintainability, and closeout issues
 
-It is designed for repositories that already use `PLAN.md` as the
+Run mode is designed for repositories that already use `PLAN.md` as the
 implementation order and `AGENTS.md` as the run instructions. The harness is
 local by design: it does not create branches, commit, push, open PRs, or manage
 CI on its own, and every pass tells Codex not to commit or push unless the user
@@ -51,6 +51,8 @@ explicitly requested that run.
 - refuses to overwrite project-owned `lgtm-*` skills
 - prompts before initializing Git in a target root that is not already a Git
   repository
+- provides an interactive `lgtm plan [BRIEF]` loop that writes `PLAN.md` only
+  when the plan is final
 
 It is intentionally not a general task runner. Its job is to move one
 plan-defined phase at a time through implementation, independent validation,
@@ -116,7 +118,7 @@ cargo run -- --help
 
 ### Prepare a Target Repository
 
-The target repository must contain:
+For `lgtm run`, the target repository must contain:
 
 - `PLAN.md`
 - `AGENTS.md`
@@ -130,40 +132,71 @@ Minimal `PLAN.md` example:
 
 ## Phase 1 - Skeleton
 
-Create the initial implementation and verification path.
+Goal: Create the initial implementation and verification path.
+
+Steps:
+
+- Add the smallest working slice.
+
+Validation:
+
+- Run the focused local check for that slice.
 ```
 
 > [!NOTE]
 > If the target root is not a Git repository, `lgtm` asks before running
 > `git init` and `git branch -M main`. Declining the prompt aborts the run.
 
+For `lgtm plan`, `PLAN.md` and `AGENTS.md` are optional. Plan mode still uses
+the same Git and managed-skill preflight, then starts an interactive Codex
+planning session in the target root.
+
 ## Usage
 
 Run a single phase in a sibling repository:
 
 ```bash
-cargo run -- --root ../lnk --start-phase 1 --end-phase 1 --sleep-seconds 0
+cargo run -- run --root ../lnk --start-phase 1 --end-phase 1 --sleep-seconds 0
 ```
 
 Run phases from the current directory:
 
 ```bash
-lgtm --start-phase 1 --end-phase 3
+lgtm run --start-phase 1 --end-phase 3
 ```
 
 Let `lgtm` detect the final phase from `PLAN.md`:
 
 ```bash
-lgtm --root /path/to/repo --start-phase 2
+lgtm run --root /path/to/repo --start-phase 2
 ```
 
 Use raw JSONL output instead of the formatted transcript:
 
 ```bash
-lgtm --stream-mode raw
+lgtm run --stream-mode raw
 ```
 
-### Options
+Inspect the planning command surface:
+
+```bash
+lgtm plan --help
+```
+
+Create a plan interactively from a brief:
+
+```bash
+lgtm plan "split the migration into small reviewable phases"
+```
+
+Plan mode requires a real TTY for interactive stdin and stdout because it asks
+one question at a time and reads answers with a small inline composer. Submit
+`/finish` to ask Codex to write the best final `PLAN.md` from the current
+session context, or submit `/quit` to exit without another Codex turn.
+`PLAN.md` is a final-only sentinel in v1: Codex must not create or modify it as
+a draft while questions are still in progress.
+
+### Run Options
 
 | Option            | Environment variable | Default                 | Description                                |
 | ----------------- | -------------------- | ----------------------- | ------------------------------------------ |
@@ -178,17 +211,34 @@ lgtm --stream-mode raw
 | `--log-dir`       | `LOG_DIR`            | `.codex-log`            | Raw JSONL log directory                    |
 | `--run-stamp`     | `RUN_STAMP`          | current timestamp       | Prefix for log filenames                   |
 
+### Plan Options
+
+| Argument / option | Environment variable | Default           | Description                      |
+| ----------------- | -------------------- | ----------------- | -------------------------------- |
+| `[BRIEF]`         |                      |                   | Optional planning brief          |
+| `--root`          | `ROOT_DIR`           | current directory | Target repository root           |
+| `--plan-path`     | `PLAN_PATH`          | `PLAN.md`         | Plan file path under the root    |
+| `--codex-bin`     | `CODEX_BIN`          | `codex`           | Codex executable                 |
+| `--log-dir`       | `LOG_DIR`            | `.codex-log`      | Raw JSONL log directory          |
+| `--run-stamp`     | `RUN_STAMP`          | current timestamp | Prefix for log filenames         |
+
 ## Safety Model
 
 `lgtm` is a strong local automation harness. It improves repeatability and
-scope control, but it does not sandbox Codex. The process is intentionally
-explicit:
+scope control, but it does not sandbox Codex. Both `lgtm run` and `lgtm plan`
+run Codex with bypassed approvals and sandboxing inside the target root. The
+process is intentionally explicit:
 
-- every pass runs `codex exec -C <root> --dangerously-bypass-approvals-and-sandbox --json -`
-- Codex receives the phase prompt on stdin
-- stdout is streamed and copied verbatim into a JSONL log
+- run-mode passes and first plan turns run
+  `codex exec -C <root> --dangerously-bypass-approvals-and-sandbox --json -`
+- resumed plan turns run
+  `codex exec resume <thread_id> --dangerously-bypass-approvals-and-sandbox --json -`
+  with the child process current directory set to the target root
+- Codex receives the phase or planning prompt on stdin
+- Codex stdout is copied verbatim into a JSONL log
 - stderr is inherited from the Codex process
-- formatted output is only a rendering layer over the raw JSONL stream
+- run mode streams raw JSONL or renders it as a formatted transcript
+- plan mode prints only the final agent message from each turn
 
 Logs are written as:
 
@@ -196,6 +246,8 @@ Logs are written as:
 .codex-log/<run-stamp>-phase-<NN>-implement.jsonl
 .codex-log/<run-stamp>-phase-<NN>-validate.jsonl
 .codex-log/<run-stamp>-phase-<NN>-review.jsonl
+.codex-log/<run-stamp>-plan-001.jsonl
+.codex-log/<run-stamp>-plan-002.jsonl
 ```
 
 Managed skills are embedded into the binary at compile time from

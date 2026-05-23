@@ -1,5 +1,3 @@
-use termimad::MadSkin;
-
 use crate::events::CodexEvent;
 use crate::events::CodexItem;
 use crate::events::EventPayload;
@@ -213,18 +211,12 @@ fn render_reasoning(reasoning: &str) -> Text {
 }
 
 fn markdown_lines(markdown: &str, color: bool) -> Vec<crate::terminal::Line> {
-    if markdown.trim().is_empty() {
+    let rendered = super::markdown::markdown_to_string(markdown, color);
+    if rendered.is_empty() {
         return Vec::new();
     }
 
-    let skin = if color {
-        MadSkin::default_dark()
-    } else {
-        MadSkin::no_style()
-    };
-
-    skin.term_text(markdown)
-        .to_string()
+    rendered
         .lines()
         .map(|line| {
             if line.is_empty() {

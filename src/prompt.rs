@@ -35,6 +35,57 @@ pub fn phase_prompt(
     )
 }
 
+pub fn plan_initial_prompt(plan_path: &Path, brief: Option<&str>) -> String {
+    format!(
+        "\
+Use ${plan_create} for this planning session.
+
+Target PLAN.md path: {plan}
+
+Read AGENTS.md only if it exists in the target repository. Do not require AGENTS.md to exist.
+
+Planning rules:
+- Ask exactly one sharp question per turn.
+- Prefer forced choices over open-ended questions.
+- If the user answer is vague, reject it and ask one narrower follow-up.
+- Keep planning state in the Codex session, not in draft files.
+- PLAN.md is a final-only sentinel: do not create or modify it as a draft.
+- Write PLAN.md only when ready to finish.
+
+Final PLAN.md contract:
+- # Plan
+- ## Phase N - Name
+- Goal:
+- Steps:
+- Validation:
+{brief_block}",
+        plan_create = skills::PLAN_CREATE,
+        plan = plan_path.display(),
+        brief_block = plan_brief_block(brief),
+    )
+}
+
+pub fn plan_resume_prompt(answer: &str) -> String {
+    if answer == "/finish" {
+        "\
+The user requested /finish.
+Write the final PLAN.md now at the requested path.
+Produce the best plan possible from the current session context, mark unresolved risks explicitly, and do not invent certainty."
+            .to_string()
+    } else {
+        answer.to_string()
+    }
+}
+
+fn plan_brief_block(brief: Option<&str>) -> String {
+    match brief {
+        Some(brief) if !brief.trim().is_empty() => {
+            format!("\n\nUser brief:\n{brief}", brief = brief.trim())
+        }
+        _ => String::new(),
+    }
+}
+
 fn context_docs_block(plan_path: &Path, agents_path: &Path) -> String {
     format!(
         "\
@@ -211,6 +262,56 @@ mod tests {
 
         assert!(prompt.contains("## Phase 12: Polish"));
         assert!(!prompt.contains("## Phase 12 - Polish"));
+    }
+
+    #[test]
+    fn initial_plan_prompt_without_brief_sets_contract() {
+        let prompt = plan_initial_prompt(Path::new("docs/PLAN.md"), None);
+
+        assert!(prompt.contains("$lgtm-plan-create"));
+        assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
+        assert!(prompt.contains("Read AGENTS.md only if it exists"));
+        assert!(prompt.contains("Do not require AGENTS.md to exist"));
+        assert!(prompt.contains("PLAN.md is a final-only sentinel"));
+        assert!(prompt.contains("do not create or modify it as a draft"));
+        assert!(prompt.contains("# Plan"));
+        assert!(prompt.contains("## Phase N - Name"));
+        assert!(prompt.contains("Goal:"));
+        assert!(prompt.contains("Steps:"));
+        assert!(prompt.contains("Validation:"));
+        assert!(!prompt.contains("User brief:"));
+    }
+
+    #[test]
+    fn initial_plan_prompt_includes_optional_brief() {
+        let prompt = plan_initial_prompt(Path::new("PLAN.md"), Some("  ship small phases  "));
+
+        assert!(prompt.contains("User brief:\nship small phases"));
+    }
+
+    #[test]
+    fn resume_plan_prompt_passes_user_answer_unchanged() {
+        assert_eq!(
+            plan_resume_prompt("Pick option B, but split validation."),
+            "Pick option B, but split validation."
+        );
+    }
+
+    #[test]
+    fn resume_plan_prompt_only_special_cases_exact_finish() {
+        assert_eq!(plan_resume_prompt(" /finish "), " /finish ");
+        assert_eq!(plan_resume_prompt("/finish now"), "/finish now");
+    }
+
+    #[test]
+    fn finish_resume_prompt_requests_final_plan_now() {
+        let prompt = plan_resume_prompt("/finish");
+
+        assert!(prompt.contains("Write the final PLAN.md now"));
+        assert!(prompt.contains("best plan possible"));
+        assert!(prompt.contains("unresolved risks"));
+        assert!(prompt.contains("do not invent certainty"));
+        assert!(!prompt.contains("ask exactly one remaining sharp question"));
     }
 
     fn phase(number: u32, title: &str, separator: char) -> Phase {

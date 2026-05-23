@@ -1,5 +1,6 @@
 mod event;
 mod format;
+mod markdown;
 
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -39,10 +40,8 @@ enum ActiveItem {
 
 impl Renderer {
     pub fn new() -> Self {
-        let color = supports_color::on_cached(supports_color::Stream::Stdout).is_some()
-            && std::env::var_os("NO_COLOR").is_none();
         Self {
-            color,
+            color: stdout_color_enabled(),
             interactive: std::io::stdout().is_terminal(),
             active_items: HashMap::new(),
             active_order: Vec::new(),
@@ -227,6 +226,15 @@ impl Renderer {
             self.active_line_drawn = false;
         }
     }
+}
+
+pub(crate) fn plan_message_to_string(message: &str) -> String {
+    markdown::markdown_to_string(message, stdout_color_enabled())
+}
+
+fn stdout_color_enabled() -> bool {
+    supports_color::on_cached(supports_color::Stream::Stdout).is_some()
+        && std::env::var_os("NO_COLOR").is_none()
 }
 
 fn is_terminal_event(kind: EventKind, status: ItemStatus) -> bool {
