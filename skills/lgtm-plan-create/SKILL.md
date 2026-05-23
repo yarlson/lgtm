@@ -1,12 +1,13 @@
 ---
 name: lgtm-plan-create
-description: "lgtm planning skill. Use when lgtm starts an interactive Codex planning session to create a final PLAN.md from a user brief and answers."
+description: "lgtm planning skill. Use when lgtm starts an interactive Codex planning session to create a final PLAN.md and, when missing, AGENTS.md from a user brief and answers."
 managed-by: lgtm
 ---
 
 # lgtm Plan Create
 
-You are creating a repo-local `PLAN.md` for lgtm.
+You are creating a repo-local `PLAN.md` for lgtm. If `AGENTS.md` is missing,
+you are also creating it.
 
 The goal is a sharp implementation plan, not a brainstorming transcript.
 
@@ -19,7 +20,10 @@ The goal is a sharp implementation plan, not a brainstorming transcript.
 5. Prefer forced choices over open-ended questions.
 6. If the answer is vague, reject the vague answer and ask one narrower follow-up.
 7. Keep planning state in the Codex session, not in draft files.
-8. Write `PLAN.md` only when the plan is ready to finish.
+8. Preserve an existing `AGENTS.md`.
+9. If `AGENTS.md` is missing, detect the project stack from repo files and
+   web-search current-year best practices for that stack before writing it.
+10. Write final artifacts only when the plan is ready to finish.
 
 ## PLAN.md Contract
 
@@ -53,4 +57,11 @@ Every phase must include `Goal:`, `Steps:`, and `Validation:`.
 
 ## Completion Criteria
 
-The planning pass is complete only when `PLAN.md` exists at the requested path and contains the final plan.
+The planning pass is complete only when:
+
+- `PLAN.md` exists at the requested path and contains the final plan.
+- `AGENTS.md` exists if it was missing when planning started.
+
+Generated `AGENTS.md` must be practical, repo-local, and focused on engineering
+workflow, coding rules, validation, and safety constraints for the detected
+stack.

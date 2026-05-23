@@ -133,6 +133,7 @@ impl Config {
 pub struct PlanConfig {
     pub root: PathBuf,
     pub plan_path: PathBuf,
+    pub agents_path: PathBuf,
     pub brief: Option<String>,
     pub codex_bin: String,
     pub log_dir: PathBuf,
@@ -146,6 +147,7 @@ impl PlanConfig {
         Ok(Self {
             root: common.root,
             plan_path: args.plan_path,
+            agents_path: "AGENTS.md".into(),
             brief: args.brief,
             codex_bin: args.codex_bin,
             log_dir: common.log_dir,
@@ -155,6 +157,10 @@ impl PlanConfig {
 
     pub fn plan_abs(&self) -> PathBuf {
         self.root.join(&self.plan_path)
+    }
+
+    pub fn agents_abs(&self) -> PathBuf {
+        self.root.join(&self.agents_path)
     }
 }
 
@@ -387,7 +393,9 @@ mod tests {
 
         assert_eq!(config.root, temp.path());
         assert_eq!(config.plan_path, PathBuf::from("PLAN.md"));
+        assert_eq!(config.agents_path, PathBuf::from("AGENTS.md"));
         assert_eq!(config.plan_abs(), temp.path().join("PLAN.md"));
+        assert_eq!(config.agents_abs(), temp.path().join("AGENTS.md"));
         assert_eq!(config.log_dir, temp.path().join("logs"));
         assert_eq!(config.brief.as_deref(), Some("tight plan"));
         assert_eq!(config.codex_bin, "codex");

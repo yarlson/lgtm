@@ -51,8 +51,8 @@ explicitly requested that run.
 - refuses to overwrite project-owned `lgtm-*` skills
 - prompts before initializing Git in a target root that is not already a Git
   repository
-- provides an interactive `lgtm plan [BRIEF]` loop that writes `PLAN.md` only
-  when the plan is final
+- provides an interactive `lgtm plan [BRIEF]` loop that writes final planning
+  artifacts only when they are complete
 
 It is intentionally not a general task runner. Its job is to move one
 plan-defined phase at a time through implementation, independent validation,
@@ -147,9 +147,12 @@ Validation:
 > If the target root is not a Git repository, `lgtm` asks before running
 > `git init` and `git branch -M main`. Declining the prompt aborts the run.
 
-For `lgtm plan`, `PLAN.md` and `AGENTS.md` are optional. Plan mode still uses
-the same Git and managed-skill preflight, then starts an interactive Codex
-planning session in the target root.
+For `lgtm plan`, `PLAN.md` and `AGENTS.md` are optional up front. Plan mode
+still uses the same Git and managed-skill preflight, then starts an interactive
+Codex planning session in the target root. When `AGENTS.md` is missing, the
+planning prompt tells Codex to detect the project stack, web-search
+current-year best practices for that stack, and create a repo-local
+`AGENTS.md` with the final `PLAN.md`.
 
 ## Usage
 
@@ -194,7 +197,9 @@ one question at a time and reads answers with a small inline composer. Submit
 `/finish` to ask Codex to write the best final `PLAN.md` from the current
 session context, or submit `/quit` to exit without another Codex turn.
 `PLAN.md` is a final-only sentinel in v1: Codex must not create or modify it as
-a draft while questions are still in progress.
+a draft while questions are still in progress. If `AGENTS.md` was missing when
+planning started, plan mode keeps going until Codex has created both final
+artifacts.
 
 ### Run Options
 
@@ -213,14 +218,14 @@ a draft while questions are still in progress.
 
 ### Plan Options
 
-| Argument / option | Environment variable | Default           | Description                      |
-| ----------------- | -------------------- | ----------------- | -------------------------------- |
-| `[BRIEF]`         |                      |                   | Optional planning brief          |
-| `--root`          | `ROOT_DIR`           | current directory | Target repository root           |
-| `--plan-path`     | `PLAN_PATH`          | `PLAN.md`         | Plan file path under the root    |
-| `--codex-bin`     | `CODEX_BIN`          | `codex`           | Codex executable                 |
-| `--log-dir`       | `LOG_DIR`            | `.codex-log`      | Raw JSONL log directory          |
-| `--run-stamp`     | `RUN_STAMP`          | current timestamp | Prefix for log filenames         |
+| Argument / option | Environment variable | Default           | Description                   |
+| ----------------- | -------------------- | ----------------- | ----------------------------- |
+| `[BRIEF]`         |                      |                   | Optional planning brief       |
+| `--root`          | `ROOT_DIR`           | current directory | Target repository root        |
+| `--plan-path`     | `PLAN_PATH`          | `PLAN.md`         | Plan file path under the root |
+| `--codex-bin`     | `CODEX_BIN`          | `codex`           | Codex executable              |
+| `--log-dir`       | `LOG_DIR`            | `.codex-log`      | Raw JSONL log directory       |
+| `--run-stamp`     | `RUN_STAMP`          | current timestamp | Prefix for log filenames      |
 
 ## Safety Model
 

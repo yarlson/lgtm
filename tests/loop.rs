@@ -433,6 +433,11 @@ Validation:
 
 - Done.
 PLAN
+cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 "#,
     )
     .expect("write fake codex");
@@ -472,12 +477,14 @@ PLAN
     let prompt = fs::read_to_string(temp.path().join("plan-prompt.txt")).expect("prompt");
     assert!(prompt.contains("$lgtm-plan-create"));
     assert!(prompt.contains("User brief:\nship smaller phases"));
+    assert!(prompt.contains("Target AGENTS.md path: AGENTS.md"));
+    assert!(prompt.contains("web-search current-year best practices"));
 
     let log = fs::read_to_string(repo.join(".codex-log/test-plan-001.jsonl")).expect("log");
     assert!(log.contains("thread-plan"));
     assert!(log.contains("first question"));
     assert!(log.contains("second question"));
-    assert!(!repo.join("AGENTS.md").exists());
+    assert!(repo.join("AGENTS.md").is_file());
     assert!(repo.join("PLAN.md").is_file());
 }
 
@@ -580,6 +587,11 @@ Validation:
 
 - Done.
 PLAN
+  cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 fi
 "#,
     )
@@ -623,6 +635,7 @@ fi
     );
     assert!(!stdout.contains("**A**"));
     assert!(repo.join("PLAN.md").is_file());
+    assert!(repo.join("AGENTS.md").is_file());
     assert!(repo.join(".codex-log/test-plan-001.jsonl").is_file());
     assert!(repo.join(".codex-log/test-plan-002.jsonl").is_file());
     assert_eq!(
@@ -669,6 +682,11 @@ Validation:
 
 - Done.
 PLAN
+  cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 else
   printf '%s\n' '{"type":"thread.started","thread_id":"thread-plan"}'
   printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Answer?"}}'
@@ -756,6 +774,11 @@ Validation:
 
 - Done.
 PLAN
+cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 "#,
     )
     .expect("write fake codex");
@@ -885,6 +908,11 @@ Validation:
 
 - Done.
 PLAN
+  cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 fi
 "#,
     )
@@ -954,6 +982,11 @@ Validation:
 
 - Done.
 PLAN
+  cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 fi
 "#,
     )
@@ -1025,6 +1058,11 @@ Validation:
 
 - Done.
 PLAN
+  cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 fi
 "#,
     )
@@ -1079,6 +1117,11 @@ cat >/dev/null
 printf '%s\n' '{"type":"thread.started","thread_id":"thread-plan"}'
 printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Plan updated."}}'
 printf '%s\n' '# Plan\n\n## Phase 1 - New\n' >"$LGTM_TEST_REPO/PLAN.md"
+cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 "#,
     )
     .expect("write fake codex");
@@ -1204,6 +1247,11 @@ Validation:
 
 - Done.
 PLAN
+  cat >"$LGTM_TEST_REPO/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
 fi
 "#,
     )

@@ -35,14 +35,15 @@ pub fn phase_prompt(
     )
 }
 
-pub fn plan_initial_prompt(plan_path: &Path, brief: Option<&str>) -> String {
+pub fn plan_initial_prompt(plan_path: &Path, agents_path: &Path, brief: Option<&str>) -> String {
     format!(
         "\
 Use ${plan_create} for this planning session.
 
 Target PLAN.md path: {plan}
+Target AGENTS.md path: {agents}
 
-Read AGENTS.md only if it exists in the target repository. Do not require AGENTS.md to exist.
+Read {agents} only if it exists in the target repository. Do not require {agents} to exist.
 
 Planning rules:
 - Ask exactly one sharp question per turn.
@@ -52,6 +53,9 @@ Planning rules:
 - Keep planning state in the Codex session, not in draft files.
 - PLAN.md is a final-only sentinel: do not create or modify it as a draft.
 - Write PLAN.md only when ready to finish.
+- Preserve an existing {agents}; if {agents} is missing, create it when writing the final PLAN.md.
+- Before creating {agents}, detect the project stack from repo files and web-search current-year best practices for that stack.
+- Keep generated {agents} practical, repo-local, and focused on engineering workflow, coding rules, validation, and safety constraints.
 
 Final PLAN.md contract:
 - # Plan
@@ -62,6 +66,7 @@ Final PLAN.md contract:
 {brief_block}",
         plan_create = skills::PLAN_CREATE,
         plan = plan_path.display(),
+        agents = agents_path.display(),
         brief_block = plan_brief_block(brief),
     )
 }
@@ -70,7 +75,7 @@ pub fn plan_resume_prompt(answer: &str) -> String {
     if answer == "/finish" {
         "\
 The user requested /finish.
-Write the final PLAN.md now at the requested path.
+Write the final PLAN.md now at the requested path. If AGENTS.md was missing at the start of planning, create it now too.
 Produce the best plan possible from the current session context, mark unresolved risks explicitly, and do not invent certainty."
             .to_string()
     } else {
@@ -267,15 +272,21 @@ mod tests {
 
     #[test]
     fn initial_plan_prompt_without_brief_sets_contract() {
-        let prompt = plan_initial_prompt(Path::new("docs/PLAN.md"), None);
+        let prompt = plan_initial_prompt(Path::new("docs/PLAN.md"), Path::new("AGENTS.md"), None);
 
         assert!(prompt.contains("$lgtm-plan-create"));
         assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
+        assert!(prompt.contains("Target AGENTS.md path: AGENTS.md"));
         assert!(prompt.contains("Read AGENTS.md only if it exists"));
         assert!(prompt.contains("Do not require AGENTS.md to exist"));
         assert!(prompt.contains("do not call request_user_input"));
         assert!(prompt.contains("PLAN.md is a final-only sentinel"));
         assert!(prompt.contains("do not create or modify it as a draft"));
+        assert!(prompt.contains("Preserve an existing AGENTS.md"));
+        assert!(prompt.contains("create it when writing the final PLAN.md"));
+        assert!(prompt.contains("detect the project stack from repo files"));
+        assert!(prompt.contains("web-search current-year best practices"));
+        assert!(prompt.contains("focused on engineering workflow"));
         assert!(prompt.contains("# Plan"));
         assert!(prompt.contains("## Phase N - Name"));
         assert!(prompt.contains("Goal:"));
@@ -286,7 +297,11 @@ mod tests {
 
     #[test]
     fn initial_plan_prompt_includes_optional_brief() {
-        let prompt = plan_initial_prompt(Path::new("PLAN.md"), Some("  ship small phases  "));
+        let prompt = plan_initial_prompt(
+            Path::new("PLAN.md"),
+            Path::new("AGENTS.md"),
+            Some("  ship small phases  "),
+        );
 
         assert!(prompt.contains("User brief:\nship small phases"));
     }
@@ -310,6 +325,7 @@ mod tests {
         let prompt = plan_resume_prompt("/finish");
 
         assert!(prompt.contains("Write the final PLAN.md now"));
+        assert!(prompt.contains("If AGENTS.md was missing"));
         assert!(prompt.contains("best plan possible"));
         assert!(prompt.contains("unresolved risks"));
         assert!(prompt.contains("do not invent certainty"));

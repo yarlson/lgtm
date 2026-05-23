@@ -94,14 +94,18 @@ pub fn run_planning(config: PlanConfig) -> Result<(), Error> {
     git::ensure_initialized(&config.root)?;
     skills::install(&config.root)?;
 
-    let plan_before = PlanSnapshot::capture(&config.plan_abs())?;
-    let first_prompt = prompt::plan_initial_prompt(&config.plan_path, config.brief.as_deref());
+    let artifacts_before = PlanningArtifactsSnapshot::capture(&config)?;
+    let first_prompt = prompt::plan_initial_prompt(
+        &config.plan_path,
+        &config.agents_path,
+        config.brief.as_deref(),
+    );
     let mut turn = run_planning_turn(
         &config,
         PlanTurn::First,
         first_prompt,
         1,
-        &plan_before,
+        &artifacts_before,
         INITIAL_PLAN_SPINNER_TEXT,
     )?;
     let thread_id = turn
@@ -115,7 +119,7 @@ pub fn run_planning(config: PlanConfig) -> Result<(), Error> {
             print_planning_message(&message);
         }
 
-        if turn.plan_changed {
+        if turn.artifacts_complete {
             return Ok(());
         }
 
@@ -133,7 +137,7 @@ pub fn run_planning(config: PlanConfig) -> Result<(), Error> {
             },
             resume_prompt,
             turn_number,
-            &plan_before,
+            &artifacts_before,
             random_spinner_text(),
         )?;
     }
@@ -185,7 +189,7 @@ fn run_phase_prompt(
 struct PlanningTurnOutput {
     thread_id: Option<String>,
     last_agent_message: Option<String>,
-    plan_changed: bool,
+    artifacts_complete: bool,
 }
 
 enum PlanTurn<'a> {
@@ -198,7 +202,7 @@ fn run_planning_turn(
     turn: PlanTurn<'_>,
     prompt: String,
     turn_number: u32,
-    plan_before: &PlanSnapshot,
+    artifacts_before: &PlanningArtifactsSnapshot,
     spinner_text: &'static str,
 ) -> Result<PlanningTurnOutput, Error> {
     let log_name = format!("{}-plan-{turn_number:03}.jsonl", config.run_stamp);
@@ -222,7 +226,7 @@ fn run_planning_turn(
     let mut output = PlanningTurnOutput {
         thread_id: None,
         last_agent_message: None,
-        plan_changed: false,
+        artifacts_complete: false,
     };
     let stream_result =
         stream_planning_output(&log_path, &mut log, stdout, &mut output, &mut spinner);
@@ -236,11 +240,11 @@ fn run_planning_turn(
         ));
     }
 
-    let plan_after = PlanSnapshot::capture(&config.plan_abs())?;
-    output.plan_changed = &plan_after != plan_before;
-    if output.last_agent_message.is_none() && !output.plan_changed {
+    let artifacts_after = PlanningArtifactsSnapshot::capture(config)?;
+    output.artifacts_complete = artifacts_before.is_complete_with(&artifacts_after);
+    if output.last_agent_message.is_none() && !output.artifacts_complete {
         return Err(Error::message(
-            "codex plan turn completed without an agent message and did not change PLAN.md",
+            "codex plan turn completed without an agent message and did not complete planning artifacts",
         ));
     }
 
@@ -366,7 +370,7 @@ impl<'a> CodexInvocation<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PlanSnapshot {
+enum FileSnapshot {
     Missing,
     Present {
         len: u64,
@@ -375,7 +379,7 @@ enum PlanSnapshot {
     },
 }
 
-impl PlanSnapshot {
+impl FileSnapshot {
     fn capture(path: &Path) -> Result<Self, Error> {
         let metadata = match fs::metadata(path) {
             Ok(metadata) => metadata,
@@ -390,6 +394,31 @@ impl PlanSnapshot {
             modified: metadata.modified().ok(),
             content,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlanningArtifactsSnapshot {
+    plan: FileSnapshot,
+    agents: FileSnapshot,
+}
+
+impl PlanningArtifactsSnapshot {
+    fn capture(config: &PlanConfig) -> Result<Self, Error> {
+        Ok(Self {
+            plan: FileSnapshot::capture(&config.plan_abs())?,
+            agents: FileSnapshot::capture(&config.agents_abs())?,
+        })
+    }
+
+    fn is_complete_with(&self, after: &Self) -> bool {
+        let plan_changed = after.plan != self.plan;
+        let agents_ready = match self.agents {
+            FileSnapshot::Missing => !matches!(after.agents, FileSnapshot::Missing),
+            FileSnapshot::Present { .. } => true,
+        };
+
+        plan_changed && agents_ready
     }
 }
 
@@ -592,7 +621,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"agent_mess
 "#,
         );
         let config = plan_config(&root, fake_codex);
-        let snapshot = PlanSnapshot::capture(&config.plan_abs()).expect("snapshot");
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
 
         let output = run_planning_turn(
             &config,
@@ -609,7 +638,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"agent_mess
             output.last_agent_message.as_deref(),
             Some("second question")
         );
-        assert!(!output.plan_changed);
+        assert!(!output.artifacts_complete);
         assert!(
             fs::read_to_string(temp.path().join("args.txt"))
                 .expect("args")
@@ -641,7 +670,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_mess
 "#,
         );
         let config = plan_config(&root, fake_codex);
-        let snapshot = PlanSnapshot::capture(&config.plan_abs()).expect("snapshot");
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
 
         let output = run_planning_turn(
             &config,
@@ -656,7 +685,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_mess
         .expect("resume turn");
 
         assert_eq!(output.last_agent_message.as_deref(), Some("resumed answer"));
-        assert!(!output.plan_changed);
+        assert!(!output.artifacts_complete);
         let args = fs::read_to_string(temp.path().join("args.txt")).expect("args");
         assert!(args.contains("exec resume thread-test"));
         assert!(!args.contains("--last"));
@@ -686,7 +715,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_mess
 "#,
         );
         let config = plan_config(&root, fake_codex);
-        let snapshot = PlanSnapshot::capture(&config.plan_abs()).expect("snapshot");
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
 
         let error = run_planning_turn(
             &config,
@@ -719,7 +748,7 @@ printf '%s\n' '{"type":"thread.started","thread_id":"thread-test"}'
 "#,
         );
         let config = plan_config(&root, fake_codex);
-        let snapshot = PlanSnapshot::capture(&config.plan_abs()).expect("snapshot");
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
 
         let error = run_planning_turn(
             &config,
@@ -731,15 +760,13 @@ printf '%s\n' '{"type":"thread.started","thread_id":"thread-test"}'
         )
         .expect_err("missing message should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("completed without an agent message and did not change PLAN.md")
-        );
+        assert!(error.to_string().contains(
+            "completed without an agent message and did not complete planning artifacts"
+        ));
     }
 
     #[test]
-    fn planning_turn_allows_missing_message_when_plan_changes() {
+    fn planning_turn_rejects_completion_without_initially_missing_agents_file() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("repo");
         fs::create_dir(&root).expect("repo");
@@ -767,7 +794,60 @@ PLAN
 "#,
         );
         let config = plan_config(&root, fake_codex);
-        let snapshot = PlanSnapshot::capture(&config.plan_abs()).expect("snapshot");
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
+
+        let error = run_planning_turn(
+            &config,
+            PlanTurn::First,
+            "planning prompt".to_string(),
+            1,
+            &snapshot,
+            "test spinner",
+        )
+        .expect_err("missing agents should not complete planning");
+
+        assert!(error.to_string().contains(
+            "completed without an agent message and did not complete planning artifacts"
+        ));
+        assert!(root.join("PLAN.md").is_file());
+        assert!(!root.join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn planning_turn_allows_missing_message_when_plan_and_missing_agents_change() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).expect("repo");
+        let fake_codex = executable(
+            temp.path(),
+            r#"#!/usr/bin/env sh
+set -eu
+cat >/dev/null
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-test"}'
+cat >"$3/PLAN.md" <<'PLAN'
+# Plan
+
+## Phase 1 - Done
+
+Goal: Done.
+
+Steps:
+
+- Done.
+
+Validation:
+
+- Done.
+PLAN
+cat >"$3/AGENTS.md" <<'AGENTS'
+# AGENTS.md
+
+Use the repo-local validation commands.
+AGENTS
+"#,
+        );
+        let config = plan_config(&root, fake_codex);
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
 
         let output = run_planning_turn(
             &config,
@@ -777,18 +857,69 @@ PLAN
             &snapshot,
             "test spinner",
         )
-        .expect("plan completion without message should be accepted");
+        .expect("artifact completion without message should be accepted");
 
         assert_eq!(output.thread_id.as_deref(), Some("thread-test"));
         assert_eq!(output.last_agent_message, None);
-        assert!(output.plan_changed);
+        assert!(output.artifacts_complete);
         assert!(root.join("PLAN.md").is_file());
+        assert!(root.join("AGENTS.md").is_file());
+    }
+
+    #[test]
+    fn planning_turn_does_not_require_existing_agents_to_change() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).expect("repo");
+        fs::write(root.join("AGENTS.md"), "# Existing instructions\n").expect("agents");
+        let fake_codex = executable(
+            temp.path(),
+            r#"#!/usr/bin/env sh
+set -eu
+cat >/dev/null
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-test"}'
+cat >"$3/PLAN.md" <<'PLAN'
+# Plan
+
+## Phase 1 - Done
+
+Goal: Done.
+
+Steps:
+
+- Done.
+
+Validation:
+
+- Done.
+PLAN
+"#,
+        );
+        let config = plan_config(&root, fake_codex);
+        let snapshot = PlanningArtifactsSnapshot::capture(&config).expect("snapshot");
+
+        let output = run_planning_turn(
+            &config,
+            PlanTurn::First,
+            "planning prompt".to_string(),
+            1,
+            &snapshot,
+            "test spinner",
+        )
+        .expect("existing agents should not need to change");
+
+        assert!(output.artifacts_complete);
+        assert_eq!(
+            fs::read_to_string(root.join("AGENTS.md")).expect("agents"),
+            "# Existing instructions\n"
+        );
     }
 
     fn plan_config(root: &Path, codex_bin: PathBuf) -> PlanConfig {
         PlanConfig {
             root: root.to_path_buf(),
             plan_path: "PLAN.md".into(),
+            agents_path: "AGENTS.md".into(),
             brief: None,
             codex_bin: codex_bin.display().to_string(),
             log_dir: root.join(".codex-log"),
