@@ -46,6 +46,7 @@ Read AGENTS.md only if it exists in the target repository. Do not require AGENTS
 
 Planning rules:
 - Ask exactly one sharp question per turn.
+- Ask questions by writing a normal assistant message only; do not call request_user_input or any interactive input tool.
 - Prefer forced choices over open-ended questions.
 - If the user answer is vague, reject it and ask one narrower follow-up.
 - Keep planning state in the Codex session, not in draft files.
@@ -272,6 +273,7 @@ mod tests {
         assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
         assert!(prompt.contains("Read AGENTS.md only if it exists"));
         assert!(prompt.contains("Do not require AGENTS.md to exist"));
+        assert!(prompt.contains("do not call request_user_input"));
         assert!(prompt.contains("PLAN.md is a final-only sentinel"));
         assert!(prompt.contains("do not create or modify it as a draft"));
         assert!(prompt.contains("# Plan"));

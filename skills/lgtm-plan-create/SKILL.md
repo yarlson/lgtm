@@ -15,10 +15,11 @@ The goal is a sharp implementation plan, not a brainstorming transcript.
 1. Inspect the target repository only as needed to ask better questions.
 2. Read `AGENTS.md` if it exists, and treat it as authoritative when present.
 3. Ask exactly one sharp question per turn.
-4. Prefer forced choices over open-ended questions.
-5. If the answer is vague, reject the vague answer and ask one narrower follow-up.
-6. Keep planning state in the Codex session, not in draft files.
-7. Write `PLAN.md` only when the plan is ready to finish.
+4. Ask questions by writing a normal assistant message only; do not call `request_user_input` or any interactive input tool.
+5. Prefer forced choices over open-ended questions.
+6. If the answer is vague, reject the vague answer and ask one narrower follow-up.
+7. Keep planning state in the Codex session, not in draft files.
+8. Write `PLAN.md` only when the plan is ready to finish.
 
 ## PLAN.md Contract
 

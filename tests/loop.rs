@@ -420,6 +420,12 @@ fi
         fs::read_to_string(temp.path().join("plan-counter")).expect("counter"),
         "2\n"
     );
+    assert!(contains_spinner_frame_with_text(
+        &output.stdout,
+        "exploring directory",
+        "."
+    ));
+    assert!(contains_random_spinner_frame(&output.stdout, "."));
     let stdout = stable_plan_stdout(&output.stdout);
     assert!(stdout.starts_with("Choose A or B?\n"), "stdout:\n{stdout}");
     assert!(
@@ -583,12 +589,12 @@ PLAN
         output.stderr
     );
     assert!(
-        contains_italic_spinner_frame(&output.stdout, "."),
+        contains_spinner_frame_with_text(&output.stdout, "exploring directory", "."),
         "stdout:\n{}",
         output.stdout
     );
     assert!(
-        contains_italic_spinner_frame(&output.stdout, ".."),
+        contains_spinner_frame_with_text(&output.stdout, "exploring directory", ".."),
         "stdout:\n{}",
         output.stdout
     );
@@ -715,6 +721,146 @@ fi
     assert_eq!(
         fs::read_to_string(temp.path().join("plan-prompt-2.txt")).expect("resume prompt"),
         "one\ntwo\nthree\n"
+    );
+}
+
+#[test]
+fn plan_mode_preserves_shifted_letters_from_keyboard_enhancement_events() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+dir=$(dirname "$0")
+counter="$dir/plan-counter"
+if [ -f "$counter" ]; then
+  n=$(cat "$counter")
+else
+  n=0
+fi
+n=$((n + 1))
+printf '%s\n' "$n" >"$counter"
+cat >"$dir/plan-prompt-$n.txt"
+if [ "$n" = 1 ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"thread-plan"}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Answer."}}'
+else
+  cat >"$LGTM_TEST_REPO/PLAN.md" <<'PLAN'
+# Plan
+
+## Phase 1 - Done
+
+Goal: Done.
+
+Steps:
+
+- Done.
+
+Validation:
+
+- Done.
+PLAN
+fi
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("plan")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .env("LGTM_TEST_REPO", &repo);
+    let output = run_with_pty(command, "\x1b[97:65;2u\x1b[98:66;2u\x1b[99:67;2u\r");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert_eq!(
+        fs::read_to_string(temp.path().join("plan-prompt-2.txt")).expect("resume prompt"),
+        "ABC\n"
+    );
+    assert!(output.stdout.contains("\x1b[>7u"));
+    assert!(output.stdout.contains("\x1b[<1u"));
+}
+
+#[test]
+fn plan_mode_supports_cursor_navigation_keys() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("create repo");
+    init_git_repo(&repo);
+
+    let fake_codex = temp.path().join("codex");
+    fs::write(
+        &fake_codex,
+        r#"#!/usr/bin/env sh
+set -eu
+dir=$(dirname "$0")
+counter="$dir/plan-counter"
+if [ -f "$counter" ]; then
+  n=$(cat "$counter")
+else
+  n=0
+fi
+n=$((n + 1))
+printf '%s\n' "$n" >"$counter"
+cat >"$dir/plan-prompt-$n.txt"
+if [ "$n" = 1 ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"thread-plan"}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Answer."}}'
+else
+  cat >"$LGTM_TEST_REPO/PLAN.md" <<'PLAN'
+# Plan
+
+## Phase 1 - Done
+
+Goal: Done.
+
+Steps:
+
+- Done.
+
+Validation:
+
+- Done.
+PLAN
+fi
+"#,
+    )
+    .expect("write fake codex");
+    make_executable(&fake_codex);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lgtm"));
+    command
+        .arg("plan")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .env("LGTM_TEST_REPO", &repo);
+    let output = run_with_pty(command, "abcd\x1b[D\x1b[DXY\x01START \x05 END\r");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert_eq!(
+        fs::read_to_string(temp.path().join("plan-prompt-2.txt")).expect("resume prompt"),
+        "START abXYcd END\n"
     );
 }
 
@@ -964,7 +1110,12 @@ fn stable_plan_stdout(stdout: &str) -> String {
     stable.replace("\r\x1b[2K", "")
 }
 
-fn contains_italic_spinner_frame(stdout: &str, frame: &str) -> bool {
+fn contains_spinner_frame_with_text(stdout: &str, text: &str, frame: &str) -> bool {
+    let expected = format!("\r\x1b[2K\x1b[3;37m{text}\x1b[0m \x1b[37m{frame}\x1b[0m");
+    stdout.contains(&expected)
+}
+
+fn contains_random_spinner_frame(stdout: &str, frame: &str) -> bool {
     let suffix = format!("\x1b[0m \x1b[37m{frame}\x1b[0m");
     stdout.split("\r\x1b[2K\x1b[3;37m").skip(1).any(|part| {
         let Some(end) = part.find(&suffix) else {
@@ -973,6 +1124,7 @@ fn contains_italic_spinner_frame(stdout: &str, frame: &str) -> bool {
         let label = &part[..end];
         !label.is_empty()
             && label != "working"
+            && label != "exploring directory"
             && label
                 .chars()
                 .all(|value| value.is_ascii_lowercase() || value == '-')
@@ -1035,8 +1187,7 @@ fn run_with_pty(mut command: Command, input: &str) -> PtyOutput {
         master.write_all(input.as_bytes()).expect("write pty input");
     }
 
-    let status = child.wait().expect("wait for command");
-    read_available_pty_output(&mut master, &mut stdout);
+    let status = wait_for_child_with_pty_output(&mut child, &mut master, &mut stdout);
 
     let mut stderr = String::new();
     child
@@ -1070,6 +1221,21 @@ fn wait_for_pty_prompt(child: &mut std::process::Child, master: &mut File, stdou
         "timed out waiting for plan prompt; stdout:\n{}",
         String::from_utf8_lossy(stdout)
     );
+}
+
+fn wait_for_child_with_pty_output(
+    child: &mut std::process::Child,
+    master: &mut File,
+    stdout: &mut Vec<u8>,
+) -> ExitStatus {
+    loop {
+        read_available_pty_output(master, stdout);
+        if let Some(status) = child.try_wait().expect("poll child") {
+            read_available_pty_output(master, stdout);
+            return status;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn read_available_pty_output(master: &mut File, stdout: &mut Vec<u8>) {

@@ -33,6 +33,8 @@ use crate::render::Spinner;
 use crate::render::random_spinner_text;
 use crate::skills;
 
+const INITIAL_PLAN_SPINNER_TEXT: &str = "exploring directory";
+
 pub fn run_plan(config: Config) -> Result<(), Error> {
     let mut renderer = Renderer::new();
 
@@ -94,7 +96,14 @@ pub fn run_planning(config: PlanConfig) -> Result<(), Error> {
 
     let plan_before = PlanSnapshot::capture(&config.plan_abs())?;
     let first_prompt = prompt::plan_initial_prompt(&config.plan_path, config.brief.as_deref());
-    let mut turn = run_planning_turn(&config, PlanTurn::First, first_prompt, 1, &plan_before)?;
+    let mut turn = run_planning_turn(
+        &config,
+        PlanTurn::First,
+        first_prompt,
+        1,
+        &plan_before,
+        INITIAL_PLAN_SPINNER_TEXT,
+    )?;
     let thread_id = turn
         .thread_id
         .take()
@@ -125,6 +134,7 @@ pub fn run_planning(config: PlanConfig) -> Result<(), Error> {
             resume_prompt,
             turn_number,
             &plan_before,
+            random_spinner_text(),
         )?;
     }
 }
@@ -191,6 +201,7 @@ fn run_planning_turn(
     prompt: String,
     turn_number: u32,
     plan_before: &PlanSnapshot,
+    spinner_text: &'static str,
 ) -> Result<PlanningTurnOutput, Error> {
     let log_name = format!("{}-plan-{turn_number:03}.jsonl", config.run_stamp);
     let log_path = config.log_dir.join(log_name);
@@ -208,7 +219,7 @@ fn run_planning_turn(
 
     let (process, stdout) = CodexProcess::spawn(invocation)?;
     let mut spinner =
-        Spinner::new(random_spinner_text()).map_err(|source| Error::io("<terminal>", source))?;
+        Spinner::new(spinner_text).map_err(|source| Error::io("<terminal>", source))?;
     spinner.tick();
     let mut output = PlanningTurnOutput {
         thread_id: None,
@@ -591,6 +602,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"agent_mess
             "planning prompt".to_string(),
             1,
             &snapshot,
+            "test spinner",
         )
         .expect("planning turn");
 
@@ -641,6 +653,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_mess
             "user answer".to_string(),
             2,
             &snapshot,
+            "test spinner",
         )
         .expect("resume turn");
 
@@ -683,6 +696,7 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_mess
             "planning prompt".to_string(),
             1,
             &snapshot,
+            "test spinner",
         )
         .expect_err("missing thread id should fail");
 
@@ -715,6 +729,7 @@ printf '%s\n' '{"type":"thread.started","thread_id":"thread-test"}'
             "planning prompt".to_string(),
             1,
             &snapshot,
+            "test spinner",
         )
         .expect_err("missing message should fail");
 
@@ -762,6 +777,7 @@ PLAN
             "planning prompt".to_string(),
             1,
             &snapshot,
+            "test spinner",
         )
         .expect("plan completion without message should be accepted");
 

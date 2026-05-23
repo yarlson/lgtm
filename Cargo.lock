@@ -560,6 +560,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dialoguer",
+ "libc",
  "serde_json",
  "signal-hook",
  "supports-color",

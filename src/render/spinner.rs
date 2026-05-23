@@ -204,7 +204,7 @@ fn ensure_sigint_handler() -> std::io::Result<()> {
         let _ = std::thread::spawn(move || {
             if signals.forever().next().is_some() {
                 if SPINNER_ACTIVE.swap(false, Ordering::SeqCst) {
-                    restore_terminal();
+                    restore_terminal_without_stdout_lock();
                 }
                 std::process::exit(130);
             }
@@ -222,6 +222,18 @@ fn restore_terminal() {
     print!("\r\x1b[2K");
     let _ = execute!(std::io::stdout(), cursor::Show);
     let _ = std::io::stdout().flush();
+}
+
+fn restore_terminal_without_stdout_lock() {
+    const RESTORE: &[u8] = b"\r\x1b[2K\x1b[?25h";
+    // Avoid stdio locking here: SIGINT may arrive while the main thread is flushing stdout.
+    unsafe {
+        let _ = libc::write(
+            libc::STDOUT_FILENO,
+            RESTORE.as_ptr().cast::<libc::c_void>(),
+            RESTORE.len(),
+        );
+    }
 }
 
 pub(crate) fn random_text() -> &'static str {
