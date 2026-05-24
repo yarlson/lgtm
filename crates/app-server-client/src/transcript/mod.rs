@@ -81,10 +81,9 @@ pub struct PlanStep {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TurnStreamEvent {
+pub(crate) enum TranscriptEvent {
     PlanUpdated(Vec<PlanStep>),
     ItemUpdated(TranscriptItem),
-    ServerRequestDeclined { method: String },
     Completed(CompletedTurn),
 }
 
@@ -105,18 +104,18 @@ impl<'a> TurnCollector<'a> {
 
     #[cfg(test)]
     pub(crate) fn handle(&mut self, message: &Value) -> Result<Option<CompletedTurn>> {
-        Ok(match self.handle_stream_event(message)? {
-            Some(TurnStreamEvent::Completed(turn)) => Some(turn),
-            _ => None,
-        })
+        Ok(self
+            .handle_stream_event(message)?
+            .into_iter()
+            .find_map(|event| match event {
+                TranscriptEvent::Completed(turn) => Some(turn),
+                _ => None,
+            }))
     }
 
-    pub(crate) fn handle_stream_event(
-        &mut self,
-        message: &Value,
-    ) -> Result<Option<TurnStreamEvent>> {
+    pub(crate) fn handle_stream_event(&mut self, message: &Value) -> Result<Vec<TranscriptEvent>> {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
 
         if method == "error" {
@@ -127,17 +126,19 @@ impl<'a> TurnCollector<'a> {
 
         if method == "turn/completed" {
             if self.matches_completed_turn(message) {
-                self.record_turn_items(message);
-                return self
-                    .completed_turn(message)
-                    .map(TurnStreamEvent::Completed)
-                    .map(Some);
+                let mut events = self
+                    .record_turn_items(message)
+                    .into_iter()
+                    .map(TranscriptEvent::ItemUpdated)
+                    .collect::<Vec<_>>();
+                events.push(TranscriptEvent::Completed(self.completed_turn(message)?));
+                return Ok(events);
             }
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         if !self.matches_item_turn(message) {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         let event = match method {
@@ -156,11 +157,11 @@ impl<'a> TurnCollector<'a> {
             "turn/plan/updated" => self.record_plan_update(message),
             _ => None,
         };
-        Ok(event)
+        Ok(event.into_iter().collect())
     }
 
-    fn item_updated(item: TranscriptItem) -> Result<TurnStreamEvent> {
-        Ok(TurnStreamEvent::ItemUpdated(item))
+    fn item_updated(item: TranscriptItem) -> Result<TranscriptEvent> {
+        Ok(TranscriptEvent::ItemUpdated(item))
     }
 
     fn matches_item_turn(&self, message: &Value) -> bool {
@@ -173,14 +174,14 @@ impl<'a> TurnCollector<'a> {
             && get_str(message, &["params", "turn", "id"]) == Some(self.turn_id)
     }
 
-    fn record_text_delta(&mut self, message: &Value, kind: ItemKind) -> Result<TurnStreamEvent> {
+    fn record_text_delta(&mut self, message: &Value, kind: ItemKind) -> Result<TranscriptEvent> {
         let item_id = get_string(message, &["params", "itemId"]).context("delta had no itemId")?;
         let delta = get_str(message, &["params", "delta"]).unwrap_or_default();
         let item = self.transcript.append_delta(item_id, kind, delta);
         Self::item_updated(item)
     }
 
-    fn record_file_patch_update(&mut self, message: &Value) -> Result<TurnStreamEvent> {
+    fn record_file_patch_update(&mut self, message: &Value) -> Result<TranscriptEvent> {
         let item_id =
             get_string(message, &["params", "itemId"]).context("patch update had no itemId")?;
         let item = TranscriptItem::file_patch_update(item_id, &message["params"]);
@@ -188,7 +189,7 @@ impl<'a> TurnCollector<'a> {
         Self::item_updated(item)
     }
 
-    fn record_plan_update(&mut self, message: &Value) -> Option<TurnStreamEvent> {
+    fn record_plan_update(&mut self, message: &Value) -> Option<TranscriptEvent> {
         let plan = message
             .get("params")
             .and_then(|params| params.get("plan"))
@@ -203,28 +204,29 @@ impl<'a> TurnCollector<'a> {
                 })
             })
             .collect();
-        Some(TurnStreamEvent::PlanUpdated(self.transcript.plan.clone()))
+        Some(TranscriptEvent::PlanUpdated(self.transcript.plan.clone()))
     }
 
-    fn record_item(&mut self, message: &Value, path: &[&str]) -> Option<TurnStreamEvent> {
+    fn record_item(&mut self, message: &Value, path: &[&str]) -> Option<TranscriptEvent> {
         let item = get_value(message, path)?;
         self.record_thread_item(item)
-            .map(TurnStreamEvent::ItemUpdated)
+            .map(TranscriptEvent::ItemUpdated)
     }
 
-    fn record_turn_items(&mut self, message: &Value) {
+    fn record_turn_items(&mut self, message: &Value) -> Vec<TranscriptItem> {
         let Some(items) = message
             .get("params")
             .and_then(|params| params.get("turn"))
             .and_then(|turn| turn.get("items"))
             .and_then(Value::as_array)
         else {
-            return;
+            return Vec::new();
         };
 
-        for item in items {
-            self.record_thread_item(item);
-        }
+        items
+            .iter()
+            .filter_map(|item| self.record_thread_item(item))
+            .collect()
     }
 
     fn record_thread_item(&mut self, item: &Value) -> Option<TranscriptItem> {

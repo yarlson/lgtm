@@ -12,7 +12,7 @@ use crate::{
     config::AppServerConfig,
     json::{get_string, response_result},
     protocol::{ClientNotification, ClientRequest, ServerRequest},
-    transcript::{CompletedTurn, TurnCollector, TurnStreamEvent},
+    transcript::{CompletedTurn, PlanStep, TranscriptEvent, TranscriptItem, TurnCollector},
 };
 
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -26,6 +26,24 @@ pub struct AppServerClient {
 pub enum TurnControl {
     Continue,
     Interrupt,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TurnStreamEvent {
+    PlanUpdated(Vec<PlanStep>),
+    ItemUpdated(TranscriptItem),
+    ServerRequestDeclined { method: String },
+    Completed(CompletedTurn),
+}
+
+impl From<TranscriptEvent> for TurnStreamEvent {
+    fn from(event: TranscriptEvent) -> Self {
+        match event {
+            TranscriptEvent::PlanUpdated(plan) => Self::PlanUpdated(plan),
+            TranscriptEvent::ItemUpdated(item) => Self::ItemUpdated(item),
+            TranscriptEvent::Completed(turn) => Self::Completed(turn),
+        }
+    }
 }
 
 impl AppServerClient {
@@ -203,36 +221,65 @@ where
         mut on_event: impl FnMut(TurnStreamEvent) -> TurnControl,
     ) -> Result<CompletedTurn> {
         let mut collector = TurnCollector::new(thread_id, turn_id);
-        let mut interrupt_sent = false;
+        let mut interrupt_requested = false;
+        let mut pending_interrupt_id = None;
+        let mut completed_turn = None;
 
         loop {
             let message = self.read_json()?;
-            if let Some(event) = collector.handle_stream_event(&message)? {
-                if let TurnStreamEvent::Completed(turn) = &event {
-                    on_event(event.clone());
-                    return Ok(turn.clone());
+            if pending_interrupt_id
+                .is_some_and(|id| message.get("id").and_then(Value::as_u64) == Some(id))
+            {
+                response_result(message).context("turn/interrupt failed")?;
+                pending_interrupt_id = None;
+                if let Some(turn) = completed_turn {
+                    return Ok(turn);
+                }
+                continue;
+            }
+
+            let is_completion_notification =
+                message.get("method").and_then(Value::as_str) == Some("turn/completed");
+            for event in collector.handle_stream_event(&message)? {
+                let event = TurnStreamEvent::from(event);
+                let completed = match &event {
+                    TurnStreamEvent::Completed(turn) => Some(turn.clone()),
+                    _ => None,
+                };
+                let control = on_event(event);
+
+                if let Some(turn) = completed {
+                    if pending_interrupt_id.is_none() {
+                        return Ok(turn);
+                    }
+                    completed_turn = Some(turn);
+                    continue;
                 }
 
-                if on_event(event) == TurnControl::Interrupt && !interrupt_sent {
-                    self.interrupt_turn(thread_id, turn_id)?;
-                    interrupt_sent = true;
+                if control == TurnControl::Interrupt
+                    && !interrupt_requested
+                    && !is_completion_notification
+                {
+                    pending_interrupt_id = Some(self.interrupt_turn(thread_id, turn_id)?);
+                    interrupt_requested = true;
                 }
             }
 
             if let Some(event) = self.handle_message(message)?
                 && on_event(event) == TurnControl::Interrupt
-                && !interrupt_sent
+                && !interrupt_requested
             {
-                self.interrupt_turn(thread_id, turn_id)?;
-                interrupt_sent = true;
+                pending_interrupt_id = Some(self.interrupt_turn(thread_id, turn_id)?);
+                interrupt_requested = true;
             }
         }
     }
 
-    fn interrupt_turn(&mut self, thread_id: &str, turn_id: &str) -> Result<()> {
+    fn interrupt_turn(&mut self, thread_id: &str, turn_id: &str) -> Result<u64> {
         let id = self.next_request_id();
         let request = ClientRequest::TurnInterrupt { thread_id, turn_id }.into_message(id);
-        self.write_json(&request)
+        self.write_json(&request)?;
+        Ok(id)
     }
 
     fn handle_message(&mut self, message: Value) -> Result<Option<TurnStreamEvent>> {
@@ -489,7 +536,19 @@ mod tests {
                     "threadId": "thr_123",
                     "turn": {
                         "id": "turn_456",
-                        "items": [],
+                        "items": [
+                            {
+                                "type": "commandExecution",
+                                "id": "cmd_1",
+                                "command": "cargo test",
+                                "cwd": "/repo",
+                                "commandActions": [],
+                                "status": "completed",
+                                "aggregatedOutput": "test ok\n",
+                                "exitCode": 0,
+                                "durationMs": 123
+                            }
+                        ],
                         "status": "completed"
                     }
                 }
@@ -521,6 +580,11 @@ mod tests {
                 method: "item/fileChange/requestApproval".to_string()
             }
         );
+        assert!(matches!(
+            &events[3],
+            TurnStreamEvent::ItemUpdated(item)
+                if item.title == "$ cargo test" && item.output() == "test ok\n"
+        ));
         assert!(matches!(
             events.last(),
             Some(TurnStreamEvent::Completed(completed)) if completed.status == "completed"
@@ -591,6 +655,100 @@ mod tests {
         assert_eq!(written[1]["id"], 2);
         assert_eq!(written[1]["params"]["threadId"], "thr_123");
         assert_eq!(written[1]["params"]["turnId"], "turn_456");
+    }
+
+    #[test]
+    fn run_turn_streaming_does_not_interrupt_after_completion_items() {
+        let mut connection = connection(vec![
+            json!({
+                "id": 1,
+                "result": {
+                    "turn": {
+                        "id": "turn_456",
+                        "status": "inProgress",
+                        "items": []
+                    }
+                }
+            }),
+            json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thr_123",
+                    "turn": {
+                        "id": "turn_456",
+                        "items": [
+                            {
+                                "type": "commandExecution",
+                                "id": "cmd_1",
+                                "command": "cargo test",
+                                "cwd": "/repo",
+                                "commandActions": [],
+                                "status": "completed",
+                                "aggregatedOutput": "ok",
+                                "exitCode": 0,
+                                "durationMs": 123
+                            }
+                        ],
+                        "status": "completed"
+                    }
+                }
+            }),
+        ]);
+
+        let turn = connection
+            .run_turn_streaming("thr_123", "Start", |event| match event {
+                TurnStreamEvent::ItemUpdated(_) => TurnControl::Interrupt,
+                _ => TurnControl::Continue,
+            })
+            .unwrap();
+
+        assert_eq!(turn.status, "completed");
+        let written = written_messages(&connection);
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0]["method"], "turn/start");
+    }
+
+    #[test]
+    fn run_turn_streaming_reports_interrupt_errors() {
+        let mut connection = connection(vec![
+            json!({
+                "id": 1,
+                "result": {
+                    "turn": {
+                        "id": "turn_456",
+                        "status": "inProgress",
+                        "items": []
+                    }
+                }
+            }),
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "thr_123",
+                    "turnId": "turn_456",
+                    "itemId": "msg_1",
+                    "delta": "working"
+                }
+            }),
+            json!({
+                "id": 2,
+                "error": {
+                    "code": -32000,
+                    "message": "no active turn"
+                }
+            }),
+        ]);
+
+        let err = connection
+            .run_turn_streaming("thr_123", "Start", |event| match event {
+                TurnStreamEvent::ItemUpdated(_) => TurnControl::Interrupt,
+                _ => TurnControl::Continue,
+            })
+            .unwrap_err();
+
+        let message = format!("{err:#}");
+        assert!(message.contains("turn/interrupt failed"));
+        assert!(message.contains("no active turn"));
     }
 
     #[test]

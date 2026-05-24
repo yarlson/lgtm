@@ -5,6 +5,6 @@ mod protocol;
 mod text;
 mod transcript;
 
-pub use client::{AppServerClient, TurnControl};
+pub use client::{AppServerClient, TurnControl, TurnStreamEvent};
 pub use config::AppServerConfig;
-pub use transcript::{CompletedTurn, PlanStep, TranscriptItem, TurnStreamEvent, TurnTranscript};
+pub use transcript::{CompletedTurn, PlanStep, TranscriptItem, TurnTranscript};
