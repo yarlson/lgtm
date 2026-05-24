@@ -1,4 +1,4 @@
-use crate::output::{Charset, ColorMode, RenderOptions};
+use crate::output::options::{Charset, RenderOptions, color_enabled};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Line {
@@ -128,7 +128,7 @@ pub(crate) fn render_lines(lines: Vec<Line>, options: &RenderOptions) -> String 
         return String::new();
     }
 
-    let color = options.color_mode == ColorMode::Always;
+    let color = color_enabled(options.color_mode);
     let mut out = String::new();
     for line in lines {
         for span in line.spans {

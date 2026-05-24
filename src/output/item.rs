@@ -49,7 +49,7 @@ impl<'a> ItemRenderer<'a> {
         if item.is_in_progress() {
             return String::new();
         }
-        let body = markdown_lines(message, self.options.markdown);
+        let body = markdown_lines(message, self.options);
         if body.is_empty() {
             return String::new();
         }
@@ -63,7 +63,7 @@ impl<'a> ItemRenderer<'a> {
         if item.is_in_progress() {
             return String::new();
         }
-        let body = markdown_lines(message, self.options.markdown);
+        let body = markdown_lines(message, self.options);
         if body.is_empty() {
             return String::new();
         }
@@ -93,12 +93,12 @@ impl<'a> ItemRenderer<'a> {
             && self.options.verbosity != Verbosity::Verbose
         {
             return self.render_lines(vec![
-                self.header("Ran", self.status_color(item), &command.command),
+                self.command_header(item, &command.command),
                 Line::blank(),
             ]);
         }
 
-        let mut lines = vec![self.header("Ran", self.status_color(item), &command.command)];
+        let mut lines = vec![self.command_header(item, &command.command)];
         lines.extend(self.output_lines(output, command.exit_code));
         if let Some(exit_code) = command.exit_code.filter(|code| *code != 0) {
             lines.push(self.continuation(format!("exit={exit_code}")));
@@ -241,6 +241,25 @@ impl<'a> ItemRenderer<'a> {
         color: Color,
         message: impl Into<String>,
     ) -> Line {
+        self.header_with_message_style(action, color, message, Style::fg(Color::Gray))
+    }
+
+    fn command_header(&self, item: &TranscriptItem, command: &str) -> Line {
+        self.header_with_message_style(
+            "Ran",
+            self.status_color(item),
+            command,
+            Style::fg(Color::Cyan).dim(),
+        )
+    }
+
+    fn header_with_message_style(
+        &self,
+        action: &'static str,
+        color: Color,
+        message: impl Into<String>,
+        message_style: Style,
+    ) -> Line {
         let message = message.into();
         let mut spans = vec![
             Span::styled(self.symbol(Symbol::Bullet), Style::fg(Color::Green)),
@@ -249,7 +268,7 @@ impl<'a> ItemRenderer<'a> {
         ];
         if !message.is_empty() {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(message, Style::fg(Color::Gray)));
+            spans.push(Span::styled(message, message_style));
         }
         Line::new(spans)
     }

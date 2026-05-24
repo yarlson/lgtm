@@ -6,8 +6,8 @@ use std::{
 use crate::{
     app_server::{CompletedTurn, PlanStep, TranscriptItem, TranscriptItemData, TurnStreamEvent},
     output::{
-        ColorMode, RenderOptions, Verbosity,
         item::{ItemRenderer, item_is_final},
+        options::{RenderOptions, Verbosity, color_enabled},
         spinner,
         style::{Color, Line, Span, Style, Symbol},
     },
@@ -41,7 +41,7 @@ struct PhaseStatus {
 
 impl Renderer {
     pub fn new(options: RenderOptions) -> Self {
-        let spinner_color = options.color_mode == ColorMode::Always;
+        let spinner_color = color_enabled(options.color_mode);
         Self {
             options,
             rendered_items: HashSet::new(),

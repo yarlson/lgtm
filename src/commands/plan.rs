@@ -347,8 +347,9 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         let rendered = output::markdown_to_string("**Question**\n\n- `Option A`");
 
         assert!(rendered.contains("  Question"));
-        assert!(rendered.contains("  Option A"));
+        assert!(rendered.contains("Option A"));
         assert!(!rendered.contains("**"));
+        assert!(!rendered.contains("`Option A`"));
     }
 
     #[test]

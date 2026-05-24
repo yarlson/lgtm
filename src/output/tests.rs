@@ -1,17 +1,30 @@
 use serde_json::{Value, json};
 
-use super::{Charset, ColorMode, RenderOptions, Verbosity, renderer::Renderer};
+use super::{
+    RenderOptions, Verbosity,
+    options::{Charset, ColorMode},
+    renderer::Renderer,
+};
 use crate::app_server::{
     CompletedTurn, ItemKind, PlanStep, TranscriptItem, TranscriptItemData, TurnStreamEvent,
     TurnTranscript,
 };
 
 fn no_color_renderer() -> Renderer {
-    Renderer::new(RenderOptions::default())
+    Renderer::new(RenderOptions {
+        color_mode: ColorMode::Never,
+        ..RenderOptions::default()
+    })
 }
 
 fn interactive_renderer() -> Renderer {
-    Renderer::with_interactive(RenderOptions::default(), true)
+    Renderer::with_interactive(
+        RenderOptions {
+            color_mode: ColorMode::Never,
+            ..RenderOptions::default()
+        },
+        true,
+    )
 }
 
 fn item(value: Value) -> TranscriptItem {
@@ -68,6 +81,24 @@ fn renders_color_when_enabled() {
 }
 
 #[test]
+fn colors_command_text_when_enabled() {
+    let rendered = Renderer::new(RenderOptions {
+        color_mode: ColorMode::Always,
+        ..RenderOptions::default()
+    })
+    .render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+        "type": "commandExecution",
+        "id": "cmd_1",
+        "command": "cargo test",
+        "status": "completed",
+        "exitCode": 0
+    }))));
+
+    assert!(rendered.contains("\x1b[1;32mRan\x1b[0m"));
+    assert!(rendered.contains("\x1b[2;36mcargo test\x1b[0m"));
+}
+
+#[test]
 fn strips_basic_markdown_from_agent_messages() {
     let rendered = no_color_renderer().render_event(&TurnStreamEvent::ItemUpdated(item(json!({
         "type": "agentMessage",
@@ -78,8 +109,24 @@ fn strips_basic_markdown_from_agent_messages() {
 
     assert!(rendered.contains("• Codex"));
     assert!(rendered.contains("  Done"));
-    assert!(rendered.contains("  cargo test passed"));
+    assert!(rendered.contains("cargo test"));
+    assert!(rendered.contains("passed"));
     assert!(!rendered.contains("**Done**"));
+    assert!(!rendered.contains("`cargo test`"));
+}
+
+#[test]
+fn formats_fenced_code_markdown_in_agent_messages() {
+    let rendered = no_color_renderer().render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+        "type": "agentMessage",
+        "id": "item_1",
+        "status": "completed",
+        "text": "Use this:\n\n```rust\nfn main() {}\n```"
+    }))));
+
+    assert!(rendered.contains("  Use this:"));
+    assert!(rendered.contains("fn main() {}"));
+    assert!(!rendered.contains("```"));
 }
 
 #[test]

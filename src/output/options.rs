@@ -1,5 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ColorMode {
+    Auto,
     Always,
     Never,
 }
@@ -38,12 +40,23 @@ pub struct RenderOptions {
 impl Default for RenderOptions {
     fn default() -> Self {
         Self {
-            color_mode: ColorMode::Never,
+            color_mode: ColorMode::Auto,
             charset: Charset::Unicode,
             verbosity: Verbosity::Normal,
             markdown: MarkdownMode::Basic,
             max_output_lines: 4,
             max_output_chars: 2_000,
+        }
+    }
+}
+
+pub(crate) fn color_enabled(mode: ColorMode) -> bool {
+    match mode {
+        ColorMode::Always => true,
+        ColorMode::Never => false,
+        ColorMode::Auto => {
+            supports_color::on_cached(supports_color::Stream::Stdout).is_some()
+                && std::env::var_os("NO_COLOR").is_none()
         }
     }
 }
