@@ -15,6 +15,10 @@ pub(crate) enum ClientRequest<'a> {
         prompt: &'a str,
         effort: &'a str,
     },
+    TurnInterrupt {
+        thread_id: &'a str,
+        turn_id: &'a str,
+    },
 }
 
 impl ClientRequest<'_> {
@@ -23,6 +27,7 @@ impl ClientRequest<'_> {
             Self::Initialize { .. } => "initialize",
             Self::ThreadStart { .. } => "thread/start",
             Self::TurnStart { .. } => "turn/start",
+            Self::TurnInterrupt { .. } => "turn/interrupt",
         }
     }
 
@@ -69,6 +74,14 @@ impl ClientRequest<'_> {
                     "input": [{ "type": "text", "text": prompt }]
                 }
             }),
+            Self::TurnInterrupt { thread_id, turn_id } => json!({
+                "id": id,
+                "method": method,
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id
+                }
+            }),
         }
     }
 }
@@ -101,6 +114,10 @@ impl ServerRequest {
             id,
             kind: ServerRequestKind::from_method(method),
         })
+    }
+
+    pub(crate) fn method(&self) -> &str {
+        self.kind.method()
     }
 
     pub(crate) fn decline_response(&self) -> Value {

@@ -14,7 +14,7 @@ use item::ItemKind;
 
 pub use item::TranscriptItem;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompletedTurn {
     pub turn_id: String,
     pub status: String,
@@ -29,21 +29,26 @@ pub struct TurnTranscript {
 }
 
 impl TurnTranscript {
-    fn upsert_item(&mut self, item: TranscriptItem) {
+    fn upsert_item(&mut self, item: TranscriptItem) -> TranscriptItem {
         if !self.items.contains_key(item.id()) {
             self.item_order.push(item.id().to_string());
         }
+        let stored = item.clone();
         self.items.insert(item.id().to_string(), item);
+        stored
     }
 
-    fn append_delta(&mut self, item_id: String, kind: ItemKind, delta: &str) {
+    fn append_delta(&mut self, item_id: String, kind: ItemKind, delta: &str) -> TranscriptItem {
         if !self.items.contains_key(&item_id) {
             self.upsert_item(TranscriptItem::placeholder(item_id.clone(), kind));
         }
 
-        if let Some(item) = self.items.get_mut(&item_id) {
-            item.push_output(delta);
-        }
+        let item = self
+            .items
+            .get_mut(&item_id)
+            .expect("placeholder item should exist before appending delta");
+        item.push_output(delta);
+        item.clone()
     }
 
     pub fn response_text(&self) -> String {
@@ -75,6 +80,14 @@ pub struct PlanStep {
     pub step: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TurnStreamEvent {
+    PlanUpdated(Vec<PlanStep>),
+    ItemUpdated(TranscriptItem),
+    ServerRequestDeclined { method: String },
+    Completed(CompletedTurn),
+}
+
 pub(crate) struct TurnCollector<'a> {
     thread_id: &'a str,
     turn_id: &'a str,
@@ -90,7 +103,18 @@ impl<'a> TurnCollector<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn handle(&mut self, message: &Value) -> Result<Option<CompletedTurn>> {
+        Ok(match self.handle_stream_event(message)? {
+            Some(TurnStreamEvent::Completed(turn)) => Some(turn),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn handle_stream_event(
+        &mut self,
+        message: &Value,
+    ) -> Result<Option<TurnStreamEvent>> {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return Ok(None);
         };
@@ -104,7 +128,10 @@ impl<'a> TurnCollector<'a> {
         if method == "turn/completed" {
             if self.matches_completed_turn(message) {
                 self.record_turn_items(message);
-                return self.completed_turn(message).map(Some);
+                return self
+                    .completed_turn(message)
+                    .map(TurnStreamEvent::Completed)
+                    .map(Some);
             }
             return Ok(None);
         }
@@ -113,22 +140,27 @@ impl<'a> TurnCollector<'a> {
             return Ok(None);
         }
 
-        match method {
-            "item/agentMessage/delta" => self.record_text_delta(message, ItemKind::AgentMessage)?,
-            "item/plan/delta" => self.record_text_delta(message, ItemKind::Plan)?,
+        let event = match method {
+            "item/agentMessage/delta" => {
+                Some(self.record_text_delta(message, ItemKind::AgentMessage)?)
+            }
+            "item/plan/delta" => Some(self.record_text_delta(message, ItemKind::Plan)?),
             "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
-                self.record_text_delta(message, ItemKind::Reasoning)?;
+                Some(self.record_text_delta(message, ItemKind::Reasoning)?)
             }
             "item/commandExecution/outputDelta" => {
-                self.record_text_delta(message, ItemKind::CommandExecution)?;
+                Some(self.record_text_delta(message, ItemKind::CommandExecution)?)
             }
-            "item/fileChange/patchUpdated" => self.record_file_patch_update(message)?,
+            "item/fileChange/patchUpdated" => Some(self.record_file_patch_update(message)?),
             "item/started" | "item/completed" => self.record_item(message, &["params", "item"]),
             "turn/plan/updated" => self.record_plan_update(message),
-            _ => {}
-        }
+            _ => None,
+        };
+        Ok(event)
+    }
 
-        Ok(None)
+    fn item_updated(item: TranscriptItem) -> Result<TurnStreamEvent> {
+        Ok(TurnStreamEvent::ItemUpdated(item))
     }
 
     fn matches_item_turn(&self, message: &Value) -> bool {
@@ -141,29 +173,26 @@ impl<'a> TurnCollector<'a> {
             && get_str(message, &["params", "turn", "id"]) == Some(self.turn_id)
     }
 
-    fn record_text_delta(&mut self, message: &Value, kind: ItemKind) -> Result<()> {
+    fn record_text_delta(&mut self, message: &Value, kind: ItemKind) -> Result<TurnStreamEvent> {
         let item_id = get_string(message, &["params", "itemId"]).context("delta had no itemId")?;
         let delta = get_str(message, &["params", "delta"]).unwrap_or_default();
-        self.transcript.append_delta(item_id, kind, delta);
-        Ok(())
+        let item = self.transcript.append_delta(item_id, kind, delta);
+        Self::item_updated(item)
     }
 
-    fn record_file_patch_update(&mut self, message: &Value) -> Result<()> {
+    fn record_file_patch_update(&mut self, message: &Value) -> Result<TurnStreamEvent> {
         let item_id =
             get_string(message, &["params", "itemId"]).context("patch update had no itemId")?;
         let item = TranscriptItem::file_patch_update(item_id, &message["params"]);
-        self.transcript.upsert_item(item);
-        Ok(())
+        let item = self.transcript.upsert_item(item);
+        Self::item_updated(item)
     }
 
-    fn record_plan_update(&mut self, message: &Value) {
-        let Some(plan) = message
+    fn record_plan_update(&mut self, message: &Value) -> Option<TurnStreamEvent> {
+        let plan = message
             .get("params")
             .and_then(|params| params.get("plan"))
-            .and_then(Value::as_array)
-        else {
-            return;
-        };
+            .and_then(Value::as_array)?;
 
         self.transcript.plan = plan
             .iter()
@@ -174,13 +203,13 @@ impl<'a> TurnCollector<'a> {
                 })
             })
             .collect();
+        Some(TurnStreamEvent::PlanUpdated(self.transcript.plan.clone()))
     }
 
-    fn record_item(&mut self, message: &Value, path: &[&str]) {
-        let Some(item) = get_value(message, path) else {
-            return;
-        };
-        self.record_thread_item(item);
+    fn record_item(&mut self, message: &Value, path: &[&str]) -> Option<TurnStreamEvent> {
+        let item = get_value(message, path)?;
+        self.record_thread_item(item)
+            .map(TurnStreamEvent::ItemUpdated)
     }
 
     fn record_turn_items(&mut self, message: &Value) {
@@ -198,10 +227,9 @@ impl<'a> TurnCollector<'a> {
         }
     }
 
-    fn record_thread_item(&mut self, item: &Value) {
-        if let Some(item) = TranscriptItem::from_thread_item(item) {
-            self.transcript.upsert_item(item);
-        }
+    fn record_thread_item(&mut self, item: &Value) -> Option<TranscriptItem> {
+        let item = TranscriptItem::from_thread_item(item)?;
+        Some(self.transcript.upsert_item(item))
     }
 
     fn completed_turn(&self, message: &Value) -> Result<CompletedTurn> {
