@@ -4,14 +4,14 @@ use lgtm_app_server_client::{AppServerClient, AppServerConfig, CompletedTurn};
 
 const VALIDATION_PROMPTS: &[&str] = &[
     "Use the shell command tool to run `pwd` and `ls -la` in the current directory. Then summarize what files are present.",
-    "Use the shell command tool to run `find . -maxdepth 2 -type f | sort`. Then summarize the project layout.",
+    "Use the shell command tool to run `find . -maxdepth 4 -type f -not -path './target/*' -not -path './.git/*' | sort`. Then summarize the project layout.",
     "Use the shell command tool to inspect `Cargo.toml` and report the package name, edition, and dependencies.",
     "Use web search to find current Rust CLI best practices in 2026. Return three concise bullets and include source URLs.",
     "Use web search to find current OpenAI Codex app-server or Codex open-source documentation. Return the most relevant source URL and one sentence.",
     "Use your todo/plan tool to create a three-step plan for validating this CLI's transcript rendering. Then complete the plan in your answer without running commands.",
     "Use your todo/plan tool to plan a tiny refactor of this CLI into transport, transcript, and main modules. Do not edit files; just produce the plan and final recommendation.",
-    "Use the shell command tool to run `cargo test`. Summarize pass/fail status.",
-    "Use the shell command tool to run `cargo clippy --all-targets -- -D warnings`. Summarize pass/fail status.",
+    "Use the shell command tool to run `cargo test --workspace`. Summarize pass/fail status.",
+    "Use the shell command tool to run `cargo clippy --workspace --all-targets -- -D warnings`. Summarize pass/fail status.",
     "Use both a short todo/plan and a shell command: plan two steps, run `cargo fmt -- --check`, then report the result.",
 ];
 
