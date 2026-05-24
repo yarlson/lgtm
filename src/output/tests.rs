@@ -227,6 +227,19 @@ fn idle_tick_renders_planning_spinner_when_interactive() {
 }
 
 #[test]
+fn start_status_line_renders_custom_status_line() {
+    let mut renderer = interactive_renderer();
+
+    let status = renderer.start_status_line("parsing plan phases");
+    let finish = renderer.finish();
+
+    assert!(status.contains("\r\x1b[2K"));
+    assert!(status.contains("parsing plan phases"));
+    assert!(status.contains("0s"));
+    assert!(finish.contains("\x1b[?25h"));
+}
+
+#[test]
 fn plan_update_restores_active_status_line_immediately() {
     let mut renderer = interactive_renderer();
     let _ = renderer.planning_header();

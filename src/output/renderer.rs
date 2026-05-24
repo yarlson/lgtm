@@ -81,6 +81,16 @@ impl Renderer {
         ])
     }
 
+    pub fn start_status_line(&mut self, label: impl Into<String>) -> String {
+        let label = label.into();
+        self.activity_status = Some(ActivityStatus {
+            idle_label: label.clone(),
+            activity_prefix: label,
+            started_at: Instant::now(),
+        });
+        self.tick()
+    }
+
     pub fn render_event(&mut self, event: &TurnStreamEvent) -> String {
         match event {
             TurnStreamEvent::Idle => self.tick(),

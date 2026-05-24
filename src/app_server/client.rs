@@ -85,10 +85,6 @@ impl AppServerClient {
         self.connection.start_thread()
     }
 
-    pub fn run_turn(&mut self, thread_id: &str, prompt: &str) -> Result<CompletedTurn> {
-        self.connection.run_turn(thread_id, prompt)
-    }
-
     pub fn log_raw_messages(&mut self, sink: impl FnMut(&str) -> Result<()> + Send + 'static) {
         self.connection.raw_message_sink = Some(Box::new(sink));
     }
@@ -177,6 +173,7 @@ where
             .context("thread/start response did not include thread.id")
     }
 
+    #[cfg(test)]
     pub fn run_turn(&mut self, thread_id: &str, prompt: &str) -> Result<CompletedTurn> {
         self.run_turn_streaming(thread_id, prompt, |_| TurnControl::Continue)
     }

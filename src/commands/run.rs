@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 
 use crate::{
-    app_server::TurnControl,
+    app_server::{AppServerClient, CompletedTurn, TurnControl, TurnStreamEvent},
     cli::{RunArgs, StreamMode},
     commands::runtime::{CommandRuntime, require_file},
     git,
@@ -63,6 +63,7 @@ pub fn run(args: RunArgs) -> Result<()> {
     git::ensure_initialized(config.runtime.root())?;
     skills::install(config.runtime.root())?;
 
+    let mut output = RunOutput::stdout(config.stream_mode);
     let mut phase_id = config.start_phase;
     loop {
         if config
@@ -72,7 +73,9 @@ pub fn run(args: RunArgs) -> Result<()> {
             break;
         }
 
-        let phases = load_phase_index(&config, phase_id)?;
+        let phases = output.with_status_line("parsing plan phases", |output| {
+            load_phase_index(&config, phase_id, output)
+        })?;
         let end_phase = match config.end_phase {
             Some(end_phase) => end_phase,
             None => phase_index::detected_end_phase(&phases, &config.plan_path)?,
@@ -85,7 +88,7 @@ pub fn run(args: RunArgs) -> Result<()> {
             break;
         };
         for pass in PhasePass::ALL {
-            run_phase_pass(&config, &phase, pass)?;
+            run_phase_pass(&config, &phase, pass, &mut output)?;
         }
 
         if phase.id < end_phase {
@@ -103,7 +106,87 @@ pub fn run(args: RunArgs) -> Result<()> {
     Ok(())
 }
 
-fn load_phase_index(config: &RunConfig, phase_id: u32) -> Result<Vec<Phase>> {
+struct RunOutput<W> {
+    stream_mode: StreamMode,
+    renderer: Renderer,
+    output: W,
+}
+
+impl RunOutput<io::Stdout> {
+    fn stdout(stream_mode: StreamMode) -> Self {
+        Self::new(stream_mode, io::stdout())
+    }
+}
+
+impl<W: Write> RunOutput<W> {
+    fn new(stream_mode: StreamMode, output: W) -> Self {
+        Self {
+            stream_mode,
+            renderer: Renderer::new(RenderOptions::default()),
+            output,
+        }
+    }
+
+    fn with_status_line<T>(
+        &mut self,
+        label: impl Into<String>,
+        action: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.start_status_line(label)?;
+        let result = action(self);
+        let finish_result = self.finish();
+        if result.is_ok() {
+            finish_result?;
+        }
+        result
+    }
+
+    fn start_status_line(&mut self, label: impl Into<String>) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty {
+            return Ok(());
+        }
+        let rendered = self.renderer.start_status_line(label);
+        self.write(rendered)
+    }
+
+    fn phase_header(&mut self, phase: &Phase, pass: PhasePass) -> Result<()> {
+        let rendered = self
+            .renderer
+            .phase_header(phase.id, &phase.title, pass.label());
+        self.write(rendered)
+    }
+
+    fn render_event(&mut self, event: &TurnStreamEvent) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty {
+            return Ok(());
+        }
+        let rendered = self.renderer.render_event(event);
+        self.write(rendered)
+    }
+
+    fn tick_on_idle(&mut self, event: &TurnStreamEvent) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty || event != &TurnStreamEvent::Idle {
+            return Ok(());
+        }
+        let rendered = self.renderer.tick();
+        self.write(rendered)
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        let rendered = self.renderer.finish();
+        self.write(rendered)
+    }
+
+    fn write(&mut self, rendered: String) -> Result<()> {
+        write_run_output(&mut self.output, rendered)
+    }
+}
+
+fn load_phase_index(
+    config: &RunConfig,
+    phase_id: u32,
+    output: &mut RunOutput<impl Write>,
+) -> Result<Vec<Phase>> {
     let plan_text = fs::read_to_string(config.plan_abs())
         .with_context(|| format!("failed to read {}", config.plan_path.display()))?;
     let log_name = format!(
@@ -117,9 +200,11 @@ fn load_phase_index(config: &RunConfig, phase_id: u32) -> Result<Vec<Phase>> {
     )?;
     let thread_id = client.start_thread()?;
 
-    let first_turn = client.run_turn(
+    let first_turn = run_phase_index_turn(
+        &mut client,
         &thread_id,
         &phase_index::parser_prompt(&config.plan_path, &plan_text),
+        output,
     )?;
     let first_output = first_turn.transcript.response_text();
     match phase_index::parse_phase_index(&first_output) {
@@ -128,8 +213,12 @@ fn load_phase_index(config: &RunConfig, phase_id: u32) -> Result<Vec<Phase>> {
             Ok(phases)
         }
         Err(first_error) => {
-            let repair_turn =
-                client.run_turn(&thread_id, &phase_index::repair_prompt(&first_output))?;
+            let repair_turn = run_phase_index_turn(
+                &mut client,
+                &thread_id,
+                &phase_index::repair_prompt(&first_output),
+                output,
+            )?;
             let repair_output = repair_turn.transcript.response_text();
             let phases = phase_index::parse_phase_index(&repair_output).with_context(|| {
                 format!("phase index parser returned invalid JSON after retry: {first_error}")
@@ -140,7 +229,23 @@ fn load_phase_index(config: &RunConfig, phase_id: u32) -> Result<Vec<Phase>> {
     }
 }
 
-fn run_phase_pass(config: &RunConfig, phase: &Phase, pass: PhasePass) -> Result<()> {
+fn run_phase_index_turn(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    prompt: &str,
+    output: &mut RunOutput<impl Write>,
+) -> Result<CompletedTurn> {
+    run_streaming_turn(client, thread_id, prompt, |event| {
+        output.tick_on_idle(event)
+    })
+}
+
+fn run_phase_pass(
+    config: &RunConfig,
+    phase: &Phase,
+    pass: PhasePass,
+    output: &mut RunOutput<impl Write>,
+) -> Result<()> {
     let log_name = format!(
         "{}-phase-{phase:02}-{action}.jsonl",
         config.runtime.run_stamp(),
@@ -153,28 +258,32 @@ fn run_phase_pass(config: &RunConfig, phase: &Phase, pass: PhasePass) -> Result<
         config.stream_mode == StreamMode::Raw,
     )?;
     let thread_id = client.start_thread()?;
-    let mut renderer = Renderer::new(RenderOptions::default());
-    let mut stdout = io::stdout();
-    write_run_output(
-        &mut stdout,
-        renderer.phase_header(phase.id, &phase.title, pass.label()),
-    )?;
-    let mut output_result = Ok(());
-    client.run_turn_streaming(
+    output.phase_header(phase, pass)?;
+    run_streaming_turn(
+        &mut client,
         &thread_id,
         &prompt::phase_prompt(&config.plan_path, &config.agents_path, phase, pass),
-        |event| {
-            if config.stream_mode == StreamMode::Pretty && output_result.is_ok() {
-                output_result = write_run_output(&mut stdout, renderer.render_event(&event));
-            }
-            TurnControl::Continue
-        },
+        |event| output.render_event(event),
     )?;
-    if output_result.is_ok() {
-        output_result = write_run_output(&mut stdout, renderer.finish());
-    }
-    output_result?;
+    output.finish()?;
     client.stop()
+}
+
+fn run_streaming_turn(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    prompt: &str,
+    mut render_event: impl FnMut(&TurnStreamEvent) -> Result<()>,
+) -> Result<CompletedTurn> {
+    let mut output_result = Ok(());
+    let turn = client.run_turn_streaming(thread_id, prompt, |event| {
+        if output_result.is_ok() {
+            output_result = render_event(&event);
+        }
+        TurnControl::Continue
+    })?;
+    output_result?;
+    Ok(turn)
 }
 
 fn write_run_output(output: &mut impl Write, rendered: String) -> Result<()> {
