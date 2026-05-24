@@ -1,6 +1,9 @@
+use std::io::IsTerminal;
+
 use anyhow::Result;
 use clap::Parser;
-use lgtm_app_server_client::{AppServerClient, AppServerConfig, CompletedTurn};
+use lgtm_app_server_client::{AppServerClient, AppServerConfig, TurnControl};
+use lgtm_output::{ColorMode, RenderOptions, Renderer};
 
 const VALIDATION_PROMPTS: &[&str] = &[
     "Use the shell command tool to run `pwd` and `ls -la` in the current directory. Then summarize what files are present.",
@@ -36,10 +39,17 @@ fn main() -> Result<()> {
     );
     println!();
 
+    let mut renderer = Renderer::new(RenderOptions {
+        color_mode: stdout_color_mode(),
+        ..RenderOptions::default()
+    });
     for (index, prompt) in VALIDATION_PROMPTS.iter().enumerate() {
         let n = index + 1;
-        let turn = server.run_turn(&thread_id, prompt)?;
-        print_turn(n, prompt, &turn);
+        print_prompt(n, prompt);
+        server.run_turn_streaming(&thread_id, prompt, |event| {
+            print!("{}", renderer.render_event(&event));
+            TurnControl::Continue
+        })?;
     }
 
     server.stop()?;
@@ -60,48 +70,19 @@ fn demo_config() -> AppServerConfig {
     }
 }
 
-fn print_turn(n: usize, prompt: &str, turn: &CompletedTurn) {
+fn print_prompt(n: usize, prompt: &str) {
     println!("Turn {n}");
     println!("  prompt:");
     for line in prompt.lines() {
         println!("    {line}");
     }
-    println!("  id: {}", turn.turn_id);
-    println!("  status: {}", turn.status);
-
-    if !turn.transcript.plan.is_empty() {
-        println!("  plan:");
-        for step in &turn.transcript.plan {
-            println!("    [{}] {}", step.status, step.step);
-        }
-    }
-
-    let activity = turn.transcript.activity_items();
-    if !activity.is_empty() {
-        println!("  activity:");
-        for item in activity {
-            println!("    - {}", item.title);
-            for detail in &item.details {
-                println!("      {detail}");
-            }
-            if let Some(output) = item.output_preview() {
-                println!("      output:");
-                for line in output.lines() {
-                    println!("        {line}");
-                }
-            }
-        }
-    }
-
-    let response = turn.transcript.response_text();
-    if response.trim().is_empty() {
-        println!("  response: <empty>");
-    } else {
-        println!("  response:");
-        for line in response.trim().lines() {
-            println!("    {line}");
-        }
-    }
-
     println!();
+}
+
+fn stdout_color_mode() -> ColorMode {
+    if std::env::var_os("NO_COLOR").is_some() || !std::io::stdout().is_terminal() {
+        ColorMode::Never
+    } else {
+        ColorMode::Always
+    }
 }

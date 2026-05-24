@@ -1,3 +1,4 @@
+mod data;
 mod item;
 
 use std::collections::BTreeMap;
@@ -10,9 +11,10 @@ use crate::{
     text::non_empty,
 };
 
-use item::ItemKind;
-
-pub use item::TranscriptItem;
+pub use data::{
+    CommandExecution, DynamicToolCall, FileChange, McpToolCall, TranscriptItemData, WebSearch,
+};
+pub use item::{ItemKind, TranscriptItem};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompletedTurn {
@@ -29,6 +31,17 @@ pub struct TurnTranscript {
 }
 
 impl TurnTranscript {
+    pub fn from_items(plan: Vec<PlanStep>, items: Vec<TranscriptItem>) -> Self {
+        let mut transcript = Self {
+            plan,
+            ..Self::default()
+        };
+        for item in items {
+            transcript.upsert_item(item);
+        }
+        transcript
+    }
+
     fn upsert_item(&mut self, item: TranscriptItem) -> TranscriptItem {
         if !self.items.contains_key(item.id()) {
             self.item_order.push(item.id().to_string());
@@ -65,6 +78,10 @@ impl TurnTranscript {
             .filter(|item| item.kind() != ItemKind::AgentMessage && item.kind() != ItemKind::Plan)
             .filter(|item| item.is_renderable())
             .collect()
+    }
+
+    pub fn items(&self) -> Vec<&TranscriptItem> {
+        self.ordered_items().collect()
     }
 
     fn ordered_items(&self) -> impl Iterator<Item = &TranscriptItem> {

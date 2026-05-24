@@ -1,0 +1,10 @@
+[package]
+name = "lgtm-output"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lgtm-app-server-client = { path = "../app-server-client" }
+
+[dev-dependencies]
+serde_json = "1.0"

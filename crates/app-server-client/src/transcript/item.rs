@@ -1,5 +1,9 @@
 use serde_json::Value;
 
+use super::{
+    CommandExecution, DynamicToolCall, FileChange, McpToolCall, TranscriptItemData, WebSearch,
+    data::empty_data,
+};
 use crate::{
     json::get_str,
     text::{non_empty, preview},
@@ -24,8 +28,10 @@ pub struct TranscriptItem {
     kind: ItemKind,
     pub title: String,
     pub details: Vec<String>,
+    status: Option<String>,
     text: Option<String>,
     output: String,
+    data: TranscriptItemData,
 }
 
 impl TranscriptItem {
@@ -45,28 +51,51 @@ impl TranscriptItem {
     }
 
     fn new(id: String, kind: ItemKind, title: impl Into<String>) -> Self {
+        Self::new_with_data(id, kind, title, empty_data(kind))
+    }
+
+    fn new_with_data(
+        id: String,
+        kind: ItemKind,
+        title: impl Into<String>,
+        data: TranscriptItemData,
+    ) -> Self {
         Self {
             id,
             kind,
             title: title.into(),
             details: Vec::new(),
+            status: None,
             text: None,
             output: String::new(),
+            data,
         }
     }
 
-    pub(crate) fn from_thread_item(item: &Value) -> Option<Self> {
+    pub fn from_app_server_item(item: &Value) -> Option<Self> {
         let id = get_str(item, &["id"]).unwrap_or("<missing-id>").to_string();
         match item.get("type").and_then(Value::as_str)? {
             "userMessage" | "hookPrompt" => None,
             "agentMessage" => {
-                let mut transcript_item = Self::new(id, ItemKind::AgentMessage, "assistant");
-                transcript_item.text = string_field(item, "text");
+                let text = string_field(item, "text");
+                let mut transcript_item = Self::new_with_data(
+                    id,
+                    ItemKind::AgentMessage,
+                    "assistant",
+                    TranscriptItemData::AgentMessage { text: text.clone() },
+                );
+                transcript_item.text = text;
                 Some(transcript_item)
             }
             "plan" => {
-                let mut transcript_item = Self::new(id, ItemKind::Plan, "plan");
-                transcript_item.text = string_field(item, "text");
+                let text = string_field(item, "text");
+                let mut transcript_item = Self::new_with_data(
+                    id,
+                    ItemKind::Plan,
+                    "plan",
+                    TranscriptItemData::Plan { text: text.clone() },
+                );
+                transcript_item.text = text;
                 Some(transcript_item)
             }
             "reasoning" => Some(reasoning_item(id, item)),
@@ -93,21 +122,41 @@ impl TranscriptItem {
             )),
             "contextCompaction" => Some(Self::new(id, ItemKind::Other, "context compaction")),
             other => {
-                let mut transcript_item =
-                    Self::new(id, ItemKind::Other, format!("unknown item: {other}"));
-                transcript_item.output = compact_json(item);
+                let output = compact_json(item);
+                let mut transcript_item = Self::new_with_data(
+                    id,
+                    ItemKind::Other,
+                    format!("unknown item: {other}"),
+                    TranscriptItemData::Other {
+                        details: Vec::new(),
+                        output: output.clone(),
+                    },
+                );
+                transcript_item.output = output;
                 Some(transcript_item)
             }
         }
     }
 
+    pub(crate) fn from_thread_item(item: &Value) -> Option<Self> {
+        Self::from_app_server_item(item)
+    }
+
     pub(crate) fn file_patch_update(id: String, item: &Value) -> Self {
-        let mut transcript_item = Self::new(id, ItemKind::FileChange, "file changes");
-        transcript_item.details = file_change_details(item);
+        let changes = file_changes(item);
+        let mut transcript_item = Self::new_with_data(
+            id,
+            ItemKind::FileChange,
+            "file changes",
+            TranscriptItemData::FileChange {
+                changes: changes.clone(),
+            },
+        );
+        transcript_item.details = file_change_details(&changes);
         transcript_item
     }
 
-    pub(crate) fn id(&self) -> &str {
+    pub fn id(&self) -> &str {
         &self.id
     }
 
@@ -115,7 +164,19 @@ impl TranscriptItem {
         self.kind
     }
 
+    pub fn item_kind(&self) -> ItemKind {
+        self.kind
+    }
+
+    pub fn data(&self) -> &TranscriptItemData {
+        &self.data
+    }
+
     pub(crate) fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    pub fn message_text(&self) -> Option<&str> {
         self.text.as_deref()
     }
 
@@ -123,13 +184,46 @@ impl TranscriptItem {
         &self.output
     }
 
+    pub fn output_text(&self) -> &str {
+        &self.output
+    }
+
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    pub fn is_in_progress(&self) -> bool {
+        self.status() == Some("inProgress")
+    }
+
+    pub fn is_final(&self) -> bool {
+        matches!(
+            self.status(),
+            Some("completed" | "failed" | "declined" | "interrupted")
+        )
+    }
+
     pub(crate) fn push_output(&mut self, delta: &str) {
         self.output.push_str(delta);
+        match &mut self.data {
+            TranscriptItemData::CommandExecution(command) => command.output.push_str(delta),
+            TranscriptItemData::Reasoning { content, .. } => content.push_str(delta),
+            TranscriptItemData::Other { output, .. } => output.push_str(delta),
+            _ => {}
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn set_text(&mut self, text: impl Into<String>) {
-        self.text = Some(text.into());
+        let text = text.into();
+        self.text = Some(text.clone());
+        match &mut self.data {
+            TranscriptItemData::AgentMessage { text: item_text }
+            | TranscriptItemData::Plan { text: item_text } => {
+                *item_text = Some(text);
+            }
+            _ => {}
+        }
     }
 
     pub fn output_preview(&self) -> Option<String> {
@@ -156,12 +250,26 @@ impl TranscriptItem {
 }
 
 fn reasoning_item(id: String, item: &Value) -> TranscriptItem {
-    let mut transcript_item = TranscriptItem::new(id, ItemKind::Reasoning, "reasoning");
-    transcript_item.details = string_array_field(item, "summary")
+    let summary = string_array_field(item, "summary");
+    let content = string_array_field(item, "content");
+    let output = if content.is_empty() {
+        String::new()
+    } else {
+        content.join("\n")
+    };
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::Reasoning,
+        "reasoning",
+        TranscriptItemData::Reasoning {
+            summary: summary.clone(),
+            content: output.clone(),
+        },
+    );
+    transcript_item.details = summary
         .into_iter()
         .map(|line| format!("summary: {line}"))
         .collect();
-    let content = string_array_field(item, "content");
     if !content.is_empty() {
         transcript_item.output = content.join("\n");
     }
@@ -170,28 +278,56 @@ fn reasoning_item(id: String, item: &Value) -> TranscriptItem {
 
 fn command_item(id: String, item: &Value) -> TranscriptItem {
     let command = string_field(item, "command").unwrap_or_else(|| "<unknown command>".to_string());
-    let mut transcript_item =
-        TranscriptItem::new(id, ItemKind::CommandExecution, format!("$ {command}"));
-    push_detail(&mut transcript_item, "cwd", string_field(item, "cwd"));
-    push_detail(&mut transcript_item, "status", string_field(item, "status"));
-    push_detail(&mut transcript_item, "exit", number_field(item, "exitCode"));
+    let cwd = string_field(item, "cwd");
+    let exit_code = i64_field(item, "exitCode");
+    let duration_ms = u64_field(item, "durationMs");
+    let output = string_field(item, "aggregatedOutput").unwrap_or_default();
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::CommandExecution,
+        format!("$ {command}"),
+        TranscriptItemData::CommandExecution(CommandExecution {
+            command: command.clone(),
+            cwd: cwd.clone(),
+            exit_code,
+            duration_ms,
+            output: output.clone(),
+        }),
+    );
+    record_status(&mut transcript_item, item);
+    push_detail(&mut transcript_item, "cwd", cwd);
+    push_detail(
+        &mut transcript_item,
+        "exit",
+        exit_code.map(|value| value.to_string()),
+    );
     push_detail(
         &mut transcript_item,
         "duration_ms",
-        number_field(item, "durationMs"),
+        duration_ms.map(|value| value.to_string()),
     );
-    transcript_item.output = string_field(item, "aggregatedOutput").unwrap_or_default();
+    transcript_item.output = output;
     transcript_item
 }
 
 fn file_change_item(id: String, item: &Value) -> TranscriptItem {
-    let mut transcript_item = TranscriptItem::new(id, ItemKind::FileChange, "file changes");
-    push_detail(&mut transcript_item, "status", string_field(item, "status"));
-    transcript_item.details.extend(file_change_details(item));
+    let changes = file_changes(item);
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::FileChange,
+        "file changes",
+        TranscriptItemData::FileChange {
+            changes: changes.clone(),
+        },
+    );
+    record_status(&mut transcript_item, item);
+    transcript_item
+        .details
+        .extend(file_change_details(&changes));
     transcript_item
 }
 
-fn file_change_details(value: &Value) -> Vec<String> {
+fn file_changes(value: &Value) -> Vec<FileChange> {
     value
         .get("changes")
         .and_then(Value::as_array)
@@ -200,20 +336,36 @@ fn file_change_details(value: &Value) -> Vec<String> {
         .filter_map(|change| {
             let path = string_field(change, "path")?;
             let kind = change_kind(change.get("kind"));
-            Some(format!("{kind}: {path}"))
+            Some(FileChange { kind, path })
         })
+        .collect()
+}
+
+fn file_change_details(changes: &[FileChange]) -> Vec<String> {
+    changes
+        .iter()
+        .map(|change| format!("{}: {}", change.kind, change.path))
         .collect()
 }
 
 fn web_search_item(id: String, item: &Value) -> TranscriptItem {
     let query = string_field(item, "query").unwrap_or_else(|| "<empty query>".to_string());
-    let mut transcript_item =
-        TranscriptItem::new(id, ItemKind::WebSearch, format!("web search: {query}"));
-    if let Some(action) = item.get("action").filter(|action| !action.is_null()) {
-        transcript_item.details.push(format!(
-            "action: {}",
-            preview(&compact_json(action), 1, 500)
-        ));
+    let action = item
+        .get("action")
+        .filter(|action| !action.is_null())
+        .map(|action| preview(&compact_json(action), 1, 500));
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::WebSearch,
+        format!("web search: {query}"),
+        TranscriptItemData::WebSearch(WebSearch {
+            query: query.clone(),
+            action: action.clone(),
+        }),
+    );
+    record_status(&mut transcript_item, item);
+    if let Some(action) = action {
+        transcript_item.details.push(format!("action: {action}"));
     }
     transcript_item
 }
@@ -221,65 +373,117 @@ fn web_search_item(id: String, item: &Value) -> TranscriptItem {
 fn mcp_tool_item(id: String, item: &Value) -> TranscriptItem {
     let server = string_field(item, "server").unwrap_or_else(|| "<unknown server>".to_string());
     let tool = string_field(item, "tool").unwrap_or_else(|| "<unknown tool>".to_string());
-    let mut transcript_item =
-        TranscriptItem::new(id, ItemKind::McpToolCall, format!("mcp {server}/{tool}"));
-    push_detail(&mut transcript_item, "status", string_field(item, "status"));
+    let duration_ms = u64_field(item, "durationMs");
+    let arguments = item
+        .get("arguments")
+        .map(|arguments| preview(&compact_json(arguments), 1, 500));
+    let error = item
+        .get("error")
+        .filter(|error| !error.is_null())
+        .map(|error| preview(&compact_json(error), 1, 500));
+    let result = item
+        .get("result")
+        .filter(|result| !result.is_null())
+        .map(|result| preview(&compact_json(result), 20, 2_000))
+        .unwrap_or_default();
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::McpToolCall,
+        format!("mcp {server}/{tool}"),
+        TranscriptItemData::McpToolCall(McpToolCall {
+            server: server.clone(),
+            tool: tool.clone(),
+            duration_ms,
+            arguments: arguments.clone(),
+            error: error.clone(),
+            result: result.clone(),
+        }),
+    );
+    record_status(&mut transcript_item, item);
     push_detail(
         &mut transcript_item,
         "duration_ms",
-        number_field(item, "durationMs"),
+        duration_ms.map(|value| value.to_string()),
     );
-    if let Some(arguments) = item.get("arguments") {
-        transcript_item.details.push(format!(
-            "arguments: {}",
-            preview(&compact_json(arguments), 1, 500)
-        ));
-    }
-    if let Some(error) = item.get("error").filter(|error| !error.is_null()) {
+    if let Some(arguments) = arguments {
         transcript_item
             .details
-            .push(format!("error: {}", preview(&compact_json(error), 1, 500)));
+            .push(format!("arguments: {arguments}"));
     }
-    if let Some(result) = item.get("result").filter(|result| !result.is_null()) {
-        transcript_item.output = preview(&compact_json(result), 20, 2_000);
+    if let Some(error) = error {
+        transcript_item.details.push(format!("error: {error}"));
     }
+    transcript_item.output = result;
     transcript_item
 }
 
 fn dynamic_tool_item(id: String, item: &Value) -> TranscriptItem {
     let tool = string_field(item, "tool").unwrap_or_else(|| "<unknown tool>".to_string());
-    let title = match string_field(item, "namespace") {
+    let namespace = string_field(item, "namespace");
+    let title = match &namespace {
         Some(namespace) => format!("tool {namespace}/{tool}"),
         None => format!("tool {tool}"),
     };
-    let mut transcript_item = TranscriptItem::new(id, ItemKind::DynamicToolCall, title);
-    push_detail(&mut transcript_item, "status", string_field(item, "status"));
-    push_detail(&mut transcript_item, "success", bool_field(item, "success"));
+    let success = item.get("success").and_then(Value::as_bool);
+    let duration_ms = u64_field(item, "durationMs");
+    let arguments = item
+        .get("arguments")
+        .map(|arguments| preview(&compact_json(arguments), 1, 500));
+    let content = item
+        .get("contentItems")
+        .filter(|content| !content.is_null())
+        .map(|content| preview(&compact_json(content), 20, 2_000))
+        .unwrap_or_default();
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::DynamicToolCall,
+        title,
+        TranscriptItemData::DynamicToolCall(DynamicToolCall {
+            namespace,
+            tool: tool.clone(),
+            success,
+            duration_ms,
+            arguments: arguments.clone(),
+            content: content.clone(),
+        }),
+    );
+    record_status(&mut transcript_item, item);
+    push_detail(
+        &mut transcript_item,
+        "success",
+        success.map(|value| value.to_string()),
+    );
     push_detail(
         &mut transcript_item,
         "duration_ms",
-        number_field(item, "durationMs"),
+        duration_ms.map(|value| value.to_string()),
     );
-    if let Some(arguments) = item.get("arguments") {
-        transcript_item.details.push(format!(
-            "arguments: {}",
-            preview(&compact_json(arguments), 1, 500)
-        ));
+    if let Some(arguments) = arguments {
+        transcript_item
+            .details
+            .push(format!("arguments: {arguments}"));
     }
-    if let Some(content) = item
-        .get("contentItems")
-        .filter(|content| !content.is_null())
-    {
-        transcript_item.output = preview(&compact_json(content), 20, 2_000);
-    }
+    transcript_item.output = content;
     transcript_item
 }
 
 fn collab_tool_item(id: String, item: &Value) -> TranscriptItem {
     let tool = string_field(item, "tool").unwrap_or_else(|| "<unknown tool>".to_string());
-    let mut transcript_item =
-        TranscriptItem::new(id, ItemKind::DynamicToolCall, format!("agent tool {tool}"));
-    push_detail(&mut transcript_item, "status", string_field(item, "status"));
+    let prompt = string_field(item, "prompt").map(|prompt| preview(&prompt, 2, 500));
+    let mut transcript_item = TranscriptItem::new_with_data(
+        id,
+        ItemKind::DynamicToolCall,
+        format!("agent tool {tool}"),
+        TranscriptItemData::DynamicToolCall(DynamicToolCall {
+            namespace: Some("agent".to_string()),
+            tool: tool.clone(),
+            success: None,
+            duration_ms: None,
+            arguments: prompt.clone(),
+            content: String::new(),
+        }),
+    );
+    record_status(&mut transcript_item, item);
     push_detail(&mut transcript_item, "model", string_field(item, "model"));
     push_detail(
         &mut transcript_item,
@@ -291,10 +495,8 @@ fn collab_tool_item(id: String, item: &Value) -> TranscriptItem {
         "sender",
         string_field(item, "senderThreadId"),
     );
-    if let Some(prompt) = string_field(item, "prompt") {
-        transcript_item
-            .details
-            .push(format!("prompt: {}", preview(&prompt, 2, 500)));
+    if let Some(prompt) = prompt {
+        transcript_item.details.push(format!("prompt: {prompt}"));
     }
     transcript_item
 }
@@ -302,6 +504,10 @@ fn collab_tool_item(id: String, item: &Value) -> TranscriptItem {
 fn simple_path_item(id: String, kind: ItemKind, title: &str, item: &Value) -> TranscriptItem {
     let mut transcript_item = TranscriptItem::new(id, kind, title);
     push_detail(&mut transcript_item, "path", string_field(item, "path"));
+    transcript_item.data = TranscriptItemData::Other {
+        details: transcript_item.details.clone(),
+        output: String::new(),
+    };
     transcript_item
 }
 
@@ -314,6 +520,10 @@ fn simple_text_item(
 ) -> TranscriptItem {
     let mut transcript_item = TranscriptItem::new(id, kind, title);
     transcript_item.output = string_field(item, field).unwrap_or_default();
+    transcript_item.data = TranscriptItemData::Other {
+        details: Vec::new(),
+        output: transcript_item.output.clone(),
+    };
     transcript_item
 }
 
@@ -321,6 +531,10 @@ fn push_detail(item: &mut TranscriptItem, label: &str, value: Option<String>) {
     if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
         item.details.push(format!("{label}: {value}"));
     }
+}
+
+fn record_status(item: &mut TranscriptItem, value: &Value) {
+    item.status = string_field(value, "status");
 }
 
 fn string_field(value: &Value, key: &str) -> Option<String> {
@@ -341,20 +555,12 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
         .collect()
 }
 
-fn number_field(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|value| {
-        value
-            .as_i64()
-            .map(|number| number.to_string())
-            .or_else(|| value.as_u64().map(|number| number.to_string()))
-    })
+fn i64_field(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
 }
 
-fn bool_field(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_bool)
-        .map(|value| value.to_string())
+fn u64_field(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
 }
 
 fn change_kind(kind: Option<&Value>) -> String {

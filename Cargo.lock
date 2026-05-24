@@ -131,12 +131,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "lgtm-output"
+version = "0.1.0"
+dependencies = [
+ "lgtm-app-server-client",
+ "serde_json",
+]
+
+[[package]]
 name = "lgtm-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "lgtm-app-server-client",
+ "lgtm-output",
 ]
 
 [[package]]

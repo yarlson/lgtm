@@ -7,4 +7,7 @@ mod transcript;
 
 pub use client::{AppServerClient, TurnControl, TurnStreamEvent};
 pub use config::AppServerConfig;
-pub use transcript::{CompletedTurn, PlanStep, TranscriptItem, TurnTranscript};
+pub use transcript::{
+    CommandExecution, CompletedTurn, DynamicToolCall, FileChange, ItemKind, McpToolCall, PlanStep,
+    TranscriptItem, TranscriptItemData, TurnTranscript, WebSearch,
+};
