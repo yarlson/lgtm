@@ -1,6 +1,7 @@
 mod client;
 mod config;
 mod json;
+mod protocol;
 mod text;
 mod transcript;
 
