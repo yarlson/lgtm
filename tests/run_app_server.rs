@@ -83,6 +83,9 @@ PLAN
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(">_ lgtm"));
+    assert!(stdout.contains("mode:        run"));
+    assert!(stdout.contains("permissions: YOLO mode"));
     assert!(stdout.contains("• Phase 01 implementation: Skeleton"));
     assert!(stdout.contains("• Phase 01 validation: Skeleton"));
     assert!(stdout.contains("• Phase 01 review: Skeleton"));

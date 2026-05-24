@@ -13,7 +13,10 @@ use crate::{
     cli::{RunArgs, StreamMode},
     commands::runtime::{CommandRuntime, require_file},
     git,
-    output::{RenderOptions, Renderer},
+    output::{
+        RenderOptions, Renderer,
+        banner::{self, Banner, BannerMode},
+    },
     phase_index::{self, Phase},
     prompt::{self, PhasePass},
     skills,
@@ -56,6 +59,12 @@ impl RunConfig {
 
 pub fn run(args: RunArgs) -> Result<()> {
     let config = RunConfig::from_args(args)?;
+    let mut output = RunOutput::stdout(config.stream_mode);
+    output.banner(Banner {
+        mode: BannerMode::Run,
+        root: config.runtime.root(),
+        codex_bin: config.runtime.codex_bin(),
+    })?;
 
     require_file(&config.plan_abs(), &config.plan_path)?;
     require_file(&config.agents_abs(), &config.agents_path)?;
@@ -63,7 +72,6 @@ pub fn run(args: RunArgs) -> Result<()> {
     git::ensure_initialized(config.runtime.root())?;
     skills::install(config.runtime.root())?;
 
-    let mut output = RunOutput::stdout(config.stream_mode);
     let mut phase_id = config.start_phase;
     loop {
         if config
@@ -147,6 +155,13 @@ impl<W: Write> RunOutput<W> {
         }
         let rendered = self.renderer.start_status_line(label);
         self.write(rendered)
+    }
+
+    fn banner(&mut self, banner: Banner<'_>) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty {
+            return Ok(());
+        }
+        self.write(banner::render(banner, &RenderOptions::default()))
     }
 
     fn phase_header(&mut self, phase: &Phase, pass: PhasePass) -> Result<()> {
@@ -365,5 +380,22 @@ mod tests {
 
         assert_eq!(output.content, b"status line");
         assert_eq!(output.flushes, 1);
+    }
+
+    #[test]
+    fn raw_mode_suppresses_banner() {
+        let mut output = RunOutput::new(StreamMode::Raw, FlushCountingWriter::default());
+        let root = PathBuf::from("/repo");
+
+        output
+            .banner(Banner {
+                mode: BannerMode::Run,
+                root: root.as_path(),
+                codex_bin: "codex",
+            })
+            .expect("banner");
+
+        assert!(output.output.content.is_empty());
+        assert_eq!(output.output.flushes, 0);
     }
 }

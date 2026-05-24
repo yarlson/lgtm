@@ -47,6 +47,10 @@ impl CommandRuntime {
         &self.root
     }
 
+    pub(super) fn codex_bin(&self) -> &str {
+        &self.codex_bin
+    }
+
     #[cfg(test)]
     pub(super) fn log_dir(&self) -> &Path {
         &self.log_dir

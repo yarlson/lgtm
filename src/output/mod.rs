@@ -1,3 +1,4 @@
+pub(crate) mod banner;
 mod item;
 mod markdown;
 mod options;

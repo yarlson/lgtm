@@ -12,7 +12,10 @@ use crate::{
     commands::runtime::CommandRuntime,
     composer::{self, ComposerSubmission},
     git,
-    output::{RenderOptions, Renderer},
+    output::{
+        RenderOptions, Renderer,
+        banner::{self, Banner, BannerMode},
+    },
     prompt, skills,
 };
 
@@ -53,6 +56,19 @@ pub fn run(args: PlanArgs) -> Result<()> {
     require_planning_tty()?;
 
     let config = PlanConfig::from_args(args)?;
+    let mut stdout = io::stdout();
+    write_planning_output(
+        &mut stdout,
+        banner::render(
+            Banner {
+                mode: BannerMode::Plan,
+                root: config.runtime.root(),
+                codex_bin: config.runtime.codex_bin(),
+            },
+            &RenderOptions::default(),
+        ),
+    )?;
+
     skills::preflight(config.runtime.root())?;
     git::ensure_initialized(config.runtime.root())?;
     skills::install(config.runtime.root())?;
@@ -66,7 +82,6 @@ pub fn run(args: PlanArgs) -> Result<()> {
         &config.agents_path,
         config.brief.as_deref(),
     );
-    let mut stdout = io::stdout();
     let mut turn_number = 1;
     let mut artifacts_complete = run_planning_turn(
         &config,
