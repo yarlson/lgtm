@@ -176,3 +176,7 @@ cargo build --all-targets --all-features
 Release packaging is defined in `.github/workflows/release.yml`; tagged
 releases build platform archives and can update the Homebrew formula through
 `scripts/update-homebrew-formula.sh`.
+
+## License
+
+[MIT](LICENSE)
