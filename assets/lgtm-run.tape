@@ -7,7 +7,7 @@ Set Shell "zsh"
 Set Theme "TokyoNight"
 Set FontSize 24
 Set Width 1100
-Set Height 620
+Set Height 1240
 Set Padding 18
 Set WindowBar Colorful
 Set TypingSpeed 35ms
