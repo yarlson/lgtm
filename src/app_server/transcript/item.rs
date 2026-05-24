@@ -72,7 +72,7 @@ impl TranscriptItem {
     }
 
     pub fn from_app_server_item(item: &Value) -> Option<Self> {
-        let id = get_str(item, &["id"]).unwrap_or("<missing-id>").to_string();
+        let id = get_str(item, &["id"])?.to_string();
         match item.get("type").and_then(Value::as_str)? {
             "userMessage" | "hookPrompt" => None,
             "agentMessage" => {

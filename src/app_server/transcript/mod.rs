@@ -451,4 +451,14 @@ mod tests {
         ));
         assert!(transcript.activity_items().is_empty());
     }
+
+    #[test]
+    fn transcript_rejects_items_without_ids() {
+        let item = TranscriptItem::from_thread_item(&json!({
+            "type": "agentMessage",
+            "text": "hello"
+        }));
+
+        assert_eq!(item, None);
+    }
 }

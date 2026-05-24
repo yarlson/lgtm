@@ -155,14 +155,32 @@ fn ensure_gitignore(root: &Path) -> Result<()> {
 }
 
 fn is_managed_skill(expected_name: &str, body: &str) -> bool {
-    frontmatter_value(body, "name").as_deref() == Some(expected_name)
-        && frontmatter_value(body, "managed-by").as_deref() == Some("lgtm")
+    let Some(frontmatter) = frontmatter(body) else {
+        return false;
+    };
+
+    frontmatter_value(&frontmatter, "name").as_deref() == Some(expected_name)
+        && frontmatter_value(&frontmatter, "managed-by").as_deref() == Some("lgtm")
 }
 
-fn frontmatter_value(body: &str, key: &str) -> Option<String> {
-    let body = body.strip_prefix("---\n")?;
-    let (frontmatter, _) = body.split_once("\n---")?;
+fn frontmatter(body: &str) -> Option<String> {
+    let mut lines = body.lines();
+    if lines.next()? != "---" {
+        return None;
+    }
 
+    let mut frontmatter = Vec::new();
+    for line in lines {
+        if line == "---" {
+            return Some(frontmatter.join("\n"));
+        }
+        frontmatter.push(line);
+    }
+
+    None
+}
+
+fn frontmatter_value(frontmatter: &str, key: &str) -> Option<String> {
     frontmatter.lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
         if name.trim() == key {
@@ -182,6 +200,18 @@ mod tests {
         for skill in SKILLS {
             assert!(is_managed_skill(skill.name, skill.body), "{}", skill.name);
         }
+    }
+
+    #[test]
+    fn malformed_frontmatter_does_not_authorize_overwrite() {
+        let body = "\
+---
+name: lgtm-phase-implement
+managed-by: lgtm
+---not-a-frontmatter-close
+";
+
+        assert!(!is_managed_skill("lgtm-phase-implement", body));
     }
 
     #[test]
