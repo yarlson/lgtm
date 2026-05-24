@@ -1,28 +1,10 @@
-use std::{
-    io::IsTerminal,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{io::IsTerminal, time::Duration};
 
 use crate::output::terminal;
 
 const FRAMES: &[&str] = &[".  ", ".. ", "...", ".. "];
 const FALLBACK_TERMINAL_WIDTH: u16 = 80;
 const MIN_SPINNER_WIDTH: usize = 20;
-const LABELS: &[&str] = &[
-    "procrastinating",
-    "doomscrolling",
-    "moonwalking",
-    "noodling",
-    "doodling",
-    "bamboozling",
-    "twiddling",
-    "fidgeting",
-    "foot-tapping",
-    "blinking",
-    "sighing",
-    "napping",
-    "facepalming",
-];
 #[derive(Debug, Clone)]
 pub(crate) struct TerminalSpinner {
     interactive: bool,
@@ -112,18 +94,6 @@ impl Drop for TerminalSpinner {
 
 pub(crate) fn frame(index: usize) -> &'static str {
     FRAMES[index % FRAMES.len()]
-}
-
-pub(crate) fn random_text_except(current: &'static str) -> &'static str {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let mut index = nanos as usize % LABELS.len();
-    if LABELS[index] == current {
-        index = (index + 1) % LABELS.len();
-    }
-    LABELS[index]
 }
 
 pub(crate) fn line_for_width(
@@ -230,12 +200,5 @@ mod tests {
     #[test]
     fn line_for_width_rejects_tiny_widths() {
         assert!(line_for_width("thinking", "...", Duration::from_secs(7), 12, false).is_none());
-    }
-
-    #[test]
-    fn random_text_except_avoids_immediate_repeat() {
-        let current = LABELS[0];
-
-        assert_ne!(random_text_except(current), current);
     }
 }

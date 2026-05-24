@@ -21,7 +21,7 @@ pub struct Renderer {
     active_items: HashMap<String, ActiveItem>,
     active_order: Vec<String>,
     spinner: spinner::TerminalSpinner,
-    phase_status: Option<PhaseStatus>,
+    activity_status: Option<ActivityStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,10 +32,9 @@ enum ActiveItem {
 }
 
 #[derive(Debug, Clone)]
-struct PhaseStatus {
-    phase: u32,
-    label: String,
-    verb: &'static str,
+struct ActivityStatus {
+    idle_label: String,
+    activity_prefix: String,
     started_at: Instant,
 }
 
@@ -49,15 +48,15 @@ impl Renderer {
             active_items: HashMap::new(),
             active_order: Vec::new(),
             spinner: spinner::TerminalSpinner::new(spinner_color),
-            phase_status: None,
+            activity_status: None,
         }
     }
 
     pub fn phase_header(&mut self, phase: u32, title: &str, label: &str) -> String {
-        self.phase_status = Some(PhaseStatus {
-            phase,
-            label: label.to_string(),
-            verb: "working on",
+        let activity_prefix = format!("working on Phase {phase} {label}");
+        self.activity_status = Some(ActivityStatus {
+            idle_label: activity_prefix.clone(),
+            activity_prefix,
             started_at: Instant::now(),
         });
         ItemRenderer::new(&self.options).render_lines(vec![
@@ -66,6 +65,18 @@ impl Renderer {
                 Color::Blue,
                 format!("{phase:02} {label}: {title}"),
             ),
+            Line::blank(),
+        ])
+    }
+
+    pub fn planning_header(&mut self) -> String {
+        self.activity_status = Some(ActivityStatus {
+            idle_label: "working on planning".to_string(),
+            activity_prefix: "working on planning".to_string(),
+            started_at: Instant::now(),
+        });
+        ItemRenderer::new(&self.options).render_lines(vec![
+            ItemRenderer::new(&self.options).header("Planning", Color::Blue, ""),
             Line::blank(),
         ])
     }
@@ -165,7 +176,7 @@ impl Renderer {
 
     pub fn tick(&mut self) -> String {
         if self.active_items.is_empty() {
-            return self.render_phase_status_line();
+            return self.render_activity_status_line();
         }
         self.render_active_line()
     }
@@ -174,7 +185,7 @@ impl Renderer {
         let out = self.clear_active_line();
         self.active_items.clear();
         self.active_order.clear();
-        self.phase_status = None;
+        self.activity_status = None;
         out
     }
 
@@ -214,47 +225,38 @@ impl Renderer {
         };
 
         let label = match active {
-            ActiveItem::Command => self.phase_activity_label("running command"),
-            ActiveItem::FileChange { count: 1 } => self.phase_activity_label("editing file"),
+            ActiveItem::Command => self.activity_label("running command"),
+            ActiveItem::FileChange { count: 1 } => self.activity_label("editing file"),
             ActiveItem::FileChange { count } => {
-                self.phase_activity_label(format!("editing {count} files"))
+                self.activity_label(format!("editing {count} files"))
             }
-            ActiveItem::WebSearch => self.phase_activity_label("searching the web"),
+            ActiveItem::WebSearch => self.activity_label("searching the web"),
         };
-        self.render_spinner_line(&label, self.phase_elapsed())
+        self.render_spinner_line(&label, self.activity_elapsed())
     }
 
-    fn render_phase_status_line(&mut self) -> String {
-        let Some(status) = self.phase_status.clone() else {
+    fn render_activity_status_line(&mut self) -> String {
+        let Some(status) = self.activity_status.clone() else {
             return self.clear_active_line();
         };
 
-        self.render_spinner_line(
-            format!("{} Phase {} {}", status.verb, status.phase, status.label),
-            status.started_at.elapsed(),
-        )
+        self.render_spinner_line(status.idle_label, status.started_at.elapsed())
     }
 
     fn render_spinner_line(&mut self, label: impl AsRef<str>, elapsed: Duration) -> String {
         self.spinner.tick(label, elapsed)
     }
 
-    fn phase_elapsed(&self) -> Duration {
-        self.phase_status
+    fn activity_elapsed(&self) -> Duration {
+        self.activity_status
             .as_ref()
             .map(|status| status.started_at.elapsed())
             .unwrap_or_default()
     }
 
-    fn phase_activity_label(&self, activity: impl AsRef<str>) -> String {
-        match &self.phase_status {
-            Some(status) => format!(
-                "{} Phase {} {} - {}",
-                status.verb,
-                status.phase,
-                status.label,
-                activity.as_ref()
-            ),
+    fn activity_label(&self, activity: impl AsRef<str>) -> String {
+        match &self.activity_status {
+            Some(status) => format!("{} - {}", status.activity_prefix, activity.as_ref()),
             None => activity.as_ref().to_string(),
         }
     }

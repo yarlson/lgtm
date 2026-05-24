@@ -1,23 +1,20 @@
 use std::{
     fs,
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    time::Instant,
 };
 
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    app_server::{AppServerClient, CompletedTurn, ItemKind, TurnControl, TurnStreamEvent},
+    app_server::{AppServerClient, CompletedTurn, ItemKind, TurnControl},
     cli::PlanArgs,
     commands::runtime::CommandRuntime,
     composer::{self, ComposerSubmission},
     git,
-    output::{self, spinner},
+    output::{RenderOptions, Renderer},
     prompt, skills,
 };
-
-const INITIAL_PLAN_SPINNER_TEXT: &str = "exploring directory";
 
 #[derive(Debug, Clone)]
 struct PlanConfig {
@@ -69,23 +66,19 @@ pub fn run(args: PlanArgs) -> Result<()> {
         &config.agents_path,
         config.brief.as_deref(),
     );
+    let mut stdout = io::stdout();
     let mut turn_number = 1;
-    let mut turn = run_planning_turn(
+    let mut artifacts_complete = run_planning_turn(
         &config,
         &mut client,
         &thread_id,
         first_prompt,
         &artifacts_before,
-        INITIAL_PLAN_SPINNER_TEXT,
+        &mut stdout,
     )?;
-    let mut spinner_text = INITIAL_PLAN_SPINNER_TEXT;
 
     loop {
-        if let Some(message) = turn.last_agent_message.take() {
-            print_planning_message(&message);
-        }
-
-        if turn.artifacts_complete {
+        if artifacts_complete {
             return client.stop();
         }
 
@@ -97,22 +90,15 @@ pub fn run(args: PlanArgs) -> Result<()> {
 
         turn_number += 1;
         set_turn_log(&config, &mut client, turn_number)?;
-        spinner_text = spinner::random_text_except(spinner_text);
-        turn = run_planning_turn(
+        artifacts_complete = run_planning_turn(
             &config,
             &mut client,
             &thread_id,
             resume_prompt,
             &artifacts_before,
-            spinner_text,
+            &mut stdout,
         )?;
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PlanningTurnOutput {
-    last_agent_message: Option<String>,
-    artifacts_complete: bool,
 }
 
 fn run_planning_turn(
@@ -121,53 +107,58 @@ fn run_planning_turn(
     thread_id: &str,
     prompt: String,
     artifacts_before: &PlanningArtifactsSnapshot,
-    spinner_text: &'static str,
-) -> Result<PlanningTurnOutput> {
-    let started_at = Instant::now();
-    let mut spinner = spinner::TerminalSpinner::new(false);
+    output: &mut impl Write,
+) -> Result<bool> {
+    let mut renderer = Renderer::new(RenderOptions::default());
+    write_planning_output(output, renderer.planning_header())?;
+    let mut output_result = Ok(());
     let turn = client.run_turn_streaming(thread_id, &prompt, |event| {
-        if event == TurnStreamEvent::Idle {
-            print!("{}", spinner.tick(spinner_text, started_at.elapsed()));
+        if output_result.is_ok() {
+            output_result = write_planning_output(output, renderer.render_event(&event));
         }
         TurnControl::Continue
     })?;
-    print!("{}", spinner.clear());
+    if output_result.is_ok() {
+        output_result = write_planning_output(output, renderer.finish());
+    }
+    output_result?;
+
     let artifacts_after = PlanningArtifactsSnapshot::capture(config)?;
-    let last_agent_message = last_agent_message(&turn);
+    let has_agent_message = has_agent_message(&turn);
     let artifacts_complete = artifacts_before.is_complete_with(&artifacts_after);
-    if last_agent_message.is_none() && !artifacts_complete {
+    if !has_agent_message && !artifacts_complete {
         bail!(
             "codex plan turn completed without an agent message and did not complete planning artifacts"
         );
     }
 
-    Ok(PlanningTurnOutput {
-        last_agent_message,
-        artifacts_complete,
-    })
+    Ok(artifacts_complete)
 }
 
-fn last_agent_message(turn: &CompletedTurn) -> Option<String> {
+fn write_planning_output(output: &mut impl Write, rendered: String) -> Result<()> {
+    if rendered.is_empty() {
+        return Ok(());
+    }
+
+    output
+        .write_all(rendered.as_bytes())
+        .context("failed to write planning output")?;
+    output.flush().context("failed to flush planning output")
+}
+
+fn has_agent_message(turn: &CompletedTurn) -> bool {
     turn.transcript
         .items()
         .into_iter()
         .filter(|item| item.item_kind() == ItemKind::AgentMessage)
-        .filter_map(|message| {
+        .any(|message| {
             let message = message
                 .message_text()
                 .filter(|text| !text.trim().is_empty())
                 .unwrap_or_else(|| message.output_text())
                 .trim();
-            (!message.is_empty()).then(|| message.to_string())
+            !message.is_empty()
         })
-        .next_back()
-}
-
-fn print_planning_message(message: &str) {
-    let rendered = output::markdown_to_string(message);
-    if !rendered.is_empty() {
-        print!("{rendered}");
-    }
 }
 
 fn require_planning_tty() -> Result<()> {
@@ -308,7 +299,10 @@ cat >"$dir/repo/PLAN.md" <<'PLAN'
 Goal: test.
 PLAN
 printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-plan","status":"inProgress","items":[]}}}'
-printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-1","text":"final plan written","status":"completed"}]}}}'
+printf '%s\n' '{"method":"turn/plan/updated","params":{"threadId":"thr-plan","turnId":"turn-plan","plan":[{"status":"completed","step":"Inspect repo"},{"status":"inProgress","step":"Write plan"}]}}'
+printf '%s\n' '{"method":"item/started","params":{"threadId":"thr-plan","turnId":"turn-plan","item":{"type":"commandExecution","id":"cmd-1","command":"ls","status":"inProgress"}}}'
+printf '%s\n' '{"method":"item/commandExecution/outputDelta","params":{"threadId":"thr-plan","turnId":"turn-plan","itemId":"cmd-1","delta":"README.md\n"}}'
+printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"mcpToolCall","id":"tool-1","server":"github","tool":"get_issue","status":"completed","result":{"title":"Planning issue"}},{"type":"commandExecution","id":"cmd-1","command":"ls","status":"completed","exitCode":0,"aggregatedOutput":"README.md\n"},{"type":"agentMessage","id":"msg-1","text":"final plan written","status":"completed"}]}}}'
 "#,
         );
         let mut args = plan_args_with_root(root.clone());
@@ -318,43 +312,41 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         let mut client = connect_client(&config).expect("client");
         set_turn_log(&config, &mut client, 1).expect("log");
         let thread_id = client.start_thread().expect("thread");
+        let mut rendered = Vec::new();
 
-        let output = run_planning_turn(
+        let artifacts_complete = run_planning_turn(
             &config,
             &mut client,
             &thread_id,
             "planning prompt".to_string(),
             &before,
-            INITIAL_PLAN_SPINNER_TEXT,
+            &mut rendered,
         )
         .expect("planning turn");
         client.stop().expect("stop");
 
-        assert_eq!(
-            output.last_agent_message.as_deref(),
-            Some("final plan written")
-        );
-        assert!(output.artifacts_complete);
+        assert!(artifacts_complete);
         let turn = fs::read_to_string(temp.path().join("turn.json")).expect("turn prompt");
         assert!(turn.contains("planning prompt"));
+        let rendered = String::from_utf8(rendered).expect("rendered output");
+        assert!(rendered.contains("• Planning"));
+        assert!(rendered.contains("• Updated Plan"));
+        assert!(rendered.contains("  ✓ Inspect repo"));
+        assert!(rendered.contains("  □ Write plan"));
+        assert!(rendered.contains("• Ran mcp github/get_issue"));
+        assert!(rendered.contains("Planning issue"));
+        assert!(rendered.contains("• Ran ls"));
+        assert!(rendered.contains("  └ README.md"));
+        assert!(rendered.contains("• Codex"));
+        assert!(rendered.contains("  final plan written"));
         let log = fs::read_to_string(root.join(".codex-log/test-plan-001.jsonl")).expect("log");
         assert!(log.contains(r#""direction":"out""#));
         assert!(log.contains(r#""direction":"in""#));
     }
 
     #[test]
-    fn planning_message_uses_markdown_renderer() {
-        let rendered = output::markdown_to_string("**Question**\n\n- `Option A`");
-
-        assert!(rendered.contains("  Question"));
-        assert!(rendered.contains("Option A"));
-        assert!(!rendered.contains("**"));
-        assert!(!rendered.contains("`Option A`"));
-    }
-
-    #[test]
     fn spinner_line_fits_width() {
-        let rendered = spinner::line_for_width(
+        let rendered = crate::output::spinner::line_for_width(
             "exploring\nrepo",
             "...",
             std::time::Duration::from_secs(7),

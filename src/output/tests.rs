@@ -212,6 +212,37 @@ fn idle_tick_renders_phase_spinner_when_interactive() {
 }
 
 #[test]
+fn idle_tick_renders_planning_spinner_when_interactive() {
+    let mut renderer = interactive_renderer();
+    let header = renderer.planning_header();
+
+    let tick = renderer.render_event(&TurnStreamEvent::Idle);
+    let finish = renderer.finish();
+
+    assert!(header.contains("• Planning"));
+    assert!(tick.contains("\r\x1b[2K"));
+    assert!(tick.contains("working on planning"));
+    assert!(tick.contains("0s"));
+    assert!(finish.contains("\x1b[?25h"));
+}
+
+#[test]
+fn active_planning_command_uses_bottom_spinner_label() {
+    let mut renderer = interactive_renderer();
+    let _ = renderer.planning_header();
+
+    let progress = renderer.render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+        "type": "commandExecution",
+        "id": "cmd_1",
+        "command": "cargo test",
+        "status": "inProgress"
+    }))));
+
+    assert!(progress.contains("working on planning - running command"));
+    assert!(progress.contains("0s"));
+}
+
+#[test]
 fn active_command_row_is_replaced_by_completed_output() {
     let mut renderer = interactive_renderer();
     let _ = renderer.phase_header(1, "Skeleton", "implementation");
