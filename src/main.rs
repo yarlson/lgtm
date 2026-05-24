@@ -1,6 +1,13 @@
 mod cli;
 mod commands;
 
+#[cfg(test)]
+#[allow(dead_code)]
+mod app_server;
+#[cfg(test)]
+#[allow(dead_code)]
+mod output;
+
 use anyhow::Result;
 use clap::Parser;
 

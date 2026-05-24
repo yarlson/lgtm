@@ -1,8 +1,10 @@
-use lgtm_app_server_client::{
-    CompletedTurn, ItemKind, PlanStep, TranscriptItem, TurnStreamEvent, TurnTranscript,
-};
-use lgtm_output::{Charset, ColorMode, RenderOptions, Renderer, Verbosity};
 use serde_json::{Value, json};
+
+use super::{Charset, ColorMode, RenderOptions, Verbosity, renderer::Renderer};
+use crate::app_server::{
+    CompletedTurn, ItemKind, PlanStep, TranscriptItem, TranscriptItemData, TurnStreamEvent,
+    TurnTranscript,
+};
 
 fn no_color_renderer() -> Renderer {
     Renderer::new(RenderOptions::default())
@@ -256,7 +258,7 @@ fn transcript_items_expose_typed_payloads() {
     assert_eq!(item.item_kind(), ItemKind::CommandExecution);
     assert!(matches!(
         item.data(),
-        lgtm_app_server_client::TranscriptItemData::CommandExecution(command)
+        TranscriptItemData::CommandExecution(command)
             if command.command == "cargo test" && command.exit_code == Some(0)
     ));
 }

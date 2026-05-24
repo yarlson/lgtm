@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 
-use lgtm_app_server_client::{CompletedTurn, PlanStep, TranscriptItem, TurnStreamEvent};
-
 use crate::{
-    RenderOptions, Verbosity,
-    item::{ItemRenderer, item_is_final},
-    style::{Color, Line, Span, Style, Symbol},
+    app_server::{CompletedTurn, PlanStep, TranscriptItem, TurnStreamEvent},
+    output::{
+        RenderOptions, Verbosity,
+        item::{ItemRenderer, item_is_final},
+        style::{Color, Line, Span, Style, Symbol},
+    },
 };
 
 #[derive(Debug, Clone)]

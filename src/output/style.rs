@@ -1,4 +1,4 @@
-use crate::{Charset, ColorMode, RenderOptions};
+use crate::output::{Charset, ColorMode, RenderOptions};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Line {

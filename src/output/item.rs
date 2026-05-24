@@ -1,8 +1,8 @@
-use lgtm_app_server_client::{
+use crate::app_server::{
     DynamicToolCall, ItemKind, McpToolCall, TranscriptItem, TranscriptItemData,
 };
 
-use crate::{
+use crate::output::{
     RenderOptions, Verbosity,
     markdown::markdown_lines,
     style::{Color, Line, Span, Style, Symbol, render_lines},
@@ -81,7 +81,7 @@ impl<'a> ItemRenderer<'a> {
     fn render_command(
         &self,
         item: &TranscriptItem,
-        command: &lgtm_app_server_client::CommandExecution,
+        command: &crate::app_server::CommandExecution,
     ) -> String {
         if item.is_in_progress() {
             return String::new();
@@ -110,7 +110,7 @@ impl<'a> ItemRenderer<'a> {
     fn render_file_changes(
         &self,
         item: &TranscriptItem,
-        changes: &[lgtm_app_server_client::FileChange],
+        changes: &[crate::app_server::FileChange],
     ) -> String {
         if item.is_in_progress() || changes.is_empty() {
             return String::new();

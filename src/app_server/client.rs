@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::{
+use crate::app_server::{
     config::AppServerConfig,
     json::{get_string, response_result},
     protocol::{ClientNotification, ClientRequest, ServerRequest},

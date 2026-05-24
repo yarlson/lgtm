@@ -4,7 +4,7 @@ use super::{
     CommandExecution, DynamicToolCall, FileChange, McpToolCall, TranscriptItemData, WebSearch,
     data::empty_data,
 };
-use crate::{
+use crate::app_server::{
     json::get_str,
     text::{non_empty, preview},
 };

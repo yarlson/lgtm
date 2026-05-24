@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::config::AppServerConfig;
+use crate::app_server::config::AppServerConfig;
 
 pub(crate) enum ClientRequest<'a> {
     Initialize {

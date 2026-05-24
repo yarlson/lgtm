@@ -1,4 +1,4 @@
-use crate::{
+use crate::output::{
     MarkdownMode,
     style::{Line, Span},
 };
