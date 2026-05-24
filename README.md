@@ -87,6 +87,8 @@ For run mode, the target repository must contain:
 - `AGENTS.md`
 - a Git repository at the target root, or permission to initialize one
 
+<img src="assets/lgtm-run.gif" alt="Terminal recording of lgtm run showing the startup banner and active phase status line" width="100%">
+
 Run one phase:
 
 ```bash
