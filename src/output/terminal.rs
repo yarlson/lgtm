@@ -1,11 +1,12 @@
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(unix)]
 use signal_hook::{consts::SIGINT, iterator::Signals};
+#[cfg(unix)]
+use std::sync::OnceLock;
 
 static CURSOR_HIDDEN: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
 static SIGINT_HANDLER: OnceLock<Result<(), String>> = OnceLock::new();
 
 pub(crate) fn hide_cursor() -> &'static str {
@@ -19,6 +20,7 @@ pub(crate) fn show_cursor() -> &'static str {
     "\x1b[?25h"
 }
 
+#[cfg(unix)]
 fn ensure_sigint_restore() -> Result<(), String> {
     SIGINT_HANDLER
         .get_or_init(|| {
@@ -36,6 +38,10 @@ fn ensure_sigint_restore() -> Result<(), String> {
         .clone()
 }
 
+#[cfg(not(unix))]
+fn ensure_sigint_restore() {}
+
+#[cfg(unix)]
 fn restore_cursor_without_stdout_lock() {
     const RESTORE: &[u8] = b"\r\x1b[2K\x1b[?25h";
     // Avoid stdio locking here: SIGINT may arrive while the main thread is flushing stdout.

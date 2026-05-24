@@ -74,6 +74,11 @@ impl Command for EnableModifyOtherKeys {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
         f.write_str("\x1b[>4;2m")
     }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +88,11 @@ impl Command for DisableModifyOtherKeys {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
         f.write_str("\x1b[>4;0m")
     }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,5 +101,10 @@ struct ResetKeyboardEnhancementFlags;
 impl Command for ResetKeyboardEnhancementFlags {
     fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
         f.write_str("\x1b[<u")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
     }
 }
