@@ -35,11 +35,26 @@ where Codex needs a repeatable local loop.
 
 ## Install
 
+Homebrew is the simplest path on macOS and Linux:
+
+```bash
+brew install yarlson/tap/lgtm
+```
+
+Prebuilt archives are available on the GitHub Releases page:
+
+[github.com/yarlson/lgtm/releases/latest](https://github.com/yarlson/lgtm/releases/latest)
+
+Download the archive for your platform, verify it with the matching `.sha256`
+file, unpack it, and place the `lgtm` binary somewhere on your `PATH`.
+
+Or install from a local checkout:
+
 ```bash
 cargo install --path .
 ```
 
-Or run from the repository:
+For development, run from the repository:
 
 ```bash
 cargo run -- --help
@@ -94,29 +109,29 @@ lgtm run --stream-mode raw
 
 Run options:
 
-| Option | Environment | Default | Description |
-| --- | --- | --- | --- |
-| `--root` | `ROOT_DIR` | current directory | Target repository root |
-| `--plan-path` | `PLAN_PATH` | `PLAN.md` | Plan file path under the root |
-| `--agents-path` | `REPO_AGENTS_PATH` | `AGENTS.md` | Agent instruction path under the root |
-| `--start-phase` | `START_PHASE` | `1` | First phase to run |
-| `--end-phase` | `END_PHASE` | detected | Last phase to run |
-| `--sleep-seconds` | `SLEEP_SECONDS` | `600` | Delay between phases |
-| `--codex-bin` | `CODEX_BIN` | `codex` | Codex executable |
-| `--stream-mode` | `STREAM_MODE` | `pretty` | `pretty` or `raw` |
-| `--log-dir` | `LOG_DIR` | `.codex-log` | Log directory |
-| `--run-stamp` | `RUN_STAMP` | timestamp | Log filename prefix |
+| Option            | Environment        | Default           | Description                           |
+| ----------------- | ------------------ | ----------------- | ------------------------------------- |
+| `--root`          | `ROOT_DIR`         | current directory | Target repository root                |
+| `--plan-path`     | `PLAN_PATH`        | `PLAN.md`         | Plan file path under the root         |
+| `--agents-path`   | `REPO_AGENTS_PATH` | `AGENTS.md`       | Agent instruction path under the root |
+| `--start-phase`   | `START_PHASE`      | `1`               | First phase to run                    |
+| `--end-phase`     | `END_PHASE`        | detected          | Last phase to run                     |
+| `--sleep-seconds` | `SLEEP_SECONDS`    | `600`             | Delay between phases                  |
+| `--codex-bin`     | `CODEX_BIN`        | `codex`           | Codex executable                      |
+| `--stream-mode`   | `STREAM_MODE`      | `pretty`          | `pretty` or `raw`                     |
+| `--log-dir`       | `LOG_DIR`          | `.codex-log`      | Log directory                         |
+| `--run-stamp`     | `RUN_STAMP`        | timestamp         | Log filename prefix                   |
 
 Plan options:
 
-| Option | Environment | Default | Description |
-| --- | --- | --- | --- |
-| `[BRIEF]` | | | Optional planning brief |
-| `--root` | `ROOT_DIR` | current directory | Target repository root |
-| `--plan-path` | `PLAN_PATH` | `PLAN.md` | Plan file path under the root |
-| `--codex-bin` | `CODEX_BIN` | `codex` | Codex executable |
-| `--log-dir` | `LOG_DIR` | `.codex-log` | Log directory |
-| `--run-stamp` | `RUN_STAMP` | timestamp | Log filename prefix |
+| Option        | Environment | Default           | Description                   |
+| ------------- | ----------- | ----------------- | ----------------------------- |
+| `[BRIEF]`     |             |                   | Optional planning brief       |
+| `--root`      | `ROOT_DIR`  | current directory | Target repository root        |
+| `--plan-path` | `PLAN_PATH` | `PLAN.md`         | Plan file path under the root |
+| `--codex-bin` | `CODEX_BIN` | `codex`           | Codex executable              |
+| `--log-dir`   | `LOG_DIR`   | `.codex-log`      | Log directory                 |
+| `--run-stamp` | `RUN_STAMP` | timestamp         | Log filename prefix           |
 
 ## Safety And Logs
 
