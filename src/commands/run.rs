@@ -1,8 +1,7 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::cli::RunArgs;
 
 pub fn run(_args: RunArgs) -> Result<()> {
-    println!("run command is not implemented yet");
-    Ok(())
+    bail!("run command is not implemented yet")
 }

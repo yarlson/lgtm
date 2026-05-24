@@ -1,8 +1,7 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::cli::PlanArgs;
 
 pub fn run(_args: PlanArgs) -> Result<()> {
-    println!("plan command is not implemented yet");
-    Ok(())
+    bail!("plan command is not implemented yet")
 }
