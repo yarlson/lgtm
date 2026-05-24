@@ -61,7 +61,7 @@ PLAN
         .replace("__REPO__", &repo_sh),
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_lgtm-rs"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
         .arg("run")
         .arg("--root")
         .arg(&repo)
@@ -74,7 +74,7 @@ PLAN
         .arg("--run-stamp")
         .arg("test")
         .output()
-        .expect("run lgtm-rs");
+        .expect("run lgtm");
 
     assert!(
         output.status.success(),

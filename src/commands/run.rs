@@ -1,18 +1,11 @@
-use std::{
-    fs::{self, File},
-    io::Write,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::{fs, path::PathBuf, thread, time::Duration};
 
-use anyhow::{Context, Result, bail};
-use chrono::Local;
+use anyhow::{Context, Result};
 
 use crate::{
-    app_server::{AppServerClient, AppServerConfig, TurnControl},
+    app_server::TurnControl,
     cli::{RunArgs, StreamMode},
+    commands::runtime::{CommandRuntime, require_file},
     git,
     output::{RenderOptions, Renderer},
     phase_index::{self, Phase},
@@ -22,52 +15,36 @@ use crate::{
 
 #[derive(Debug, Clone)]
 struct RunConfig {
-    root: PathBuf,
+    runtime: CommandRuntime,
     plan_path: PathBuf,
     agents_path: PathBuf,
     start_phase: u32,
     end_phase: Option<u32>,
     sleep_seconds: u64,
-    codex_bin: String,
     stream_mode: StreamMode,
-    log_dir: PathBuf,
-    run_stamp: String,
 }
 
 impl RunConfig {
     fn from_args(args: RunArgs) -> Result<Self> {
-        let root = match args.root {
-            Some(root) => absolutize(root)?,
-            None => std::env::current_dir().context("failed to read current directory")?,
-        };
-        let log_dir = args
-            .log_dir
-            .map(|path| resolve_under_root(&root, path))
-            .unwrap_or_else(|| root.join(".codex-log"));
-        let run_stamp = args
-            .run_stamp
-            .unwrap_or_else(|| Local::now().format("%Y%m%d-%H%M%S").to_string());
+        let runtime = CommandRuntime::new(args.root, args.codex_bin, args.log_dir, args.run_stamp)?;
 
         Ok(Self {
-            root,
+            runtime,
             plan_path: args.plan_path,
             agents_path: args.agents_path,
             start_phase: args.start_phase,
             end_phase: args.end_phase,
             sleep_seconds: args.sleep_seconds,
-            codex_bin: args.codex_bin,
             stream_mode: args.stream_mode,
-            log_dir,
-            run_stamp,
         })
     }
 
     fn plan_abs(&self) -> PathBuf {
-        self.root.join(&self.plan_path)
+        self.runtime.resolve_root_path(&self.plan_path)
     }
 
     fn agents_abs(&self) -> PathBuf {
-        self.root.join(&self.agents_path)
+        self.runtime.resolve_root_path(&self.agents_path)
     }
 }
 
@@ -76,9 +53,9 @@ pub fn run(args: RunArgs) -> Result<()> {
 
     require_file(&config.plan_abs(), &config.plan_path)?;
     require_file(&config.agents_abs(), &config.agents_path)?;
-    skills::preflight(&config.root)?;
-    git::ensure_initialized(&config.root)?;
-    skills::install(&config.root)?;
+    skills::preflight(config.runtime.root())?;
+    git::ensure_initialized(config.runtime.root())?;
+    skills::install(config.runtime.root())?;
 
     let mut phase_id = config.start_phase;
     loop {
@@ -123,11 +100,14 @@ pub fn run(args: RunArgs) -> Result<()> {
 fn load_phase_index(config: &RunConfig, phase_id: u32) -> Result<Vec<Phase>> {
     let plan_text = fs::read_to_string(config.plan_abs())
         .with_context(|| format!("failed to read {}", config.plan_path.display()))?;
-    let log_name = format!("{}-phase-{phase_id:02}-index.jsonl", config.run_stamp);
-    let mut client = connect_logged_client(
-        config,
+    let log_name = format!(
+        "{}-phase-{phase_id:02}-index.jsonl",
+        config.runtime.run_stamp()
+    );
+    let mut client = config.runtime.connect_logged_app_server(
         Some(phase_index::PARSER_MODEL.to_string()),
         &log_name,
+        config.stream_mode == StreamMode::Raw,
     )?;
     let thread_id = client.start_thread()?;
 
@@ -155,17 +135,23 @@ fn load_phase_index(config: &RunConfig, phase_id: u32) -> Result<Vec<Phase>> {
 }
 
 fn run_phase_pass(config: &RunConfig, phase: &Phase, pass: PhasePass) -> Result<()> {
-    println!("• Phase {:02} {}: {}", phase.id, pass.label(), phase.title);
-
     let log_name = format!(
         "{}-phase-{phase:02}-{action}.jsonl",
-        config.run_stamp,
+        config.runtime.run_stamp(),
         phase = phase.id,
         action = pass.action()
     );
-    let mut client = connect_logged_client(config, None, &log_name)?;
+    let mut client = config.runtime.connect_logged_app_server(
+        None,
+        &log_name,
+        config.stream_mode == StreamMode::Raw,
+    )?;
     let thread_id = client.start_thread()?;
     let mut renderer = Renderer::new(RenderOptions::default());
+    print!(
+        "{}",
+        renderer.phase_header(phase.id, &phase.title, pass.label())
+    );
     client.run_turn_streaming(
         &thread_id,
         &prompt::phase_prompt(&config.plan_path, &config.agents_path, phase, pass),
@@ -176,67 +162,8 @@ fn run_phase_pass(config: &RunConfig, phase: &Phase, pass: PhasePass) -> Result<
             TurnControl::Continue
         },
     )?;
+    print!("{}", renderer.finish());
     client.stop()
-}
-
-fn connect_logged_client(
-    config: &RunConfig,
-    model: Option<String>,
-    log_name: &str,
-) -> Result<AppServerClient> {
-    fs::create_dir_all(&config.log_dir)
-        .with_context(|| format!("failed to create {}", config.log_dir.display()))?;
-    let log_path = config.log_dir.join(log_name);
-    let log =
-        Arc::new(Mutex::new(File::create(&log_path).with_context(|| {
-            format!("failed to create {}", log_path.display())
-        })?));
-    let stream_mode = config.stream_mode;
-    let should_print_raw = stream_mode == StreamMode::Raw;
-
-    let app_config = AppServerConfig::for_run(&config.codex_bin, &config.root, model);
-    let mut client = AppServerClient::connect(app_config)?;
-    let log_for_sink = Arc::clone(&log);
-    client.log_raw_messages(move |line| {
-        log_for_sink
-            .lock()
-            .expect("log mutex should not be poisoned")
-            .write_all(line.as_bytes())
-            .context("failed to write app-server log")?;
-        if should_print_raw {
-            std::io::stdout()
-                .write_all(line.as_bytes())
-                .context("failed to write raw app-server output")?;
-        }
-        Ok(())
-    });
-
-    Ok(client)
-}
-
-fn require_file(path: &Path, display: &Path) -> Result<()> {
-    if path.is_file() {
-        Ok(())
-    } else {
-        bail!("required file {} was not found", display.display())
-    }
-}
-
-fn absolutize(path: PathBuf) -> Result<PathBuf> {
-    if path.is_absolute() {
-        return Ok(path);
-    }
-    Ok(std::env::current_dir()
-        .context("failed to read current directory")?
-        .join(path))
-}
-
-fn resolve_under_root(root: &Path, path: PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        root.join(path)
-    }
 }
 
 #[cfg(test)]
@@ -266,7 +193,7 @@ mod tests {
 
         let config = RunConfig::from_args(args).expect("config");
 
-        assert_eq!(config.log_dir, temp.path().join("logs"));
+        assert_eq!(config.runtime.log_dir(), temp.path().join("logs"));
     }
 
     #[test]
@@ -278,6 +205,6 @@ mod tests {
 
         let config = RunConfig::from_args(args).expect("config");
 
-        assert_eq!(config.log_dir, log_dir);
+        assert_eq!(config.runtime.log_dir(), log_dir);
     }
 }

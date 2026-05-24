@@ -24,10 +24,10 @@ impl AppServerConfig {
             reasoning_effort: "high".to_string(),
             sandbox: "danger-full-access".to_string(),
             approval_policy: "never".to_string(),
-            developer_instructions: "You are running inside lgtm-rs. Follow the user prompt exactly and keep all work scoped to the current turn.".to_string(),
-            service_name: "lgtm-rs".to_string(),
-            client_name: "lgtm-rs".to_string(),
-            client_title: "lgtm-rs".to_string(),
+            developer_instructions: "You are running inside lgtm. Follow the user prompt exactly and keep all work scoped to the current turn.".to_string(),
+            service_name: "lgtm".to_string(),
+            client_name: "lgtm".to_string(),
+            client_title: "lgtm".to_string(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }

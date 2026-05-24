@@ -1,6 +1,6 @@
 use std::{
-    io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    io::Write,
+    process::{Child, ChildStdin, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -11,17 +11,19 @@ use serde_json::{Value, json};
 use crate::app_server::{
     config::AppServerConfig,
     json::{get_string, response_result},
+    line_source::{LineRead, LineSource, ThreadedLineReader},
     protocol::{ClientNotification, ClientRequest, ServerRequest},
     transcript::{CompletedTurn, PlanStep, TranscriptEvent, TranscriptItem, TurnCollector},
 };
 
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+const STREAM_IDLE_TICK: Duration = Duration::from_millis(120);
 
 type RawMessageSink = Box<dyn FnMut(&str) -> Result<()> + Send>;
 
 pub struct AppServerClient {
     child: Child,
-    connection: AppServerConnection<BufReader<ChildStdout>, ChildStdin>,
+    connection: AppServerConnection<ThreadedLineReader, ChildStdin>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +34,7 @@ pub enum TurnControl {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TurnStreamEvent {
+    Idle,
     PlanUpdated(Vec<PlanStep>),
     ItemUpdated(TranscriptItem),
     ServerRequestDeclined { method: String },
@@ -73,7 +76,7 @@ impl AppServerClient {
             .take()
             .context("codex app-server stdout was unavailable")?;
 
-        let connection = AppServerConnection::new(config, BufReader::new(stdout), stdin);
+        let connection = AppServerConnection::new(config, ThreadedLineReader::spawn(stdout), stdin);
 
         Ok(Self { child, connection })
     }
@@ -139,7 +142,7 @@ struct AppServerConnection<R, W> {
 
 impl<R, W> AppServerConnection<R, W>
 where
-    R: BufRead,
+    R: LineSource,
     W: Write,
 {
     fn new(config: AppServerConfig, stdout: R, stdin: W) -> Self {
@@ -230,7 +233,10 @@ where
         let mut completed_turn = None;
 
         loop {
-            let message = self.read_json()?;
+            let Some(message) = self.read_json_timeout(Some(STREAM_IDLE_TICK))? else {
+                let _ = on_event(TurnStreamEvent::Idle);
+                continue;
+            };
             if pending_interrupt_id
                 .is_some_and(|id| message.get("id").and_then(Value::as_u64) == Some(id))
             {
@@ -322,19 +328,26 @@ where
     }
 
     fn read_json(&mut self) -> Result<Value> {
-        let mut line = String::new();
-        let bytes = self
+        self.read_json_timeout(None)?
+            .context("codex app-server read unexpectedly timed out")
+    }
+
+    fn read_json_timeout(&mut self, timeout: Option<Duration>) -> Result<Option<Value>> {
+        let line = match self
             .stdout
-            .read_line(&mut line)
-            .context("failed to read codex app-server stdout")?;
-        if bytes == 0 {
-            bail!("codex app-server exited before sending the expected message");
-        }
+            .read_line(timeout)
+            .context("failed to read codex app-server stdout")?
+        {
+            LineRead::Line(line) => line,
+            LineRead::Idle => return Ok(None),
+            LineRead::Eof => bail!("codex app-server exited before sending the expected message"),
+        };
 
         self.log_raw_message("in", line.trim_end())?;
 
         serde_json::from_str(line.trim_end())
             .with_context(|| format!("codex app-server emitted invalid JSON: {}", line.trim_end()))
+            .map(Some)
     }
 
     fn log_raw_message(&mut self, direction: &'static str, line: &str) -> Result<()> {
@@ -360,7 +373,7 @@ impl Drop for AppServerClient {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{collections::VecDeque, io::Cursor};
 
     use serde_json::{Value, json};
 
@@ -375,9 +388,9 @@ mod tests {
             sandbox: "danger-full-access".to_string(),
             approval_policy: "never".to_string(),
             developer_instructions: "Reply naturally.".to_string(),
-            service_name: "lgtm-rs".to_string(),
-            client_name: "lgtm-rs".to_string(),
-            client_title: "lgtm-rs".to_string(),
+            service_name: "lgtm".to_string(),
+            client_name: "lgtm".to_string(),
+            client_title: "lgtm".to_string(),
             client_version: "0.1.0".to_string(),
         }
     }
@@ -398,6 +411,36 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    enum ScriptedRead {
+        Line(Value),
+        Idle,
+    }
+
+    struct ScriptedLineSource {
+        reads: VecDeque<ScriptedRead>,
+    }
+
+    impl ScriptedLineSource {
+        fn new(reads: Vec<ScriptedRead>) -> Self {
+            Self {
+                reads: reads.into(),
+            }
+        }
+    }
+
+    impl LineSource for ScriptedLineSource {
+        fn read_line(&mut self, _timeout: Option<Duration>) -> Result<LineRead> {
+            match self.reads.pop_front() {
+                Some(ScriptedRead::Line(value)) => Ok(LineRead::Line(format!(
+                    "{}\n",
+                    serde_json::to_string(&value)?
+                ))),
+                Some(ScriptedRead::Idle) => Ok(LineRead::Idle),
+                None => Ok(LineRead::Eof),
+            }
+        }
     }
 
     #[test]
@@ -427,7 +470,7 @@ mod tests {
         assert_eq!(written.len(), 3);
         assert_eq!(written[0]["method"], "initialize");
         assert_eq!(written[0]["id"], 1);
-        assert_eq!(written[0]["params"]["clientInfo"]["name"], "lgtm-rs");
+        assert_eq!(written[0]["params"]["clientInfo"]["name"], "lgtm");
         assert_eq!(
             written[1],
             json!({
@@ -622,6 +665,50 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn run_turn_streaming_emits_idle_events_between_messages() {
+        let mut connection = AppServerConnection::new(
+            test_config(),
+            ScriptedLineSource::new(vec![
+                ScriptedRead::Line(json!({
+                    "id": 1,
+                    "result": {
+                        "turn": {
+                            "id": "turn_456",
+                            "status": "inProgress",
+                            "items": []
+                        }
+                    }
+                })),
+                ScriptedRead::Idle,
+                ScriptedRead::Line(json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "thr_123",
+                        "turn": {
+                            "id": "turn_456",
+                            "items": [],
+                            "status": "completed"
+                        }
+                    }
+                })),
+            ]),
+            Vec::new(),
+        );
+        let mut saw_idle = false;
+
+        connection
+            .run_turn_streaming("thr_123", "prompt", |event| {
+                if event == TurnStreamEvent::Idle {
+                    saw_idle = true;
+                }
+                TurnControl::Continue
+            })
+            .expect("turn");
+
+        assert!(saw_idle);
     }
 
     #[test]

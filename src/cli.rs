@@ -5,10 +5,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[derive(Debug, Parser)]
 #[command(
     version,
-    about = "Run a Codex-backed phase plan with formatted output",
+    about = "Plan and run Codex-backed phase work with formatted output",
     subcommand_required = true,
     arg_required_else_help = false,
-    after_long_help = "Execution policy:\n  lgtm-rs will run Codex inside the target root once command execution is implemented. Use it only for repositories where that level of local filesystem and command execution autonomy is acceptable."
+    after_long_help = "Execution policy:\n  lgtm runs Codex app-server turns inside the target root with danger-full-access and approval policy never. Use it only for repositories where that level of local filesystem and command execution autonomy is acceptable."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn parses_plan_command() {
         let cli = Cli::try_parse_from([
-            "lgtm-rs",
+            "lgtm",
             "plan",
             "ship smaller phases",
             "--root",
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn parses_run_command() {
         let cli = Cli::try_parse_from([
-            "lgtm-rs",
+            "lgtm",
             "run",
             "--root",
             "/repo",

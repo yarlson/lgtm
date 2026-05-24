@@ -10,6 +10,10 @@ fn no_color_renderer() -> Renderer {
     Renderer::new(RenderOptions::default())
 }
 
+fn interactive_renderer() -> Renderer {
+    Renderer::with_interactive(RenderOptions::default(), true)
+}
+
 fn item(value: Value) -> TranscriptItem {
     TranscriptItem::from_app_server_item(&value).expect("fixture should produce transcript item")
 }
@@ -144,6 +148,46 @@ fn renders_web_search_and_hides_empty_progress() {
         "status": "completed"
     }))));
     assert!(rendered.contains("• Searched rust cli"));
+}
+
+#[test]
+fn idle_tick_renders_phase_spinner_when_interactive() {
+    let mut renderer = interactive_renderer();
+    let header = renderer.phase_header(2, "Output Polish", "validation");
+
+    let tick = renderer.render_event(&TurnStreamEvent::Idle);
+    let finish = renderer.finish();
+
+    assert!(header.contains("• Phase 02 validation: Output Polish"));
+    assert!(tick.contains("\r\x1b[2K"));
+    assert!(tick.contains("working on Phase 2 validation"));
+    assert!(finish.contains("\x1b[?25h"));
+}
+
+#[test]
+fn active_command_row_is_replaced_by_completed_output() {
+    let mut renderer = interactive_renderer();
+    let _ = renderer.phase_header(1, "Skeleton", "implementation");
+
+    let progress = renderer.render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+        "type": "commandExecution",
+        "id": "cmd_1",
+        "command": "cargo test",
+        "status": "inProgress"
+    }))));
+    let completed = renderer.render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+        "type": "commandExecution",
+        "id": "cmd_1",
+        "command": "cargo test",
+        "status": "completed",
+        "exitCode": 0,
+        "aggregatedOutput": "ok"
+    }))));
+
+    assert!(progress.contains("running command"));
+    assert!(completed.starts_with("\r\x1b[2K"));
+    assert!(completed.contains("• Ran cargo test"));
+    assert!(completed.contains("  └ ok"));
 }
 
 #[test]

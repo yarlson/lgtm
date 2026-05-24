@@ -1,4 +1,5 @@
 use crate::phase_index::Phase;
+use crate::skills;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PhasePass {
@@ -38,6 +39,67 @@ pub fn phase_prompt(
         context_docs_block(plan_path, agents_path),
         phase_task_block(plan_path, phase, pass)
     )
+}
+
+pub fn plan_initial_prompt(
+    plan_path: &std::path::Path,
+    agents_path: &std::path::Path,
+    brief: Option<&str>,
+) -> String {
+    format!(
+        "\
+Use ${plan_create} for this planning session.
+
+Target PLAN.md path: {plan}
+Target AGENTS.md path: {agents}
+
+Read {agents} only if it exists in the target repository. Do not require {agents} to exist.
+
+Planning rules:
+- Ask exactly one sharp question per turn.
+- Ask questions by writing a normal assistant message only; do not call request_user_input or any interactive input tool.
+- Prefer forced choices over open-ended questions.
+- If the user answer is vague, reject it and ask one narrower follow-up.
+- Keep planning state in the Codex session, not in draft files.
+- PLAN.md is a final-only sentinel: do not create or modify it as a draft.
+- Write PLAN.md only when ready to finish.
+- Preserve an existing {agents}; if {agents} is missing, create it when writing the final PLAN.md.
+- Before creating {agents}, detect the project stack from repo files and web-search current-year best practices for that stack.
+- Keep generated {agents} practical, repo-local, and focused on engineering workflow, coding rules, validation, and safety constraints.
+
+Final PLAN.md contract:
+- # Plan
+- ## Phase N - Name
+- Goal:
+- Steps:
+- Validation:
+{brief_block}",
+        plan_create = skills::PLAN_CREATE,
+        plan = plan_path.display(),
+        agents = agents_path.display(),
+        brief_block = plan_brief_block(brief),
+    )
+}
+
+pub fn plan_resume_prompt(answer: &str) -> String {
+    if answer == "/finish" {
+        "\
+The user requested /finish.
+Write the final PLAN.md now at the requested path. If AGENTS.md was missing at the start of planning, create it now too.
+Produce the best plan possible from the current session context, mark unresolved risks explicitly, and do not invent certainty."
+            .to_string()
+    } else {
+        answer.to_string()
+    }
+}
+
+fn plan_brief_block(brief: Option<&str>) -> String {
+    match brief {
+        Some(brief) if !brief.trim().is_empty() => {
+            format!("\n\nUser brief:\n{brief}", brief = brief.trim())
+        }
+        _ => String::new(),
+    }
 }
 
 fn context_docs_block(plan_path: &std::path::Path, agents_path: &std::path::Path) -> String {
@@ -139,5 +201,30 @@ mod tests {
         assert!(prompt.contains("$lgtm-phase-implement"));
         assert!(prompt.contains("$lgtm-refactor-plan"));
         assert!(prompt.contains("Do not commit or push"));
+    }
+
+    #[test]
+    fn initial_plan_prompt_sets_final_artifact_contract() {
+        let prompt = plan_initial_prompt(
+            std::path::Path::new("docs/PLAN.md"),
+            std::path::Path::new("AGENTS.md"),
+            Some("  split the migration  "),
+        );
+
+        assert!(prompt.contains("$lgtm-plan-create"));
+        assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
+        assert!(prompt.contains("Target AGENTS.md path: AGENTS.md"));
+        assert!(prompt.contains("Do not require AGENTS.md to exist"));
+        assert!(prompt.contains("do not call request_user_input"));
+        assert!(prompt.contains("PLAN.md is a final-only sentinel"));
+        assert!(prompt.contains("## Phase N - Name"));
+        assert!(prompt.contains("User brief:\nsplit the migration"));
+    }
+
+    #[test]
+    fn resume_plan_prompt_only_special_cases_exact_finish() {
+        assert!(plan_resume_prompt("/finish").contains("Write the final PLAN.md now"));
+        assert_eq!(plan_resume_prompt(" /finish "), " /finish ");
+        assert_eq!(plan_resume_prompt("answer"), "answer");
     }
 }

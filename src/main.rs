@@ -1,6 +1,7 @@
 mod app_server;
 mod cli;
 mod commands;
+mod composer;
 mod git;
 mod output;
 mod phase_index;

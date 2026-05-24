@@ -14,7 +14,7 @@ fn ensure_initialized_with(root: &Path, confirm: impl FnOnce(&Path) -> Result<bo
 
     if !confirm(root)? {
         bail!(
-            "{} is not a git repository; initialize git before running lgtm-rs",
+            "{} is not a git repository; initialize git before running lgtm",
             root.display()
         );
     }
