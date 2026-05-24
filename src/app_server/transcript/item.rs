@@ -4,10 +4,9 @@ use super::{
     CommandExecution, DynamicToolCall, FileChange, McpToolCall, TranscriptItemData, WebSearch,
     data::empty_data,
 };
-use crate::app_server::{
-    json::get_str,
-    text::{non_empty, preview},
-};
+#[cfg(test)]
+use crate::app_server::text::non_empty;
+use crate::app_server::{json::get_str, text::preview};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -226,11 +225,7 @@ impl TranscriptItem {
         }
     }
 
-    pub fn output_preview(&self) -> Option<String> {
-        let output = non_empty(&self.output)?;
-        Some(preview(output, 12, 2_000))
-    }
-
+    #[cfg(test)]
     pub(crate) fn is_renderable(&self) -> bool {
         if matches!(
             self.kind,

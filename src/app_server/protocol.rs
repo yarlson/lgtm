@@ -48,19 +48,24 @@ impl ClientRequest<'_> {
                     }
                 }
             }),
-            Self::ThreadStart { config, cwd } => json!({
-                "id": id,
-                "method": method,
-                "params": {
+            Self::ThreadStart { config, cwd } => {
+                let mut message = json!({
+                    "id": id,
+                    "method": method,
+                    "params": {
                     "approvalPolicy": config.approval_policy.as_str(),
                     "cwd": cwd,
                     "developerInstructions": config.developer_instructions.as_str(),
                     "ephemeral": true,
-                    "model": config.model.as_str(),
                     "sandbox": config.sandbox.as_str(),
                     "serviceName": config.service_name.as_str()
+                    }
+                });
+                if let Some(model) = &config.model {
+                    message["params"]["model"] = json!(model);
                 }
-            }),
+                message
+            }
             Self::TurnStart {
                 thread_id,
                 prompt,

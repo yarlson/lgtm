@@ -5,6 +5,7 @@ pub enum ColorMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Charset {
     Unicode,
     Ascii,
@@ -18,6 +19,7 @@ pub enum Verbosity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum MarkdownMode {
     Basic,
     Plain,

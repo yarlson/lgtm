@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::app_server::{
     config::AppServerConfig,
@@ -16,6 +16,8 @@ use crate::app_server::{
 };
 
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+type RawMessageSink = Box<dyn FnMut(&str) -> Result<()> + Send>;
 
 pub struct AppServerClient {
     child: Child,
@@ -54,7 +56,7 @@ impl AppServerClient {
     }
 
     fn spawn(config: AppServerConfig) -> Result<Self> {
-        let mut child = Command::new("codex")
+        let mut child = Command::new(&config.codex_bin)
             .args(["app-server"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -82,6 +84,10 @@ impl AppServerClient {
 
     pub fn run_turn(&mut self, thread_id: &str, prompt: &str) -> Result<CompletedTurn> {
         self.connection.run_turn(thread_id, prompt)
+    }
+
+    pub fn log_raw_messages(&mut self, sink: impl FnMut(&str) -> Result<()> + Send + 'static) {
+        self.connection.raw_message_sink = Some(Box::new(sink));
     }
 
     pub fn run_turn_streaming(
@@ -128,6 +134,7 @@ struct AppServerConnection<R, W> {
     stdout: R,
     next_id: u64,
     config: AppServerConfig,
+    raw_message_sink: Option<RawMessageSink>,
 }
 
 impl<R, W> AppServerConnection<R, W>
@@ -141,6 +148,7 @@ where
             stdout,
             next_id: 1,
             config,
+            raw_message_sink: None,
         }
     }
 
@@ -154,15 +162,11 @@ where
 
     pub fn start_thread(&mut self) -> Result<String> {
         let config = self.config.clone();
-        let cwd = std::env::current_dir()
-            .context("failed to read current directory")?
-            .display()
-            .to_string();
 
         let result = self
             .call(ClientRequest::ThreadStart {
                 config: &config,
-                cwd,
+                cwd: config.cwd.clone(),
             })
             .context("thread/start failed")?;
 
@@ -299,12 +303,16 @@ where
     }
 
     fn write_json(&mut self, value: &Value) -> Result<()> {
+        let line = serde_json::to_string(value).context("failed to serialize JSON-RPC message")?;
+        self.log_raw_message("out", &line)?;
+
         let stdin = self
             .stdin
             .as_mut()
             .context("codex app-server stdin is closed")?;
-        serde_json::to_writer(&mut *stdin, value)
-            .context("failed to serialize JSON-RPC message")?;
+        stdin
+            .write_all(line.as_bytes())
+            .context("failed to write JSON-RPC message")?;
         stdin
             .write_all(b"\n")
             .context("failed to write JSON-RPC newline")?;
@@ -323,8 +331,20 @@ where
             bail!("codex app-server exited before sending the expected message");
         }
 
+        self.log_raw_message("in", line.trim_end())?;
+
         serde_json::from_str(line.trim_end())
             .with_context(|| format!("codex app-server emitted invalid JSON: {}", line.trim_end()))
+    }
+
+    fn log_raw_message(&mut self, direction: &'static str, line: &str) -> Result<()> {
+        if let Some(sink) = self.raw_message_sink.as_mut() {
+            let mut entry = serde_json::to_string(&json!({ "direction": direction, "line": line }))
+                .context("failed to serialize app-server log entry")?;
+            entry.push('\n');
+            sink(&entry)?;
+        }
+        Ok(())
     }
 }
 
@@ -348,7 +368,9 @@ mod tests {
 
     fn test_config() -> AppServerConfig {
         AppServerConfig {
-            model: "gpt-5.5".to_string(),
+            codex_bin: "codex".to_string(),
+            cwd: "/repo".to_string(),
+            model: Some("gpt-5.5".to_string()),
             reasoning_effort: "high".to_string(),
             sandbox: "danger-full-access".to_string(),
             approval_policy: "never".to_string(),

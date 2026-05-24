@@ -31,6 +31,7 @@ pub struct TurnTranscript {
 }
 
 impl TurnTranscript {
+    #[cfg(test)]
     pub fn from_items(plan: Vec<PlanStep>, items: Vec<TranscriptItem>) -> Self {
         let mut transcript = Self {
             plan,
@@ -73,6 +74,7 @@ impl TurnTranscript {
             .join("\n")
     }
 
+    #[cfg(test)]
     pub fn activity_items(&self) -> Vec<&TranscriptItem> {
         self.ordered_items()
             .filter(|item| item.kind() != ItemKind::AgentMessage && item.kind() != ItemKind::Plan)

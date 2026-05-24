@@ -43,10 +43,6 @@ impl Renderer {
         out
     }
 
-    pub fn options(&self) -> &RenderOptions {
-        &self.options
-    }
-
     fn render_plan_update(&mut self, plan: &[PlanStep]) -> String {
         if plan.is_empty() || self.options.verbosity == Verbosity::Quiet {
             return String::new();
