@@ -1,4 +1,10 @@
-use std::{fs, path::PathBuf, thread, time::Duration};
+use std::{
+    fs,
+    io::{self, Write},
+    path::PathBuf,
+    thread,
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 
@@ -148,27 +154,61 @@ fn run_phase_pass(config: &RunConfig, phase: &Phase, pass: PhasePass) -> Result<
     )?;
     let thread_id = client.start_thread()?;
     let mut renderer = Renderer::new(RenderOptions::default());
-    print!(
-        "{}",
-        renderer.phase_header(phase.id, &phase.title, pass.label())
-    );
+    let mut stdout = io::stdout();
+    write_run_output(
+        &mut stdout,
+        renderer.phase_header(phase.id, &phase.title, pass.label()),
+    )?;
+    let mut output_result = Ok(());
     client.run_turn_streaming(
         &thread_id,
         &prompt::phase_prompt(&config.plan_path, &config.agents_path, phase, pass),
         |event| {
-            if config.stream_mode == StreamMode::Pretty {
-                print!("{}", renderer.render_event(&event));
+            if config.stream_mode == StreamMode::Pretty && output_result.is_ok() {
+                output_result = write_run_output(&mut stdout, renderer.render_event(&event));
             }
             TurnControl::Continue
         },
     )?;
-    print!("{}", renderer.finish());
+    if output_result.is_ok() {
+        output_result = write_run_output(&mut stdout, renderer.finish());
+    }
+    output_result?;
     client.stop()
+}
+
+fn write_run_output(output: &mut impl Write, rendered: String) -> Result<()> {
+    if rendered.is_empty() {
+        return Ok(());
+    }
+
+    output
+        .write_all(rendered.as_bytes())
+        .context("failed to write run output")?;
+    output.flush().context("failed to flush run output")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct FlushCountingWriter {
+        content: Vec<u8>,
+        flushes: usize,
+    }
+
+    impl Write for FlushCountingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.content.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
 
     fn run_args_with_root(root: PathBuf) -> RunArgs {
         RunArgs {
@@ -206,5 +246,15 @@ mod tests {
         let config = RunConfig::from_args(args).expect("config");
 
         assert_eq!(config.runtime.log_dir(), log_dir);
+    }
+
+    #[test]
+    fn run_output_is_flushed_after_each_render() {
+        let mut output = FlushCountingWriter::default();
+
+        write_run_output(&mut output, "status line".to_string()).expect("write output");
+
+        assert_eq!(output.content, b"status line");
+        assert_eq!(output.flushes, 1);
     }
 }

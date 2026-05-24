@@ -84,7 +84,7 @@ impl Renderer {
     pub fn render_event(&mut self, event: &TurnStreamEvent) -> String {
         match event {
             TurnStreamEvent::Idle => self.tick(),
-            TurnStreamEvent::PlanUpdated(plan) => self.render_plan_update(plan),
+            TurnStreamEvent::PlanUpdated(plan) => self.render_plan_update_event(plan),
             TurnStreamEvent::ItemUpdated(item) => self.render_item_update(item),
             TurnStreamEvent::ServerRequestDeclined { method } => self.render_declined(method),
             TurnStreamEvent::Completed(turn) => self.render_completed_turn(turn),
@@ -99,6 +99,14 @@ impl Renderer {
         }
         out.push_str(&self.finish());
         out
+    }
+
+    fn render_plan_update_event(&mut self, plan: &[PlanStep]) -> String {
+        let rendered = self.render_plan_update(plan);
+        if rendered.is_empty() {
+            return String::new();
+        }
+        self.replace_active_line_with(rendered)
     }
 
     fn render_plan_update(&mut self, plan: &[PlanStep]) -> String {
@@ -144,9 +152,12 @@ impl Renderer {
             return self.render_active_line();
         }
 
-        let mut out = self.clear_active_line();
-        out.push_str(&self.render_item_once(item));
-        out
+        let rendered = self.render_item_once(item);
+        if rendered.is_empty() {
+            return String::new();
+        }
+
+        self.replace_active_line_with(rendered)
     }
 
     fn render_item_once(&mut self, item: &TranscriptItem) -> String {
@@ -165,13 +176,11 @@ impl Renderer {
         if self.options.verbosity == Verbosity::Quiet {
             return String::new();
         }
-        let mut rendered = self.clear_active_line();
         let renderer = ItemRenderer::new(&self.options);
-        rendered.push_str(&renderer.render_lines(vec![
+        self.replace_active_line_with(renderer.render_lines(vec![
             renderer.header("Declined", Color::Yellow, method),
             Line::blank(),
-        ]));
-        rendered
+        ]))
     }
 
     pub fn tick(&mut self) -> String {
@@ -245,6 +254,13 @@ impl Renderer {
 
     fn render_spinner_line(&mut self, label: impl AsRef<str>, elapsed: Duration) -> String {
         self.spinner.tick(label, elapsed)
+    }
+
+    fn replace_active_line_with(&mut self, rendered: String) -> String {
+        let mut out = self.clear_active_line();
+        out.push_str(&rendered);
+        out.push_str(&self.tick());
+        out
     }
 
     fn activity_elapsed(&self) -> Duration {

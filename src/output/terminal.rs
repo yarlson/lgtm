@@ -27,9 +27,8 @@ fn ensure_sigint_restore() -> Result<(), String> {
             let mut signals = Signals::new([SIGINT]).map_err(|error| error.to_string())?;
             let _ = std::thread::spawn(move || {
                 if signals.forever().next().is_some() {
-                    if CURSOR_HIDDEN.swap(false, Ordering::SeqCst) {
-                        restore_cursor_without_stdout_lock();
-                    }
+                    CURSOR_HIDDEN.store(false, Ordering::SeqCst);
+                    restore_cursor_without_stdout_lock();
                     std::process::exit(130);
                 }
             });

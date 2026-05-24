@@ -227,6 +227,42 @@ fn idle_tick_renders_planning_spinner_when_interactive() {
 }
 
 #[test]
+fn plan_update_restores_active_status_line_immediately() {
+    let mut renderer = interactive_renderer();
+    let _ = renderer.planning_header();
+    let _ = renderer.render_event(&TurnStreamEvent::Idle);
+
+    let rendered = renderer.render_event(&TurnStreamEvent::PlanUpdated(vec![PlanStep {
+        status: "inProgress".to_string(),
+        step: "Write plan".to_string(),
+    }]));
+
+    assert!(rendered.contains("• Updated Plan"));
+    assert!(rendered.contains("  □ Write plan"));
+    assert!(rendered.contains("working on planning"));
+}
+
+#[test]
+fn hidden_items_do_not_clear_active_status_line() {
+    let mut renderer = interactive_renderer();
+    let _ = renderer.phase_header(1, "Skeleton", "implementation");
+    let tick = renderer.render_event(&TurnStreamEvent::Idle);
+
+    let hidden = renderer.render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+        "type": "mcpToolCall",
+        "id": "tool_1",
+        "server": "github",
+        "tool": "get_pull_request",
+        "status": "completed"
+    }))));
+    let finish = renderer.finish();
+
+    assert!(tick.contains("working on Phase 1 implementation"));
+    assert!(hidden.is_empty());
+    assert!(finish.contains("\r\x1b[2K"));
+}
+
+#[test]
 fn active_planning_command_uses_bottom_spinner_label() {
     let mut renderer = interactive_renderer();
     let _ = renderer.planning_header();
@@ -266,6 +302,7 @@ fn active_command_row_is_replaced_by_completed_output() {
     assert!(completed.starts_with("\r\x1b[2K"));
     assert!(completed.contains("• Ran cargo test"));
     assert!(completed.contains("  └ ok"));
+    assert!(completed.contains("working on Phase 1 implementation"));
 }
 
 #[test]
