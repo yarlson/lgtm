@@ -56,6 +56,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         .arg("test");
 
     let output = run_with_pty(command, "/quit\r");
+    let plain_stdout = strip_ansi_escape_sequences(&output.stdout);
 
     assert!(
         output.status.success(),
@@ -63,12 +64,12 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         output.stdout,
         output.stderr
     );
-    assert!(output.stdout.contains(">_ lgtm"));
-    assert!(output.stdout.contains("mode:        plan"));
-    assert!(output.stdout.contains("permissions: YOLO mode"));
-    assert!(output.stdout.contains("Pick one"));
-    assert!(output.stdout.contains("Option A"));
-    assert!(output.stdout.contains("> /quit"));
+    assert!(plain_stdout.contains(">_ lgtm"));
+    assert!(plain_stdout.contains("mode:        plan"));
+    assert!(plain_stdout.contains("permissions: YOLO mode"));
+    assert!(plain_stdout.contains("Pick one"));
+    assert!(plain_stdout.contains("Option A"));
+    assert!(plain_stdout.contains("> /quit"));
     assert_eq!(
         fs::read_to_string(temp.path().join("counter")).expect("counter"),
         "1\n"
@@ -166,6 +167,31 @@ fn set_nonblocking(file: &File) {
         let result = libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
         assert!(result >= 0, "fcntl F_SETFL failed");
     }
+}
+
+fn strip_ansi_escape_sequences(output: &str) -> String {
+    let mut stripped = String::with_capacity(output.len());
+    let mut chars = output.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\x1b' {
+            stripped.push(ch);
+            continue;
+        }
+
+        if chars.next_if_eq(&'[').is_none() {
+            stripped.push(ch);
+            continue;
+        }
+
+        for ch in chars.by_ref() {
+            if ('@'..='~').contains(&ch) {
+                break;
+            }
+        }
+    }
+
+    stripped
 }
 
 fn open_pty() -> (File, File) {
