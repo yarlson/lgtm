@@ -24,6 +24,7 @@ pub(crate) struct Banner<'a> {
     pub(crate) mode: BannerMode,
     pub(crate) root: &'a Path,
     pub(crate) codex_bin: &'a str,
+    pub(crate) execution: &'a str,
 }
 
 pub(crate) fn render(banner: Banner<'_>, options: &RenderOptions) -> String {
@@ -32,7 +33,7 @@ pub(crate) fn render(banner: Banner<'_>, options: &RenderOptions) -> String {
         ("mode:", banner.mode.label().to_string()),
         ("directory:", directory),
         ("codex:", format!("{} app-server", banner.codex_bin)),
-        ("permissions:", "YOLO mode".to_string()),
+        ("execution:", banner.execution.to_string()),
     ];
     let width = banner_width(&rows);
     let border = Border::for_charset(options.charset);
@@ -121,7 +122,7 @@ fn banner_row(width: usize, border: Border, label: &str, value: &str) -> Line {
     let left = format!("  {label:<label_column$} ");
     let used = left.len() + value.len();
     let padding = width + 2 - used;
-    let value_style = if label == "permissions:" {
+    let value_style = if label == "execution:" {
         Style::fg(Color::Magenta).bold()
     } else {
         Style::fg(Color::Gray).bold()
@@ -173,6 +174,7 @@ mod tests {
                 mode: BannerMode::Run,
                 root: Path::new("/repo"),
                 codex_bin: "codex",
+                execution: "host YOLO",
             },
             &RenderOptions {
                 color_mode: ColorMode::Never,
@@ -184,7 +186,7 @@ mod tests {
         assert!(rendered.contains("mode:        run"));
         assert!(rendered.contains("directory:   /repo"));
         assert!(rendered.contains("codex:       codex app-server"));
-        assert!(rendered.contains("permissions: YOLO mode"));
+        assert!(rendered.contains("execution:   host YOLO"));
     }
 
     #[test]
@@ -194,6 +196,7 @@ mod tests {
                 mode: BannerMode::Plan,
                 root: Path::new("/repo"),
                 codex_bin: "codex",
+                execution: "Apple Container",
             },
             &RenderOptions {
                 color_mode: ColorMode::Never,

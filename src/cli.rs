@@ -2,13 +2,15 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+pub const DEFAULT_SANDBOX_IMAGE: &str = "ghcr.io/yarlson/lgtm-codex:latest";
+
 #[derive(Debug, Parser)]
 #[command(
     version,
     about = "Plan and run Codex-backed phase work with formatted output",
     subcommand_required = true,
     arg_required_else_help = false,
-    after_long_help = "Execution policy:\n  lgtm runs Codex app-server turns inside the target root with danger-full-access and approval policy never. Use it only for repositories where that level of local filesystem and command execution autonomy is acceptable."
+    after_long_help = "Execution policy:\n  lgtm runs Codex app-server turns with danger-full-access and approval policy never. Host execution runs inside the target root. Apple Container execution mounts the target root and a temporary Codex auth directory into the container."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -46,6 +48,9 @@ pub struct RunArgs {
     #[arg(long, env = "CODEX_BIN", default_value = "codex")]
     pub codex_bin: String,
 
+    #[clap(flatten)]
+    pub execution: ExecutionArgs,
+
     #[arg(long, env = "STREAM_MODE", default_value = "pretty")]
     pub stream_mode: StreamMode,
 
@@ -69,6 +74,9 @@ pub struct PlanArgs {
     #[arg(long, env = "CODEX_BIN", default_value = "codex")]
     pub codex_bin: String,
 
+    #[clap(flatten)]
+    pub execution: ExecutionArgs,
+
     #[arg(long, env = "LOG_DIR")]
     pub log_dir: Option<PathBuf>,
 
@@ -80,6 +88,43 @@ pub struct PlanArgs {
 pub enum StreamMode {
     Pretty,
     Raw,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct ExecutionArgs {
+    #[arg(
+        long = "execution-sandbox",
+        env = "LGTM_EXECUTION_SANDBOX",
+        default_value = "host",
+        value_enum
+    )]
+    pub sandbox: ExecutionSandbox,
+
+    #[arg(long, env = "LGTM_SANDBOX_IMAGE", default_value = DEFAULT_SANDBOX_IMAGE)]
+    pub sandbox_image: String,
+
+    #[arg(long, env = "CONTAINER_BIN", default_value = "container")]
+    pub container_bin: String,
+
+    #[arg(long, env = "CODEX_AUTH_PATH")]
+    pub codex_auth_path: Option<PathBuf>,
+}
+
+impl Default for ExecutionArgs {
+    fn default() -> Self {
+        Self {
+            sandbox: ExecutionSandbox::Host,
+            sandbox_image: DEFAULT_SANDBOX_IMAGE.to_string(),
+            container_bin: "container".to_string(),
+            codex_auth_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExecutionSandbox {
+    Host,
+    AppleContainer,
 }
 
 #[cfg(test)]
@@ -99,6 +144,14 @@ mod tests {
             "PLAN.md",
             "--codex-bin",
             "codex-test",
+            "--execution-sandbox",
+            "apple-container",
+            "--sandbox-image",
+            "example.com/lgtm-codex:test",
+            "--container-bin",
+            "container-test",
+            "--codex-auth-path",
+            "/tmp/auth.json",
             "--log-dir",
             ".codex-log",
             "--run-stamp",
@@ -113,6 +166,13 @@ mod tests {
         assert_eq!(args.root.unwrap(), PathBuf::from("/repo"));
         assert_eq!(args.plan_path, PathBuf::from("PLAN.md"));
         assert_eq!(args.codex_bin, "codex-test");
+        assert_eq!(args.execution.sandbox, ExecutionSandbox::AppleContainer);
+        assert_eq!(args.execution.sandbox_image, "example.com/lgtm-codex:test");
+        assert_eq!(args.execution.container_bin, "container-test");
+        assert_eq!(
+            args.execution.codex_auth_path.unwrap(),
+            PathBuf::from("/tmp/auth.json")
+        );
         assert_eq!(args.log_dir.unwrap(), PathBuf::from(".codex-log"));
         assert_eq!(args.run_stamp.as_deref(), Some("test"));
     }
@@ -136,6 +196,14 @@ mod tests {
             "0",
             "--codex-bin",
             "codex-test",
+            "--execution-sandbox",
+            "apple-container",
+            "--sandbox-image",
+            "example.com/lgtm-codex:test",
+            "--container-bin",
+            "container-test",
+            "--codex-auth-path",
+            "/tmp/auth.json",
             "--stream-mode",
             "raw",
             "--log-dir",
@@ -155,6 +223,13 @@ mod tests {
         assert_eq!(args.end_phase, Some(3));
         assert_eq!(args.sleep_seconds, 0);
         assert_eq!(args.codex_bin, "codex-test");
+        assert_eq!(args.execution.sandbox, ExecutionSandbox::AppleContainer);
+        assert_eq!(args.execution.sandbox_image, "example.com/lgtm-codex:test");
+        assert_eq!(args.execution.container_bin, "container-test");
+        assert_eq!(
+            args.execution.codex_auth_path.unwrap(),
+            PathBuf::from("/tmp/auth.json")
+        );
         assert_eq!(args.stream_mode, StreamMode::Raw);
         assert_eq!(args.log_dir.unwrap(), PathBuf::from(".codex-log"));
         assert_eq!(args.run_stamp.as_deref(), Some("test"));
@@ -182,6 +257,10 @@ mod tests {
         assert!(run_help.contains("--end-phase"));
         assert!(run_help.contains("--sleep-seconds"));
         assert!(run_help.contains("--codex-bin"));
+        assert!(run_help.contains("--execution-sandbox"));
+        assert!(run_help.contains("--sandbox-image"));
+        assert!(run_help.contains("--container-bin"));
+        assert!(run_help.contains("--codex-auth-path"));
         assert!(run_help.contains("--stream-mode"));
         assert!(run_help.contains("--log-dir"));
         assert!(run_help.contains("--run-stamp"));
@@ -195,6 +274,10 @@ mod tests {
         assert!(plan_help.contains("--root"));
         assert!(plan_help.contains("--plan-path"));
         assert!(plan_help.contains("--codex-bin"));
+        assert!(plan_help.contains("--execution-sandbox"));
+        assert!(plan_help.contains("--sandbox-image"));
+        assert!(plan_help.contains("--container-bin"));
+        assert!(plan_help.contains("--codex-auth-path"));
         assert!(plan_help.contains("--log-dir"));
         assert!(plan_help.contains("--run-stamp"));
     }

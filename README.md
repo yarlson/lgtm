@@ -17,8 +17,8 @@ where Codex needs a repeatable local loop.
 
 > [!WARNING]
 > `lgtm` drives `codex app-server` with `danger-full-access` and approval
-> policy `never` inside the target repository. Use it only where autonomous
-> local file and command execution is acceptable.
+> policy `never`. In host mode, that runs inside the target repository. In
+> Apple Container mode, the target repository is mounted into a Linux VM.
 
 ## Overview
 
@@ -107,33 +107,102 @@ Use raw protocol output:
 lgtm run --stream-mode raw
 ```
 
+## Apple Container Sandboxing
+
+Apple Container mode runs `codex app-server` through Apple's `container` CLI
+instead of starting it directly on the host.
+
+Requirements:
+
+- macOS 26 on Apple silicon
+- Apple's `container` CLI installed and available on `PATH`
+- a Codex auth file at `~/.codex/auth.json`
+- the sandbox image available locally or from a registry
+
+Build the default image with Apple Container:
+
+```bash
+container build -t ghcr.io/yarlson/lgtm-codex:latest containers/codex
+```
+
+Or build it with Docker:
+
+```bash
+docker build -t ghcr.io/yarlson/lgtm-codex:latest containers/codex
+```
+
+Smoke check the image:
+
+```bash
+container run --rm ghcr.io/yarlson/lgtm-codex:latest codex --version
+```
+
+Run inside Apple Container:
+
+```bash
+lgtm run --execution-sandbox apple-container --root ../target-repo
+```
+
+The container receives:
+
+- the target repository mounted read-write at `/workspace`
+- `~/.codex/auth.json` copied into a temporary directory mounted at
+  `/root/.codex`, so Codex can write runtime config without touching the real
+  host Codex directory
+- `.codex-log/mise` mounted at `/mise` for mise-installed toolchains and cache
+- `HOME=/root` and `CODEX_HOME=/root/.codex`
+- `MISE_DATA_DIR=/mise`, `MISE_CONFIG_DIR=/mise`, and
+  `MISE_CACHE_DIR=/mise/cache`
+- `MISE_PIN=1`, so activated tool versions are written exactly
+
+The default image is `ghcr.io/yarlson/lgtm-codex:latest`. Override it with
+`--sandbox-image` or `LGTM_SANDBOX_IMAGE`.
+
+The image includes `mise`. In Apple Container mode, lgtm adds sandbox-specific
+instructions telling Codex to use `mise use -g -y <tool>@<version>` when a
+project needs a missing interpreter, runtime, compiler, or package manager and
+does not already declare a toolchain. This activates the tool through
+`/mise/config.toml`, so later commands can run directly through `/mise/shims`
+without repeated `mise exec` wrappers. Installed tools stay under
+`.codex-log/mise`, which is ignored with the rest of the protocol logs.
+The image also adds `/mise/shims` during shell startup, because Codex tool calls
+run through fresh login shells.
+
 ## Options
 
 Run options:
 
-| Option            | Environment        | Default           | Description                           |
-| ----------------- | ------------------ | ----------------- | ------------------------------------- |
-| `--root`          | `ROOT_DIR`         | current directory | Target repository root                |
-| `--plan-path`     | `PLAN_PATH`        | `PLAN.md`         | Plan file path under the root         |
-| `--agents-path`   | `REPO_AGENTS_PATH` | `AGENTS.md`       | Agent instruction path under the root |
-| `--start-phase`   | `START_PHASE`      | `1`               | First phase to run                    |
-| `--end-phase`     | `END_PHASE`        | detected          | Last phase to run                     |
-| `--sleep-seconds` | `SLEEP_SECONDS`    | `600`             | Delay between phases                  |
-| `--codex-bin`     | `CODEX_BIN`        | `codex`           | Codex executable                      |
-| `--stream-mode`   | `STREAM_MODE`      | `pretty`          | `pretty` or `raw`                     |
-| `--log-dir`       | `LOG_DIR`          | `.codex-log`      | Log directory                         |
-| `--run-stamp`     | `RUN_STAMP`        | timestamp         | Log filename prefix                   |
+| Option                  | Environment              | Default                            | Description                         |
+| ----------------------- | ------------------------ | ---------------------------------- | ----------------------------------- |
+| `--root`                | `ROOT_DIR`               | current directory                  | Target repository root              |
+| `--plan-path`           | `PLAN_PATH`              | `PLAN.md`                          | Plan file path under the root       |
+| `--agents-path`         | `REPO_AGENTS_PATH`       | `AGENTS.md`                        | Agent instruction path              |
+| `--start-phase`         | `START_PHASE`            | `1`                                | First phase to run                  |
+| `--end-phase`           | `END_PHASE`              | detected                           | Last phase to run                   |
+| `--sleep-seconds`       | `SLEEP_SECONDS`          | `600`                              | Delay between phases                |
+| `--codex-bin`           | `CODEX_BIN`              | `codex`                            | Host Codex executable               |
+| `--execution-sandbox`   | `LGTM_EXECUTION_SANDBOX` | `host`                             | `host` or `apple-container`         |
+| `--sandbox-image`       | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
+| `--container-bin`       | `CONTAINER_BIN`          | `container`                        | Apple Container executable          |
+| `--codex-auth-path`     | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`               | Codex auth file for Apple Container |
+| `--stream-mode`         | `STREAM_MODE`            | `pretty`                           | `pretty` or `raw`                   |
+| `--log-dir`             | `LOG_DIR`                | `.codex-log`                       | Log directory                       |
+| `--run-stamp`           | `RUN_STAMP`              | timestamp                          | Log filename prefix                 |
 
 Plan options:
 
-| Option        | Environment | Default           | Description                   |
-| ------------- | ----------- | ----------------- | ----------------------------- |
-| `[BRIEF]`     |             |                   | Optional planning brief       |
-| `--root`      | `ROOT_DIR`  | current directory | Target repository root        |
-| `--plan-path` | `PLAN_PATH` | `PLAN.md`         | Plan file path under the root |
-| `--codex-bin` | `CODEX_BIN` | `codex`           | Codex executable              |
-| `--log-dir`   | `LOG_DIR`   | `.codex-log`      | Log directory                 |
-| `--run-stamp` | `RUN_STAMP` | timestamp         | Log filename prefix           |
+| Option                | Environment              | Default                            | Description                         |
+| --------------------- | ------------------------ | ---------------------------------- | ----------------------------------- |
+| `[BRIEF]`             |                          |                                    | Optional planning brief             |
+| `--root`              | `ROOT_DIR`               | current directory                  | Target repository root              |
+| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                          | Plan file path under the root       |
+| `--codex-bin`         | `CODEX_BIN`              | `codex`                            | Host Codex executable               |
+| `--execution-sandbox` | `LGTM_EXECUTION_SANDBOX` | `host`                             | `host` or `apple-container`         |
+| `--sandbox-image`     | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
+| `--container-bin`     | `CONTAINER_BIN`          | `container`                        | Apple Container executable          |
+| `--codex-auth-path`   | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`               | Codex auth file for Apple Container |
+| `--log-dir`           | `LOG_DIR`                | `.codex-log`                       | Log directory                       |
+| `--run-stamp`         | `RUN_STAMP`              | timestamp                          | Log filename prefix                 |
 
 ## Safety And Logs
 

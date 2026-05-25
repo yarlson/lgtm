@@ -66,7 +66,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
     );
     assert!(plain_stdout.contains(">_ lgtm"));
     assert!(plain_stdout.contains("mode:        plan"));
-    assert!(plain_stdout.contains("permissions: YOLO mode"));
+    assert!(plain_stdout.contains("execution:   host YOLO"));
     assert!(plain_stdout.contains("Pick one"));
     assert!(plain_stdout.contains("Option A"));
     assert!(plain_stdout.contains("> /quit"));
