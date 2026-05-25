@@ -95,23 +95,23 @@ PLAN
     assert!(stdout.contains("• Codex"));
     assert!(stdout.contains("  done"));
 
-    assert!(repo.join(".codex-log/test-phase-01-index.jsonl").is_file());
+    assert!(repo.join(".lgtm/logs/test-phase-01-index.jsonl").is_file());
     assert!(
-        repo.join(".codex-log/test-phase-01-implement.jsonl")
+        repo.join(".lgtm/logs/test-phase-01-implement.jsonl")
             .is_file()
     );
     assert!(
-        repo.join(".codex-log/test-phase-01-validate.jsonl")
+        repo.join(".lgtm/logs/test-phase-01-validate.jsonl")
             .is_file()
     );
-    assert!(repo.join(".codex-log/test-phase-01-review.jsonl").is_file());
-    assert!(repo.join(".codex-log/test-phase-02-index.jsonl").is_file());
+    assert!(repo.join(".lgtm/logs/test-phase-01-review.jsonl").is_file());
+    assert!(repo.join(".lgtm/logs/test-phase-02-index.jsonl").is_file());
     assert!(
-        repo.join(".codex-log/test-phase-02-implement.jsonl")
+        repo.join(".lgtm/logs/test-phase-02-implement.jsonl")
             .is_file()
     );
     let index_log =
-        fs::read_to_string(repo.join(".codex-log/test-phase-01-index.jsonl")).expect("index log");
+        fs::read_to_string(repo.join(".lgtm/logs/test-phase-01-index.jsonl")).expect("index log");
     assert!(index_log.contains(r#""direction":"out""#));
     assert!(index_log.contains(r#""method\":\"turn/start\""#));
     assert!(index_log.contains(r#""direction":"in""#));

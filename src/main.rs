@@ -4,6 +4,7 @@ mod commands;
 mod composer;
 mod git;
 mod output;
+mod paths;
 mod phase_index;
 mod prompt;
 mod skills;

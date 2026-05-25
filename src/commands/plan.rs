@@ -362,7 +362,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         assert!(rendered.contains("  └ README.md"));
         assert!(rendered.contains("• Codex"));
         assert!(rendered.contains("  final plan written"));
-        let log = fs::read_to_string(root.join(".codex-log/test-plan-001.jsonl")).expect("log");
+        let log = fs::read_to_string(root.join(".lgtm/logs/test-plan-001.jsonl")).expect("log");
         assert!(log.contains(r#""direction":"out""#));
         assert!(log.contains(r#""direction":"in""#));
     }

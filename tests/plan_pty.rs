@@ -74,7 +74,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         fs::read_to_string(temp.path().join("counter")).expect("counter"),
         "1\n"
     );
-    assert!(repo.join(".codex-log/test-plan-001.jsonl").is_file());
+    assert!(repo.join(".lgtm/logs/test-plan-001.jsonl").is_file());
     assert!(!temp.path().join("turn-2.json").exists());
 }
 
