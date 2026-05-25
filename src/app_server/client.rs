@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use crate::app_server::{
     config::AppServerConfig,
     json::{get_string, response_result},
+    launch::AppServerLaunch,
     line_source::{LineRead, LineSource, ThreadedLineReader},
     protocol::{ClientNotification, ClientRequest, ServerRequest},
     transcript::{CompletedTurn, PlanStep, TranscriptEvent, TranscriptItem, TurnCollector},
@@ -52,20 +53,25 @@ impl From<TranscriptEvent> for TurnStreamEvent {
 }
 
 impl AppServerClient {
-    pub fn connect(config: AppServerConfig) -> Result<Self> {
-        let mut client = Self::spawn(config)?;
+    pub fn connect(launch: AppServerLaunch, config: AppServerConfig) -> Result<Self> {
+        let mut client = Self::spawn(launch, config)?;
         client.connection.initialize()?;
         Ok(client)
     }
 
-    fn spawn(config: AppServerConfig) -> Result<Self> {
-        let mut child = Command::new(&config.codex_bin)
-            .args(["app-server"])
+    fn spawn(launch: AppServerLaunch, config: AppServerConfig) -> Result<Self> {
+        let mut child = Command::new(launch.program())
+            .args(launch.args())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .context("failed to start `codex app-server`")?;
+            .with_context(|| {
+                format!(
+                    "failed to start app-server command: {}",
+                    launch.display_command()
+                )
+            })?;
 
         let stdin = child
             .stdin
@@ -378,7 +384,6 @@ mod tests {
 
     fn test_config() -> AppServerConfig {
         AppServerConfig {
-            codex_bin: "codex".to_string(),
             cwd: "/repo".to_string(),
             model: Some("gpt-5.5".to_string()),
             reasoning_effort: "high".to_string(),

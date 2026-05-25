@@ -9,7 +9,8 @@ use anyhow::{Context, Result, bail};
 use crate::{
     app_server::{AppServerClient, CompletedTurn, ItemKind, TurnControl},
     cli::PlanArgs,
-    commands::runtime::CommandRuntime,
+    commands::execution::ExecutionConfig,
+    commands::runtime::{CommandRuntime, CommandRuntimeConfig, RuntimeAppServerClient},
     composer::{self, ComposerSubmission},
     git,
     output::{
@@ -29,7 +30,12 @@ struct PlanConfig {
 
 impl PlanConfig {
     fn from_args(args: PlanArgs) -> Result<Self> {
-        let runtime = CommandRuntime::new(args.root, args.codex_bin, args.log_dir, args.run_stamp)?;
+        let runtime = CommandRuntime::new(CommandRuntimeConfig {
+            root: args.root,
+            log_dir: args.log_dir,
+            run_stamp: args.run_stamp,
+            execution: ExecutionConfig::from_args(args.codex_bin, args.execution),
+        })?;
 
         Ok(Self {
             runtime,
@@ -63,7 +69,8 @@ pub fn run(args: PlanArgs) -> Result<()> {
             Banner {
                 mode: BannerMode::Plan,
                 root: config.runtime.root(),
-                codex_bin: config.runtime.codex_bin(),
+                codex_bin: config.runtime.app_server_binary(),
+                execution: config.runtime.execution_label(),
             },
             &RenderOptions::default(),
         ),
@@ -184,7 +191,7 @@ fn require_planning_tty() -> Result<()> {
     }
 }
 
-fn connect_client(config: &PlanConfig) -> Result<AppServerClient> {
+fn connect_client(config: &PlanConfig) -> Result<RuntimeAppServerClient> {
     config.runtime.connect_app_server(None)
 }
 
@@ -247,6 +254,7 @@ mod tests {
             root: Some(root),
             plan_path: "PLAN.md".into(),
             codex_bin: "codex".to_string(),
+            execution: crate::cli::ExecutionArgs::default(),
             log_dir: None,
             run_stamp: Some("test".to_string()),
         }

@@ -11,7 +11,8 @@ use anyhow::{Context, Result};
 use crate::{
     app_server::{AppServerClient, CompletedTurn, TurnControl, TurnStreamEvent},
     cli::{RunArgs, StreamMode},
-    commands::runtime::{CommandRuntime, require_file},
+    commands::execution::ExecutionConfig,
+    commands::runtime::{CommandRuntime, CommandRuntimeConfig, require_file},
     git,
     output::{
         RenderOptions, Renderer,
@@ -35,7 +36,12 @@ struct RunConfig {
 
 impl RunConfig {
     fn from_args(args: RunArgs) -> Result<Self> {
-        let runtime = CommandRuntime::new(args.root, args.codex_bin, args.log_dir, args.run_stamp)?;
+        let runtime = CommandRuntime::new(CommandRuntimeConfig {
+            root: args.root,
+            log_dir: args.log_dir,
+            run_stamp: args.run_stamp,
+            execution: ExecutionConfig::from_args(args.codex_bin, args.execution),
+        })?;
 
         Ok(Self {
             runtime,
@@ -63,7 +69,8 @@ pub fn run(args: RunArgs) -> Result<()> {
     output.banner(Banner {
         mode: BannerMode::Run,
         root: config.runtime.root(),
-        codex_bin: config.runtime.codex_bin(),
+        codex_bin: config.runtime.app_server_binary(),
+        execution: config.runtime.execution_label(),
     })?;
 
     require_file(&config.plan_abs(), &config.plan_path)?;
@@ -343,6 +350,7 @@ mod tests {
             end_phase: Some(1),
             sleep_seconds: 0,
             codex_bin: "codex".to_string(),
+            execution: crate::cli::ExecutionArgs::default(),
             stream_mode: StreamMode::Pretty,
             log_dir: None,
             run_stamp: Some("test".to_string()),
@@ -392,6 +400,7 @@ mod tests {
                 mode: BannerMode::Run,
                 root: root.as_path(),
                 codex_bin: "codex",
+                execution: "host YOLO",
             })
             .expect("banner");
 
