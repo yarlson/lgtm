@@ -14,6 +14,7 @@ use crate::{
     commands::execution::{
         ExecutionConfig, ExecutionResources, ExecutionTarget, PreparedAppServer,
     },
+    paths,
 };
 
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ impl CommandRuntime {
         };
         let log_dir = log_dir
             .map(|path| resolve_under_root(&root, path))
-            .unwrap_or_else(|| root.join(".codex-log"));
+            .unwrap_or_else(|| paths::default_log_dir(&root));
         let run_stamp =
             run_stamp.unwrap_or_else(|| Local::now().format("%Y%m%d-%H%M%S").to_string());
         let execution = ExecutionTarget::from_config(execution)?;
@@ -246,6 +247,13 @@ mod tests {
         assert_eq!(prepared.launch.program(), "codex");
         assert_eq!(prepared.launch.args(), ["app-server"]);
         assert_eq!(runtime.app_server_binary(), "codex");
+    }
+
+    #[test]
+    fn default_log_dir_uses_lgtm_logs() {
+        let runtime = runtime_with_root(PathBuf::from("/repo"), crate::cli::ExecutionSandbox::Host);
+
+        assert_eq!(runtime.log_dir(), Path::new("/repo/.lgtm/logs"));
     }
 
     #[test]

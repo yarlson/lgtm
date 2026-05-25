@@ -10,6 +10,7 @@ use anyhow::{Context, Result, bail};
 use crate::{
     app_server::AppServerLaunch,
     cli::{ExecutionArgs, ExecutionSandbox},
+    paths,
 };
 
 const CONTAINER_WORKDIR: &str = "/workspace";
@@ -282,7 +283,7 @@ fn prepare_codex_auth_dir(auth_path: &Path) -> Result<PathBuf> {
 }
 
 fn prepare_mise_dir(root: &Path) -> Result<PathBuf> {
-    let dir = root.join(".codex-log").join("mise");
+    let dir = paths::sandbox_mise_dir(root);
     fs::create_dir_all(dir.join("cache"))
         .with_context(|| format!("failed to create {}", dir.join("cache").display()))?;
     fs::create_dir_all(dir.join("shims"))
@@ -300,7 +301,7 @@ mod tests {
             "container-test",
             Path::new("/repo"),
             Path::new("/tmp/lgtm-codex-auth"),
-            Path::new("/repo/.codex-log/mise"),
+            Path::new("/repo/.lgtm/sandbox/mise"),
             "example.com/lgtm-codex:test",
         );
 
@@ -320,7 +321,7 @@ mod tests {
                 "--mount",
                 "type=bind,source=/tmp/lgtm-codex-auth,target=/root/.codex",
                 "--mount",
-                "type=bind,source=/repo/.codex-log/mise,target=/mise",
+                "type=bind,source=/repo/.lgtm/sandbox/mise,target=/mise",
                 "--env",
                 "HOME=/root",
                 "--env",
@@ -365,12 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn apple_container_prepare_without_preflight_uses_repo_mise_dir() {
+    fn apple_container_prepare_without_preflight_uses_sandbox_mise_dir() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("repo");
         fs::create_dir(&root).expect("repo");
         let auth_dir = temp.path().join("auth");
-        let mise_dir = root.join(".codex-log").join("mise");
+        let mise_dir = root.join(".lgtm").join("sandbox").join("mise");
 
         let launch = apple_container_launch(
             "container-test",
@@ -427,11 +428,11 @@ mod tests {
                 .developer_instructions_suffix
                 .is_some_and(|text| text.contains("mise use -g"))
         );
-        assert!(root.join(".codex-log/mise/cache").is_dir());
-        assert!(root.join(".codex-log/mise/shims").is_dir());
+        assert!(root.join(".lgtm/sandbox/mise/cache").is_dir());
+        assert!(root.join(".lgtm/sandbox/mise/shims").is_dir());
         assert!(prepared.launch.args().contains(&format!(
             "type=bind,source={},target=/mise",
-            root.join(".codex-log/mise").display()
+            root.join(".lgtm/sandbox/mise").display()
         )));
         assert!(!prepared.resources.is_empty());
     }

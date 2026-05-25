@@ -153,7 +153,7 @@ mod tests {
             "--codex-auth-path",
             "/tmp/auth.json",
             "--log-dir",
-            ".codex-log",
+            ".lgtm/logs",
             "--run-stamp",
             "test",
         ])
@@ -173,7 +173,7 @@ mod tests {
             args.execution.codex_auth_path.unwrap(),
             PathBuf::from("/tmp/auth.json")
         );
-        assert_eq!(args.log_dir.unwrap(), PathBuf::from(".codex-log"));
+        assert_eq!(args.log_dir.unwrap(), PathBuf::from(".lgtm/logs"));
         assert_eq!(args.run_stamp.as_deref(), Some("test"));
     }
 
@@ -207,7 +207,7 @@ mod tests {
             "--stream-mode",
             "raw",
             "--log-dir",
-            ".codex-log",
+            ".lgtm/logs",
             "--run-stamp",
             "test",
         ])
@@ -231,7 +231,7 @@ mod tests {
             PathBuf::from("/tmp/auth.json")
         );
         assert_eq!(args.stream_mode, StreamMode::Raw);
-        assert_eq!(args.log_dir.unwrap(), PathBuf::from(".codex-log"));
+        assert_eq!(args.log_dir.unwrap(), PathBuf::from(".lgtm/logs"));
         assert_eq!(args.run_stamp.as_deref(), Some("test"));
     }
 

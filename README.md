@@ -30,7 +30,7 @@ where Codex needs a repeatable local loop.
   phases.
 - Pretty output uses active spinner rows while Codex is thinking or running
   tools, then replaces them with final evidence.
-- App-server protocol logs are written to `.codex-log/`.
+- App-server protocol logs are written to `.lgtm/logs/`.
 - Managed skills are installed under `.agents/skills/lgtm-*`.
 
 ## Install
@@ -149,7 +149,7 @@ The container receives:
 - `~/.codex/auth.json` copied into a temporary directory mounted at
   `/root/.codex`, so Codex can write runtime config without touching the real
   host Codex directory
-- `.codex-log/mise` mounted at `/mise` for mise-installed toolchains and cache
+- `.lgtm/sandbox/mise` mounted at `/mise` for mise-installed toolchains and cache
 - `HOME=/root` and `CODEX_HOME=/root/.codex`
 - `MISE_DATA_DIR=/mise`, `MISE_CONFIG_DIR=/mise`, and
   `MISE_CACHE_DIR=/mise/cache`
@@ -164,7 +164,7 @@ project needs a missing interpreter, runtime, compiler, or package manager and
 does not already declare a toolchain. This activates the tool through
 `/mise/config.toml`, so later commands can run directly through `/mise/shims`
 without repeated `mise exec` wrappers. Installed tools stay under
-`.codex-log/mise`, which is ignored with the rest of the protocol logs.
+`.lgtm/sandbox/mise`, which is ignored with the rest of lgtm's generated state.
 The image also adds `/mise/shims` during shell startup, because Codex tool calls
 run through fresh login shells.
 
@@ -186,7 +186,7 @@ Run options:
 | `--container-bin`       | `CONTAINER_BIN`          | `container`                        | Apple Container executable          |
 | `--codex-auth-path`     | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`               | Codex auth file for Apple Container |
 | `--stream-mode`         | `STREAM_MODE`            | `pretty`                           | `pretty` or `raw`                   |
-| `--log-dir`             | `LOG_DIR`                | `.codex-log`                       | Log directory                       |
+| `--log-dir`             | `LOG_DIR`                | `.lgtm/logs`                       | Log directory                       |
 | `--run-stamp`           | `RUN_STAMP`              | timestamp                          | Log filename prefix                 |
 
 Plan options:
@@ -201,7 +201,7 @@ Plan options:
 | `--sandbox-image`     | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
 | `--container-bin`     | `CONTAINER_BIN`          | `container`                        | Apple Container executable          |
 | `--codex-auth-path`   | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`               | Codex auth file for Apple Container |
-| `--log-dir`           | `LOG_DIR`                | `.codex-log`                       | Log directory                       |
+| `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                       | Log directory                       |
 | `--run-stamp`         | `RUN_STAMP`              | timestamp                          | Log filename prefix                 |
 
 ## Safety And Logs
@@ -214,11 +214,11 @@ main`.
 Logs are written as JSONL:
 
 ```text
-.codex-log/<run-stamp>-plan-001.jsonl
-.codex-log/<run-stamp>-phase-01-index.jsonl
-.codex-log/<run-stamp>-phase-01-implement.jsonl
-.codex-log/<run-stamp>-phase-01-validate.jsonl
-.codex-log/<run-stamp>-phase-01-review.jsonl
+.lgtm/logs/<run-stamp>-plan-001.jsonl
+.lgtm/logs/<run-stamp>-phase-01-index.jsonl
+.lgtm/logs/<run-stamp>-phase-01-implement.jsonl
+.lgtm/logs/<run-stamp>-phase-01-validate.jsonl
+.lgtm/logs/<run-stamp>-phase-01-review.jsonl
 ```
 
 Each log line records app-server protocol direction and payload. Managed skills
@@ -226,7 +226,7 @@ and logs are ignored in target repositories through:
 
 ```gitignore
 .agents/skills/lgtm-*
-.codex-log/
+.lgtm/
 ```
 
 ## Development

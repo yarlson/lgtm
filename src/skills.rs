@@ -2,7 +2,9 @@ use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::Path;
 
-const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/lgtm-*", ".codex-log/"];
+use crate::paths;
+
+const GITIGNORE_ENTRIES: &[&str] = &[".agents/skills/lgtm-*", paths::GITIGNORE_GENERATED_STATE];
 
 struct Skill {
     name: &'static str,
@@ -212,6 +214,29 @@ managed-by: lgtm
 ";
 
         assert!(!is_managed_skill("lgtm-phase-implement", body));
+    }
+
+    #[test]
+    fn install_ignores_lgtm_generated_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        install(temp.path()).expect("install");
+
+        let gitignore = fs::read_to_string(temp.path().join(".gitignore")).expect("gitignore");
+        assert!(gitignore.lines().any(|line| line == ".lgtm/"));
+        assert!(!gitignore.lines().any(|line| line == ".codex-log/"));
+    }
+
+    #[test]
+    fn install_leaves_existing_codex_log_ignore_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join(".gitignore"), ".codex-log/\n").expect("gitignore");
+
+        install(temp.path()).expect("install");
+
+        let gitignore = fs::read_to_string(temp.path().join(".gitignore")).expect("gitignore");
+        assert!(gitignore.lines().any(|line| line == ".codex-log/"));
+        assert!(gitignore.lines().any(|line| line == ".lgtm/"));
     }
 
     #[test]
