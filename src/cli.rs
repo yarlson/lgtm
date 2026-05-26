@@ -42,7 +42,7 @@ pub struct RunArgs {
     #[arg(long, env = "END_PHASE")]
     pub end_phase: Option<u32>,
 
-    #[arg(long, env = "SLEEP_SECONDS", default_value_t = 600)]
+    #[arg(long, env = "SLEEP_SECONDS", default_value_t = 10)]
     pub sleep_seconds: u64,
 
     #[arg(long, env = "CODEX_BIN", default_value = "codex")]
@@ -236,6 +236,16 @@ mod tests {
     }
 
     #[test]
+    fn run_command_defaults_sleep_seconds_to_ten() {
+        let cli = Cli::try_parse_from(["lgtm", "run"]).unwrap();
+
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(args.sleep_seconds, 10);
+    }
+
+    #[test]
     fn exposes_snap_rs_compatible_help_surface() {
         let mut command = Cli::command();
         let help = command.render_long_help().to_string();
@@ -256,6 +266,7 @@ mod tests {
         assert!(run_help.contains("--start-phase"));
         assert!(run_help.contains("--end-phase"));
         assert!(run_help.contains("--sleep-seconds"));
+        assert!(run_help.contains("[default: 10]"));
         assert!(run_help.contains("--codex-bin"));
         assert!(run_help.contains("--execution-sandbox"));
         assert!(run_help.contains("--sandbox-image"));

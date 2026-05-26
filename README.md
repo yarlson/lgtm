@@ -194,37 +194,37 @@ run through fresh login shells.
 
 Run options:
 
-| Option                  | Environment              | Default                            | Description                         |
-| ----------------------- | ------------------------ | ---------------------------------- | ----------------------------------- |
-| `--root`                | `ROOT_DIR`               | current directory                  | Target repository root              |
-| `--plan-path`           | `PLAN_PATH`              | `PLAN.md`                          | Plan file path under the root       |
-| `--agents-path`         | `REPO_AGENTS_PATH`       | `AGENTS.md`                        | Agent instruction path              |
-| `--start-phase`         | `START_PHASE`            | `1`                                | First phase to run                  |
-| `--end-phase`           | `END_PHASE`              | detected                           | Last phase to run                   |
-| `--sleep-seconds`       | `SLEEP_SECONDS`          | `600`                              | Delay between phases                |
-| `--codex-bin`           | `CODEX_BIN`              | `codex`                            | Host Codex executable               |
-| `--execution-sandbox`   | `LGTM_EXECUTION_SANDBOX` | `host`                             | `host` or `apple-container`         |
-| `--sandbox-image`       | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
-| `--container-bin`       | `CONTAINER_BIN`          | `container`                        | Apple Container executable          |
-| `--codex-auth-path`     | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`               | Codex auth file for Apple Container |
-| `--stream-mode`         | `STREAM_MODE`            | `pretty`                           | `pretty` or `raw`                   |
-| `--log-dir`             | `LOG_DIR`                | `.lgtm/logs`                       | Log directory                       |
-| `--run-stamp`           | `RUN_STAMP`              | timestamp                          | Log filename prefix                 |
+| Option                | Environment              | Default                             | Description                         |
+| --------------------- | ------------------------ | ----------------------------------- | ----------------------------------- |
+| `--root`              | `ROOT_DIR`               | current directory                   | Target repository root              |
+| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Plan file path under the root       |
+| `--agents-path`       | `REPO_AGENTS_PATH`       | `AGENTS.md`                         | Agent instruction path              |
+| `--start-phase`       | `START_PHASE`            | `1`                                 | First phase to run                  |
+| `--end-phase`         | `END_PHASE`              | detected                            | Last phase to run                   |
+| `--sleep-seconds`     | `SLEEP_SECONDS`          | `10`                                | Delay between phases                |
+| `--codex-bin`         | `CODEX_BIN`              | `codex`                             | Host Codex executable               |
+| `--execution-sandbox` | `LGTM_EXECUTION_SANDBOX` | `host`                              | `host` or `apple-container`         |
+| `--sandbox-image`     | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
+| `--container-bin`     | `CONTAINER_BIN`          | `container`                         | Apple Container executable          |
+| `--codex-auth-path`   | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`                | Codex auth file for Apple Container |
+| `--stream-mode`       | `STREAM_MODE`            | `pretty`                            | `pretty` or `raw`                   |
+| `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                        | Log directory                       |
+| `--run-stamp`         | `RUN_STAMP`              | timestamp                           | Log filename prefix                 |
 
 Plan options:
 
-| Option                | Environment              | Default                            | Description                         |
-| --------------------- | ------------------------ | ---------------------------------- | ----------------------------------- |
-| `[BRIEF]`             |                          |                                    | Optional planning brief             |
-| `--root`              | `ROOT_DIR`               | current directory                  | Target repository root              |
-| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                          | Plan file path under the root       |
-| `--codex-bin`         | `CODEX_BIN`              | `codex`                            | Host Codex executable               |
-| `--execution-sandbox` | `LGTM_EXECUTION_SANDBOX` | `host`                             | `host` or `apple-container`         |
+| Option                | Environment              | Default                             | Description                         |
+| --------------------- | ------------------------ | ----------------------------------- | ----------------------------------- |
+| `[BRIEF]`             |                          |                                     | Optional planning brief             |
+| `--root`              | `ROOT_DIR`               | current directory                   | Target repository root              |
+| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Plan file path under the root       |
+| `--codex-bin`         | `CODEX_BIN`              | `codex`                             | Host Codex executable               |
+| `--execution-sandbox` | `LGTM_EXECUTION_SANDBOX` | `host`                              | `host` or `apple-container`         |
 | `--sandbox-image`     | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
-| `--container-bin`     | `CONTAINER_BIN`          | `container`                        | Apple Container executable          |
-| `--codex-auth-path`   | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`               | Codex auth file for Apple Container |
-| `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                       | Log directory                       |
-| `--run-stamp`         | `RUN_STAMP`              | timestamp                          | Log filename prefix                 |
+| `--container-bin`     | `CONTAINER_BIN`          | `container`                         | Apple Container executable          |
+| `--codex-auth-path`   | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`                | Codex auth file for Apple Container |
+| `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                        | Log directory                       |
+| `--run-stamp`         | `RUN_STAMP`              | timestamp                           | Log filename prefix                 |
 
 ## Safety And Logs
 
