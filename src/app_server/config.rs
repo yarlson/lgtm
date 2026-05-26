@@ -1,4 +1,6 @@
-const DEFAULT_DEVELOPER_INSTRUCTIONS: &str = "You are running inside lgtm. Follow the user prompt exactly and keep all work scoped to the current turn.";
+const DEFAULT_DEVELOPER_INSTRUCTIONS: &str = "\
+You are running inside lgtm. Follow the user prompt exactly and keep all work scoped to the current turn.
+Treat lgtm preflight and install changes as intentional harness state. Do not revert, delete, or clean up generated .agents/skills/lgtm-* skills, .gitignore entries for .agents/skills/lgtm-* or .lgtm/, or Git initialization and branch setup performed by lgtm unless the user explicitly asks.";
 
 #[derive(Clone, Debug)]
 pub struct AppServerConfig {
@@ -33,5 +35,33 @@ impl AppServerConfig {
     pub fn with_developer_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.developer_instructions = instructions.into();
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_instructions_protect_lgtm_preflight_state() {
+        let config = AppServerConfig::for_run("/repo", None);
+
+        assert!(
+            config
+                .developer_instructions
+                .contains("Treat lgtm preflight and install changes")
+        );
+        assert!(
+            config
+                .developer_instructions
+                .contains(".agents/skills/lgtm-*")
+        );
+        assert!(config.developer_instructions.contains(".lgtm/"));
+        assert!(config.developer_instructions.contains(".gitignore"));
+        assert!(
+            config
+                .developer_instructions
+                .contains("Git initialization and branch setup")
+        );
     }
 }
