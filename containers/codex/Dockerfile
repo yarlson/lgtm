@@ -3,6 +3,8 @@ FROM node:22-bookworm-slim
 ARG CODEX_VERSION="0.133.0"
 ARG MISE_VERSION="v2026.5.15"
 
+LABEL org.opencontainers.image.source="https://github.com/yarlson/lgtm"
+
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV MISE_INSTALL_PATH="/usr/local/bin/mise"

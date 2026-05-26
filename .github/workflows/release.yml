@@ -164,6 +164,39 @@ jobs:
             gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes
           fi
 
+  publish-codex-image:
+    name: Publish Codex sandbox image
+    needs: release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push sandbox image
+        run: |
+          set -euo pipefail
+          image="ghcr.io/yarlson/lgtm-codex"
+          version="${GITHUB_REF_NAME#v}"
+
+          docker build \
+            --platform linux/arm64 \
+            -t "${image}:${version}" \
+            -t "${image}:latest" \
+            containers/codex
+
+          docker push "${image}:${version}"
+          docker push "${image}:latest"
+
   homebrew:
     name: Update Homebrew tap
     needs: release
