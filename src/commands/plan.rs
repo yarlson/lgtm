@@ -10,6 +10,7 @@ use crate::{
     app_server::{AppServerClient, CompletedTurn, ItemKind, TurnControl},
     cli::PlanArgs,
     commands::execution::ExecutionConfig,
+    commands::run::{self, RunConfig},
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, RuntimeAppServerClient},
     composer::{self, ComposerSubmission},
     git,
@@ -58,6 +59,12 @@ impl PlanConfig {
     }
 }
 
+impl From<&PlanConfig> for RunConfig {
+    fn from(config: &PlanConfig) -> Self {
+        RunConfig::from_plan_context(config.runtime.clone(), config.plan_path.clone())
+    }
+}
+
 pub fn run(args: PlanArgs) -> Result<()> {
     require_planning_tty()?;
 
@@ -101,7 +108,16 @@ pub fn run(args: PlanArgs) -> Result<()> {
 
     loop {
         if artifacts_complete {
-            return client.stop();
+            let choice = read_post_plan_choice(&mut stdout);
+            let stop_result = client.stop();
+            match (choice, stop_result) {
+                (Ok(PostPlanChoice::ImplementNow), Ok(())) => {
+                    return run::run_config(RunConfig::from(&config));
+                }
+                (Ok(PostPlanChoice::Exit), Ok(())) => return Ok(()),
+                (Err(error), _) => return Err(error),
+                (Ok(_), Err(error)) => return Err(error),
+            }
         }
 
         let resume_prompt = match composer::read_inline_answer()? {
@@ -155,6 +171,52 @@ fn run_planning_turn(
     }
 
     Ok(artifacts_complete)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostPlanChoice {
+    ImplementNow,
+    Exit,
+}
+
+fn read_post_plan_choice(output: &mut impl Write) -> Result<PostPlanChoice> {
+    write_post_plan_choice_prompt(output)?;
+
+    loop {
+        let choice = match composer::read_inline_answer()? {
+            ComposerSubmission::Quit => Some(PostPlanChoice::Exit),
+            ComposerSubmission::Finish => None,
+            ComposerSubmission::Answer(answer) => parse_post_plan_choice(&answer),
+        };
+
+        if let Some(choice) = choice {
+            return Ok(choice);
+        }
+
+        writeln!(output, "Invalid choice. Enter implement or exit.")
+            .context("failed to write post-plan prompt feedback")?;
+        write_post_plan_choice_prompt(output)?;
+    }
+}
+
+fn write_post_plan_choice_prompt(output: &mut impl Write) -> Result<()> {
+    writeln!(output, "Plan artifacts are ready.")
+        .context("failed to write post-plan choice prompt")?;
+    writeln!(output, "Implement now or exit? [i/e]")
+        .context("failed to write post-plan choice prompt")?;
+    output
+        .flush()
+        .context("failed to flush post-plan choice prompt")
+}
+
+fn parse_post_plan_choice(input: &str) -> Option<PostPlanChoice> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "i" | "implement" | "implement now" | "run" | "r" | "yes" | "y" => {
+            Some(PostPlanChoice::ImplementNow)
+        }
+        "e" | "exit" | "quit" | "q" | "no" | "n" => Some(PostPlanChoice::Exit),
+        _ => None,
+    }
 }
 
 fn write_planning_output(output: &mut impl Write, rendered: String) -> Result<()> {
@@ -232,11 +294,9 @@ impl PlanningArtifactsSnapshot {
     }
 
     fn is_complete_with(&self, after: &Self) -> bool {
-        let plan_changed = after.plan != self.plan;
-        let agents_ready = match self.agents {
-            FileSnapshot::Missing => !matches!(after.agents, FileSnapshot::Missing),
-            FileSnapshot::Present { .. } => true,
-        };
+        let plan_changed =
+            matches!(after.plan, FileSnapshot::Present { .. }) && after.plan != self.plan;
+        let agents_ready = matches!(after.agents, FileSnapshot::Present { .. });
 
         plan_changed && agents_ready
     }
@@ -247,6 +307,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+    use crate::cli::StreamMode;
 
     fn plan_args_with_root(root: PathBuf) -> PlanArgs {
         PlanArgs {
@@ -272,6 +333,82 @@ mod tests {
     }
 
     #[test]
+    fn plan_config_maps_to_run_config_with_run_defaults() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).expect("repo");
+        let mut args = plan_args_with_root(root.clone());
+        args.plan_path = "CUSTOM_PLAN.md".into();
+        args.codex_bin = "codex-test".to_string();
+        args.log_dir = Some("logs".into());
+        args.run_stamp = Some("plan-stamp".to_string());
+
+        let plan_config = PlanConfig::from_args(args).expect("plan config");
+        let run_config = RunConfig::from(&plan_config);
+
+        assert_eq!(run_config.runtime().root(), root);
+        assert_eq!(run_config.runtime().log_dir(), root.join("logs"));
+        assert_eq!(run_config.runtime().run_stamp(), "plan-stamp");
+        assert_eq!(run_config.runtime().app_server_binary(), "codex-test");
+        assert_eq!(run_config.runtime().execution_label(), "host YOLO");
+        assert_eq!(run_config.plan_path(), Path::new("CUSTOM_PLAN.md"));
+        assert_eq!(run_config.agents_path(), Path::new("AGENTS.md"));
+        assert_eq!(run_config.start_phase(), 1);
+        assert_eq!(run_config.end_phase(), None);
+        assert_eq!(run_config.sleep_seconds(), 600);
+        assert_eq!(run_config.stream_mode(), StreamMode::Pretty);
+    }
+
+    #[test]
+    fn plan_to_run_config_reuses_generated_runtime_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).expect("repo");
+        let mut args = plan_args_with_root(root.clone());
+        args.log_dir = None;
+        args.run_stamp = None;
+
+        let plan_config = PlanConfig::from_args(args).expect("plan config");
+        let plan_stamp = plan_config.runtime.run_stamp().to_string();
+        let run_config = RunConfig::from(&plan_config);
+
+        assert_eq!(run_config.runtime().root(), root);
+        assert_eq!(run_config.runtime().log_dir(), root.join(".lgtm/logs"));
+        assert_eq!(run_config.runtime().run_stamp(), plan_stamp);
+    }
+
+    #[test]
+    fn plan_to_run_config_preserves_apple_container_execution_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).expect("repo");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+        let mut args = plan_args_with_root(root);
+        args.execution.sandbox = crate::cli::ExecutionSandbox::AppleContainer;
+        args.execution.sandbox_image = "example.com/lgtm-codex:test".to_string();
+        args.execution.container_bin = "container-test".to_string();
+        args.execution.codex_auth_path = Some(auth_path.clone());
+
+        let plan_config = PlanConfig::from_args(args).expect("plan config");
+        let run_config = RunConfig::from(&plan_config);
+
+        assert_eq!(run_config.runtime().execution_label(), "Apple Container");
+        assert_eq!(run_config.runtime().app_server_binary(), "codex");
+        assert_eq!(
+            run_config
+                .runtime()
+                .apple_container_execution_details()
+                .expect("apple container details"),
+            (
+                "container-test",
+                "example.com/lgtm-codex:test",
+                auth_path.as_path()
+            )
+        );
+    }
+
+    #[test]
     fn artifact_completion_requires_plan_change_and_missing_agents_creation() {
         let before = PlanningArtifactsSnapshot {
             plan: FileSnapshot::Missing,
@@ -294,6 +431,49 @@ mod tests {
 
         assert!(!before.is_complete_with(&missing_agents));
         assert!(before.is_complete_with(&complete));
+    }
+
+    #[test]
+    fn artifact_completion_requires_required_artifacts_to_exist() {
+        let before = PlanningArtifactsSnapshot {
+            plan: FileSnapshot::Present {
+                content: b"# Old Plan".to_vec(),
+            },
+            agents: FileSnapshot::Present {
+                content: b"# Agents".to_vec(),
+            },
+        };
+        let missing_plan = PlanningArtifactsSnapshot {
+            plan: FileSnapshot::Missing,
+            agents: FileSnapshot::Present {
+                content: b"# Agents".to_vec(),
+            },
+        };
+        let missing_agents = PlanningArtifactsSnapshot {
+            plan: FileSnapshot::Present {
+                content: b"# New Plan".to_vec(),
+            },
+            agents: FileSnapshot::Missing,
+        };
+
+        assert!(!before.is_complete_with(&missing_plan));
+        assert!(!before.is_complete_with(&missing_agents));
+    }
+
+    #[test]
+    fn post_plan_choice_parses_common_inputs_without_default() {
+        assert_eq!(
+            parse_post_plan_choice("implement"),
+            Some(PostPlanChoice::ImplementNow)
+        );
+        assert_eq!(
+            parse_post_plan_choice(" yes "),
+            Some(PostPlanChoice::ImplementNow)
+        );
+        assert_eq!(parse_post_plan_choice("exit"), Some(PostPlanChoice::Exit));
+        assert_eq!(parse_post_plan_choice("n"), Some(PostPlanChoice::Exit));
+        assert_eq!(parse_post_plan_choice(""), None);
+        assert_eq!(parse_post_plan_choice("maybe"), None);
     }
 
     #[test]

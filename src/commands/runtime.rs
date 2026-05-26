@@ -80,6 +80,11 @@ impl CommandRuntime {
         &self.run_stamp
     }
 
+    #[cfg(test)]
+    pub(super) fn apple_container_execution_details(&self) -> Option<(&str, &str, &Path)> {
+        self.execution.apple_container_details()
+    }
+
     pub(super) fn resolve_root_path(&self, path: &Path) -> PathBuf {
         self.root.join(path)
     }

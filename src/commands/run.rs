@@ -23,8 +23,13 @@ use crate::{
     skills,
 };
 
+const DEFAULT_AGENTS_PATH: &str = "AGENTS.md";
+const DEFAULT_START_PHASE: u32 = 1;
+const DEFAULT_SLEEP_SECONDS: u64 = 600;
+const DEFAULT_STREAM_MODE: StreamMode = StreamMode::Pretty;
+
 #[derive(Debug, Clone)]
-struct RunConfig {
+pub(super) struct RunConfig {
     runtime: CommandRuntime,
     plan_path: PathBuf,
     agents_path: PathBuf,
@@ -54,6 +59,18 @@ impl RunConfig {
         })
     }
 
+    pub(super) fn from_plan_context(runtime: CommandRuntime, plan_path: PathBuf) -> Self {
+        Self {
+            runtime,
+            plan_path,
+            agents_path: DEFAULT_AGENTS_PATH.into(),
+            start_phase: DEFAULT_START_PHASE,
+            end_phase: None,
+            sleep_seconds: DEFAULT_SLEEP_SECONDS,
+            stream_mode: DEFAULT_STREAM_MODE,
+        }
+    }
+
     fn plan_abs(&self) -> PathBuf {
         self.runtime.resolve_root_path(&self.plan_path)
     }
@@ -61,10 +78,49 @@ impl RunConfig {
     fn agents_abs(&self) -> PathBuf {
         self.runtime.resolve_root_path(&self.agents_path)
     }
+
+    #[cfg(test)]
+    pub(super) fn runtime(&self) -> &CommandRuntime {
+        &self.runtime
+    }
+
+    #[cfg(test)]
+    pub(super) fn plan_path(&self) -> &std::path::Path {
+        &self.plan_path
+    }
+
+    #[cfg(test)]
+    pub(super) fn agents_path(&self) -> &std::path::Path {
+        &self.agents_path
+    }
+
+    #[cfg(test)]
+    pub(super) fn start_phase(&self) -> u32 {
+        self.start_phase
+    }
+
+    #[cfg(test)]
+    pub(super) fn end_phase(&self) -> Option<u32> {
+        self.end_phase
+    }
+
+    #[cfg(test)]
+    pub(super) fn sleep_seconds(&self) -> u64 {
+        self.sleep_seconds
+    }
+
+    #[cfg(test)]
+    pub(super) fn stream_mode(&self) -> StreamMode {
+        self.stream_mode
+    }
 }
 
 pub fn run(args: RunArgs) -> Result<()> {
     let config = RunConfig::from_args(args)?;
+    run_config(config)
+}
+
+pub(super) fn run_config(config: RunConfig) -> Result<()> {
     let mut output = RunOutput::stdout(config.stream_mode);
     output.banner(Banner {
         mode: BannerMode::Run,

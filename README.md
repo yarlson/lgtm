@@ -23,6 +23,8 @@ where Codex needs a repeatable local loop.
 ## Overview
 
 - `lgtm plan [BRIEF]` starts an interactive planning session.
+- After planning produces final artifacts, choose whether to implement the
+  completed plan now or exit.
 - `lgtm run` executes selected phases from `PLAN.md`.
 - Each run phase gets implement, validate, and review passes.
 - Prompts are anchored to `PLAN.md`, `AGENTS.md`, and the exact phase heading.
@@ -78,6 +80,13 @@ Enter `/finish` to ask Codex to write the final `PLAN.md` from the current
 session context, or `/quit` to exit without another Codex turn. If `AGENTS.md`
 was missing at the start, plan mode keeps going until both `PLAN.md` and
 `AGENTS.md` are complete.
+
+After the final artifacts are complete, plan mode asks whether to implement now
+or exit. Pressing Enter alone is not a default and re-prompts for an explicit
+choice. Choosing implementation stops the planning app-server and starts the
+normal run-mode pipeline for all detected phases from Phase 1, using the current
+plan command's root, plan path, Codex binary, execution sandbox settings, log
+directory, and run stamp.
 
 ## Run
 

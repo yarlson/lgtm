@@ -125,6 +125,18 @@ impl ExecutionTarget {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn apple_container_details(&self) -> Option<(&str, &str, &Path)> {
+        match self {
+            Self::Host { .. } => None,
+            Self::AppleContainer {
+                container_bin,
+                image,
+                auth_path,
+            } => Some((container_bin, image, auth_path)),
+        }
+    }
+
     pub(super) fn prepare(&self, root: &Path) -> Result<PreparedAppServer> {
         match self {
             Self::Host { codex_bin } => Ok(PreparedAppServer {
