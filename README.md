@@ -168,9 +168,12 @@ container build -t ghcr.io/yarlson/lgtm-codex:latest containers/codex
 The container receives:
 
 - the target repository mounted read-write at `/workspace`
+- `.lgtm/sandbox/home` mounted at `/root` for sandbox-local tool state written
+  below `HOME`
 - `~/.codex/auth.json` copied into a temporary directory mounted at
-  `/root/.codex`, so Codex can write runtime config without touching the real
-  host Codex directory
+  `/root/.codex` over the sandbox home, so Codex can write runtime config
+  without touching the real host Codex directory or persisting Codex auth in
+  `.lgtm`
 - `.lgtm/sandbox/mise` mounted at `/mise` for mise-installed toolchains and cache
 - `HOME=/root` and `CODEX_HOME=/root/.codex`
 - `MISE_DATA_DIR=/mise`, `MISE_CONFIG_DIR=/mise`, and
@@ -185,8 +188,11 @@ instructions telling Codex to use `mise use -g -y <tool>@<version>` when a
 project needs a missing interpreter, runtime, compiler, or package manager and
 does not already declare a toolchain. This activates the tool through
 `/mise/config.toml`, so later commands can run directly through `/mise/shims`
-without repeated `mise exec` wrappers. Installed tools stay under
-`.lgtm/sandbox/mise`, which is ignored with the rest of lgtm's generated state.
+without repeated `mise exec` wrappers. Mise state stays under
+`.lgtm/sandbox/mise`; tool installers that write below `HOME` stay under
+`.lgtm/sandbox/home`. Both are ignored with the rest of lgtm's generated state.
+Do not place secrets in the sandbox home; it is intentionally persisted between
+Apple Container runs.
 The image also adds `/mise/shims` during shell startup, because Codex tool calls
 run through fresh login shells.
 
