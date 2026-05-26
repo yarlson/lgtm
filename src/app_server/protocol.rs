@@ -226,6 +226,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn thread_start_sends_preflight_protection_in_developer_instructions() {
+        let config = AppServerConfig::for_run("/repo", None);
+
+        let message = ClientRequest::ThreadStart {
+            config: &config,
+            cwd: "/repo".to_string(),
+        }
+        .into_message(1);
+
+        let instructions = message["params"]["developerInstructions"]
+            .as_str()
+            .expect("developer instructions");
+        assert!(instructions.contains("Treat lgtm preflight and install changes"));
+        assert!(instructions.contains(".agents/skills/lgtm-*"));
+        assert!(instructions.contains(".lgtm/"));
+        assert!(instructions.contains("Git initialization and branch setup"));
+    }
+
+    #[test]
     fn known_server_requests_decline_with_protocol_shaped_results() {
         let cases = [
             (
