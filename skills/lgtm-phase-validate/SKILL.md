@@ -18,6 +18,12 @@ lgtm will provide:
 
 Treat validation as an independent review, not a continuation of implementation assumptions.
 
+`PLAN.md` is immutable after `/finish`. Do not edit it for ordinary progress,
+status, discoveries, or later-phase notes. Keep validation progress and
+closeout notes in root-level `PLAN_STATUS.md`, creating it if it is missing.
+Use `lgtm-plan-update` only for an exceptional selected-phase contract defect
+that makes `PLAN.md` impossible or unsafe to validate as written.
+
 ## Workflow
 
 1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from the selected phase.
@@ -37,13 +43,16 @@ Treat validation as an independent review, not a continuation of implementation 
 8. Strengthen tests or verification when existing checks do not prove the phase works.
 9. Run required checks again after fixes.
 10. If compile or type-check commands fail, group errors by file and category, fix the highest-confidence selected-phase issues first, and rerun until clean or blocked.
-11. Leave structural quality and final closeout to the review pass.
+11. Update `PLAN_STATUS.md` with concise validation progress, verification, blockers, and current phase status.
+12. Leave structural quality and final closeout to the review pass.
 
 ## Validation Standard
 
 Do not accept a phase because code exists. Accept it only when behavior is verified against the phase contract.
 
 If the phase cannot be validated because a tool, service, credential, fixture, or environment is missing, report the blocker explicitly and explain what remains unverified.
+
+Record blockers and unverified areas in `PLAN_STATUS.md`; do not rewrite `PLAN.md` unless `lgtm-plan-update` is required for a selected-phase contract defect.
 
 ## Compiler And Typecheck Failures
 
@@ -61,6 +70,7 @@ Validation is complete only when:
 
 - the selected phase is implemented fully and correctly
 - concrete checks were run or blockers were reported
+- `PLAN_STATUS.md` contains current validation progress, verification, blockers, or status notes
 - any fixes stayed within selected-phase scope
 - no later-phase work was added
 - compile or type-check failures were resolved or explicitly blocked

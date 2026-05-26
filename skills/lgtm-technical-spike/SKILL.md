@@ -7,6 +7,10 @@ managed-by: lgtm
 # lgtm Technical Spike
 
 Use this only when implementation or validation depends on unknown technical behavior.
+`PLAN.md` is immutable after `/finish`; record spike conclusions, blockers,
+verification, and status notes in root-level `PLAN_STATUS.md`, creating it if
+it is missing. Use `lgtm-plan-update` only for an exceptional selected-phase
+contract defect.
 
 Examples:
 
@@ -56,6 +60,9 @@ Do not upgrade dependencies unless the selected phase explicitly requires it.
 Do not add abstractions to hide uncertainty.
 
 Do not cite unofficial sources when official docs are available.
+
+Do not edit `PLAN.md` for spike conclusions, blockers, verification summaries,
+or future-work notes after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 

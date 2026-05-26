@@ -9,6 +9,8 @@ managed-by: lgtm
 Use this at the end of the review pass.
 
 The goal is to close the selected phase cleanly.
+`PLAN.md` is immutable after `/finish`; final closeout status belongs in
+root-level `PLAN_STATUS.md`, creating it if it is missing.
 
 ## Workflow
 
@@ -20,8 +22,9 @@ The goal is to close the selected phase cleanly.
 6. Confirm no later-phase work was added.
 7. Confirm docs were updated only if directly affected.
 8. Confirm security, dependency, rollout, test-gap, CLI-control, UI-control, and phase-review skills were used when triggered.
-9. Identify out-of-scope issues separately without fixing them.
-10. Produce a concise final summary.
+9. Confirm `PLAN_STATUS.md` contains concise progress, verification, blockers, and final phase status.
+10. Identify out-of-scope issues separately without fixing them.
+11. Produce a concise final summary.
 
 ## Final Summary Shape
 
@@ -39,6 +42,10 @@ Verified:
 - ...
 
 Changed docs:
+
+- ...
+
+PLAN_STATUS.md:
 
 - ...
 
@@ -60,6 +67,10 @@ Do not make new edits during final review unless they are required to complete t
 Do not hide failed or skipped checks.
 
 Do not claim validation that was not performed.
+
+Do not edit `PLAN.md` for final closeout, progress, future work, or ordinary
+discoveries. Use `lgtm-plan-update` only for an exceptional selected-phase
+contract repair.
 
 Do not commit or push unless explicitly requested.
 

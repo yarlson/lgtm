@@ -9,6 +9,9 @@ managed-by: lgtm
 Use this before editing or validating a selected phase.
 
 The goal is to gather enough local context to work safely without reading the whole repository.
+`PLAN.md` is immutable after `/finish`; record context blockers or status notes
+in root-level `PLAN_STATUS.md`, creating it if it is missing. Use
+`lgtm-plan-update` only for an exceptional selected-phase contract defect.
 
 ## Workflow
 
@@ -40,6 +43,9 @@ Do not turn context mapping into broad documentation work.
 Do not inspect generated output, build artifacts, vendored dependencies, or unrelated modules unless the selected phase requires it.
 
 Do not ask the user for file locations that can be discovered locally.
+
+Do not edit `PLAN.md` for context findings, assumptions, blockers, or
+future-work notes after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 

@@ -461,6 +461,26 @@ mod tests {
     }
 
     #[test]
+    fn artifact_completion_accepts_unchanged_existing_agents() {
+        let before = PlanningArtifactsSnapshot {
+            plan: FileSnapshot::Missing,
+            agents: FileSnapshot::Present {
+                content: b"# Existing Agents".to_vec(),
+            },
+        };
+        let complete = PlanningArtifactsSnapshot {
+            plan: FileSnapshot::Present {
+                content: b"# Plan".to_vec(),
+            },
+            agents: FileSnapshot::Present {
+                content: b"# Existing Agents".to_vec(),
+            },
+        };
+
+        assert!(before.is_complete_with(&complete));
+    }
+
+    #[test]
     fn post_plan_choice_parses_common_inputs_without_default() {
         assert_eq!(
             parse_post_plan_choice("implement"),

@@ -7,6 +7,10 @@ managed-by: lgtm
 # lgtm Rollout Review
 
 Use this when the selected phase affects runtime or production operations.
+`PLAN.md` is immutable after `/finish`; record rollout findings, blockers,
+verification, and status notes in root-level `PLAN_STATUS.md`, creating it if
+it is missing. Use `lgtm-plan-update` only for an exceptional selected-phase
+contract defect.
 
 ## Trigger Surfaces
 
@@ -56,6 +60,9 @@ Do not invent observability systems.
 Do not hardcode toy assumptions into runtime paths.
 
 Do not expand into release automation unless it is part of the selected phase.
+
+Do not edit `PLAN.md` for rollout findings, blockers, verification summaries,
+or future-work notes after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 

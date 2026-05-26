@@ -47,13 +47,13 @@ read turn_start
 
 Done.
 
-## Phase 2 - Updated Title
+## Phase 2 - Cleanup Boundary
 
-Goal: updated.
+Goal: cleanup.
 PLAN
 	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
 	elif [ "$n" = 5 ]; then
-	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Updated Title\",\"heading\":\"## Phase 2 - Updated Title\"}]}","status":"completed"}]}}}'
+	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Cleanup Boundary\",\"heading\":\"## Phase 2 - Cleanup Boundary\"}]}","status":"completed"}]}}}'
 	else
 	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
 	fi
@@ -89,9 +89,9 @@ PLAN
     assert!(stdout.contains("• Phase 01 implementation: Skeleton"));
     assert!(stdout.contains("• Phase 01 validation: Skeleton"));
     assert!(stdout.contains("• Phase 01 review: Skeleton"));
-    assert!(stdout.contains("• Phase 02 implementation: Updated Title"));
-    assert!(stdout.contains("• Phase 02 validation: Updated Title"));
-    assert!(stdout.contains("• Phase 02 review: Updated Title"));
+    assert!(stdout.contains("• Phase 02 implementation: Cleanup Boundary"));
+    assert!(stdout.contains("• Phase 02 validation: Cleanup Boundary"));
+    assert!(stdout.contains("• Phase 02 review: Cleanup Boundary"));
     assert!(stdout.contains("• Codex"));
     assert!(stdout.contains("  done"));
 
@@ -136,8 +136,18 @@ PLAN
     assert!(implement_turn.contains("## Phase 1 - Skeleton"));
     assert!(validate_turn.contains("$lgtm-phase-validate"));
     assert!(review_turn.contains("$lgtm-phase-review"));
-    assert!(phase_two_index_turn.contains("## Phase 2 - Updated Title"));
-    assert!(phase_two_implement_turn.contains("## Phase 2 - Updated Title"));
+    assert_runtime_status_guidance(&implement_turn);
+    assert_runtime_status_guidance(&validate_turn);
+    assert_runtime_status_guidance(&review_turn);
+    assert!(phase_two_index_turn.contains("## Phase 2 - Cleanup Boundary"));
+    assert!(phase_two_implement_turn.contains("## Phase 2 - Cleanup Boundary"));
+    assert_runtime_status_guidance(&phase_two_implement_turn);
+    assert!(implement_turn.contains("Maintain PLAN_STATUS.md for this implementation pass"));
+    assert!(implement_turn.contains("current implementation status for Phase 1"));
+    assert!(validate_turn.contains("Maintain PLAN_STATUS.md for this validation pass"));
+    assert!(validate_turn.contains("current validation status for Phase 1"));
+    assert!(review_turn.contains("Maintain PLAN_STATUS.md for this review pass"));
+    assert!(review_turn.contains("final review status for Phase 1"));
 }
 
 fn init_git_repo(repo: &Path) {
@@ -166,4 +176,16 @@ fn executable(dir: &Path, body: &str) -> std::path::PathBuf {
 
 fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+}
+
+fn assert_runtime_status_guidance(prompt: &str) {
+    assert!(prompt.contains("PLAN_STATUS.md"));
+    assert!(prompt.contains("Treat PLAN.md as immutable after /finish"));
+    assert!(prompt.contains("Do not edit it for ordinary progress, status, discoveries"));
+    assert!(
+        prompt.contains(
+            "Use $lgtm-plan-update only for an exceptional selected-phase contract defect"
+        )
+    );
+    assert!(!prompt.contains("update later phases"));
 }
