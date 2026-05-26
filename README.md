@@ -9,8 +9,9 @@ Plan the work. Execute one phase. Verify. Review. Repeat.
 </div>
 
 `lgtm` is a local Codex harness for repo-sized work that should not be done
-as one giant prompt. It creates or refines a `PLAN.md`, then runs selected plan
-phases through implementation, validation, and review passes.
+as one giant prompt. It creates or refines a finalized `PLAN.md`, then runs
+selected plan phases through implementation, validation, and review passes while
+phase progress is recorded in `PLAN_STATUS.md`.
 
 Use it for migrations, cleanup, feature slices, test hardening, and docs drift
 where Codex needs a repeatable local loop.
@@ -28,8 +29,11 @@ where Codex needs a repeatable local loop.
 - `lgtm run` executes selected phases from `PLAN.md`.
 - Each run phase gets implement, validate, and review passes.
 - Prompts are anchored to `PLAN.md`, `AGENTS.md`, and the exact phase heading.
-- `PLAN.md` is reloaded before each phase so earlier phases can update later
-  phases.
+- `/finish` finalizes `PLAN.md`; ordinary run progress, verification, blockers,
+  and phase closeout notes belong in root-level `PLAN_STATUS.md`.
+- Large or risky plans can include explicit cleanup phases. Cleanup phases run
+  like normal phases and are planned around risk boundaries, not on a fixed
+  schedule.
 - Pretty output uses active spinner rows while Codex is thinking or running
   tools, then replaces them with final evidence.
 - App-server protocol logs are written to `.lgtm/logs/`.
@@ -77,9 +81,22 @@ editing keys, cursor movement, paste, and multiline answers with `Ctrl+J`,
 press it twice quickly to quit.
 
 Enter `/finish` to ask Codex to write the final `PLAN.md` from the current
-session context, or `/quit` to exit without another Codex turn. If `AGENTS.md`
-was missing at the start, plan mode keeps going until both `PLAN.md` and
-`AGENTS.md` are complete.
+session context, or `/quit` to exit without another Codex turn. The final plan
+uses sequential `## Phase N - Name` headings, includes actionable phase
+contracts, and gives non-cleanup implementation phases concrete acceptance
+criteria, artifacts, and validation guidance. If `AGENTS.md` was missing at the
+start, plan mode keeps going until both `PLAN.md` and `AGENTS.md` are complete.
+
+For large or risky work, planning guidance asks Codex to add explicit cleanup
+phases at meaningful boundaries such as migrations, broad refactors, dependency
+changes, CLI/TUI behavior changes, major test rewrites, or generated artifact
+churn. Cleanup phases are optional for small, low-risk plans and run like any
+other numbered phase.
+
+After `/finish`, `PLAN.md` is the plan contract for run mode. During execution,
+Codex is instructed to put progress, verification, blockers, and phase closeout
+notes in root-level `PLAN_STATUS.md` instead of rewriting `PLAN.md` for ordinary
+status updates.
 
 After the final artifacts are complete, plan mode asks whether to implement now
 or exit. Pressing Enter alone is not a default and re-prompts for an explicit
@@ -95,6 +112,10 @@ For run mode, the target repository must contain:
 - `PLAN.md`
 - `AGENTS.md`
 - a Git repository at the target root, or permission to initialize one
+
+`PLAN_STATUS.md` does not need to exist before running. Run-mode prompts tell
+Codex to create it lazily and keep selected-phase progress, verification,
+blockers, and final status there.
 
 <img src="assets/lgtm-run.gif" alt="Terminal recording of lgtm run showing the startup banner and active phase status line" width="100%">
 
@@ -115,6 +136,11 @@ Use raw protocol output:
 ```bash
 lgtm run --stream-mode raw
 ```
+
+Run mode detects phases from the finalized `PLAN.md`, including cleanup phases.
+It does not add a separate cleanup runner mode, and it does not enforce plan
+immutability in Rust; the immutable-plan and status-file workflow is part of the
+prompt and bundled skill contract.
 
 ## Apple Container Sandboxing
 
@@ -212,7 +238,7 @@ Run options:
 | Option                | Environment              | Default                             | Description                         |
 | --------------------- | ------------------------ | ----------------------------------- | ----------------------------------- |
 | `--root`              | `ROOT_DIR`               | current directory                   | Target repository root              |
-| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Plan file path under the root       |
+| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Final plan path under the root      |
 | `--agents-path`       | `REPO_AGENTS_PATH`       | `AGENTS.md`                         | Agent instruction path              |
 | `--start-phase`       | `START_PHASE`            | `1`                                 | First phase to run                  |
 | `--end-phase`         | `END_PHASE`              | detected                            | Last phase to run                   |
@@ -232,7 +258,7 @@ Plan options:
 | --------------------- | ------------------------ | ----------------------------------- | ----------------------------------- |
 | `[BRIEF]`             |                          |                                     | Optional planning brief             |
 | `--root`              | `ROOT_DIR`               | current directory                   | Target repository root              |
-| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Plan file path under the root       |
+| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Final plan path under the root      |
 | `--codex-bin`         | `CODEX_BIN`              | `codex`                             | Host Codex executable               |
 | `--execution-sandbox` | `LGTM_EXECUTION_SANDBOX` | `host`                              | `host` or `apple-container`         |
 | `--sandbox-image`     | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |

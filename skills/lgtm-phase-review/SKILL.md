@@ -20,6 +20,12 @@ lgtm will provide:
 
 Treat the selected phase as the only authorized scope.
 
+`PLAN.md` is immutable after `/finish`. Do not edit it for ordinary progress,
+status, discoveries, or later-phase notes. Keep review progress and closeout
+notes in root-level `PLAN_STATUS.md`, creating it if it is missing. Use
+`lgtm-plan-update` only for an exceptional selected-phase contract defect that
+makes `PLAN.md` impossible or unsafe to review as written.
+
 ## Workflow
 
 1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from the selected phase.
@@ -44,7 +50,8 @@ Treat the selected phase as the only authorized scope.
    - tests and docs make the changed behavior clear
 7. Fix only small, high-confidence findings inside selected-phase scope.
 8. Re-run affected checks after any review fix.
-9. Report broad redesign, unrelated refactors, PR work, CI work, or later-phase work as out-of-scope or blocked.
+9. Update `PLAN_STATUS.md` with concise review progress, verification, blockers, and final phase status.
+10. Report broad redesign, unrelated refactors, PR work, CI work, or later-phase work as out-of-scope or blocked.
 
 ## Approval Bar
 
@@ -56,6 +63,7 @@ The phase review passes only when:
 - no obvious AI slop remains
 - no later-phase or unrelated work was introduced
 - review fixes stayed small and phase-scoped
+- `PLAN_STATUS.md` contains final review status, verification, blockers, or closeout notes
 - affected checks were rerun after review fixes
 
 ## Guardrails
@@ -65,5 +73,7 @@ Do not add new product behavior.
 Do not broaden the implementation to satisfy a review idea.
 
 Do not rewrite a subsystem just because a cleaner design is imaginable.
+
+Do not edit `PLAN.md` for review findings, progress notes, or future-work ideas. Put selected-phase closeout status in `PLAN_STATUS.md`; use `lgtm-plan-update` only for an exceptional selected-phase contract repair.
 
 Do not commit, push, create branches, open PRs, or inspect PR comments unless the user explicitly requested that outside lgtm.

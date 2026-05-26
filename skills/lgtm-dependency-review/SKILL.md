@@ -7,6 +7,10 @@ managed-by: lgtm
 # lgtm Dependency Review
 
 Use this when the selected phase changes dependencies or tool supply chain.
+`PLAN.md` is immutable after `/finish`; record dependency review findings,
+blockers, verification, and status notes in root-level `PLAN_STATUS.md`,
+creating it if it is missing. Use `lgtm-plan-update` only for an exceptional
+selected-phase contract defect.
 
 ## Trigger Surfaces
 
@@ -44,6 +48,10 @@ Do not normalize the whole lockfile unless the selected phase requires it.
 Do not add scanners or services unless already part of the repo or phase.
 
 Do not trust generated code blindly; inspect whether it is intended to be committed.
+
+Do not edit `PLAN.md` for dependency findings, blockers, verification
+summaries, or future-work notes after `/finish`; those notes belong in
+`PLAN_STATUS.md`.
 
 ## Completion Criteria
 

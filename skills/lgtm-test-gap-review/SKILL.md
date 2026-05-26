@@ -9,6 +9,9 @@ managed-by: lgtm
 Use this during validation after inspecting the implementation.
 
 The goal is to verify behavior, not implementation trivia.
+`PLAN.md` is immutable after `/finish`; record verification gaps, blockers,
+and status notes in root-level `PLAN_STATUS.md`, creating it if it is missing.
+Use `lgtm-plan-update` only for an exceptional selected-phase contract defect.
 
 ## Workflow
 
@@ -60,6 +63,9 @@ Do not add fake-confidence tests.
 Do not snapshot unstable output unless that is the established local pattern.
 
 Do not broaden test infrastructure unless the selected phase requires it.
+
+Do not edit `PLAN.md` for test gaps, skipped checks, blockers, or verification
+summaries after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 

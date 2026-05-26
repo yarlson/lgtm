@@ -74,6 +74,22 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         fs::read_to_string(temp.path().join("counter")).expect("counter"),
         "1\n"
     );
+    let planning_turn = fs::read_to_string(temp.path().join("turn-1.json")).expect("turn prompt");
+    assert!(planning_turn.contains("Do not require AGENTS.md to exist"));
+    assert!(planning_turn.contains("Preserve an existing AGENTS.md"));
+    assert!(planning_turn.contains("Every non-cleanup implementation phase"));
+    assert!(planning_turn.contains("Acceptance Criteria"));
+    assert!(planning_turn.contains("Artifacts"));
+    assert!(planning_turn.contains("Runner expectations"));
+    assert!(planning_turn.contains("Anti-patterns"));
+    assert!(planning_turn.contains("Final State"));
+    assert!(planning_turn.contains("Require explicit cleanup phases"));
+    assert!(planning_turn.contains("meaningful risk boundaries"));
+    assert!(planning_turn.contains("CLI/TUI behavior changes"));
+    assert!(planning_turn.contains("generated artifact churn"));
+    assert!(planning_turn.contains("optional for small, low-risk plans"));
+    assert!(planning_turn.contains("mechanical every-N-phases schedule"));
+    assert!(planning_turn.contains("PLAN_STATUS.md reconciliation"));
     assert!(repo.join(".lgtm/logs/test-plan-001.jsonl").is_file());
     assert!(!temp.path().join("turn-2.json").exists());
 }
@@ -112,6 +128,10 @@ fn plan_mode_prompts_for_next_step_after_final_plan_is_written() {
     assert!(plain_stdout.contains("Plan artifacts are ready."));
     assert!(plain_stdout.contains("Implement now or exit? [i/e]"));
     assert!(plain_stdout.contains("> exit"));
+    assert_eq!(
+        fs::read_to_string(repo.join("AGENTS.md")).expect("agents"),
+        "# Agents\n"
+    );
 }
 
 #[test]

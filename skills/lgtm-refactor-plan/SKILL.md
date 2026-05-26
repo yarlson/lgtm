@@ -9,6 +9,10 @@ managed-by: lgtm
 Use this when the selected phase is primarily a refactor or migration.
 
 The goal is to preserve behavior while making the requested structural change.
+`PLAN.md` is immutable after `/finish`; record refactor sequencing notes,
+blockers, verification, and status notes in root-level `PLAN_STATUS.md`,
+creating it if it is missing. Use `lgtm-plan-update` only for an exceptional
+selected-phase contract defect.
 
 ## Workflow
 
@@ -48,6 +52,10 @@ Do not introduce a new abstraction unless it clearly reduces real complexity in 
 Do not move code across ownership boundaries unless the phase requires it.
 
 Do not split or rename files just to make the diff look cleaner.
+
+Do not edit `PLAN.md` for refactor sequencing notes, blockers, verification
+summaries, or future-work notes after `/finish`; those notes belong in
+`PLAN_STATUS.md`.
 
 ## Completion Criteria
 

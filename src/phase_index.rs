@@ -20,7 +20,7 @@ Return only JSON with this exact shape:
 {{\"phases\":[{{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"}}]}}
 
 Rules:
-- Include every implementation phase from PLAN.md.
+- Include every executable phase from PLAN.md, including cleanup phases.
 - Use the numeric phase id from headings such as `## Phase 1 - Name` or `## Phase 1: Name`.
 - Preserve each title text after the dash or colon.
 - Preserve the exact markdown heading line in `heading`.
@@ -118,7 +118,7 @@ mod tests {
     fn parses_strict_phase_json() {
         let phases =
             parse_phase_index(
-                r###"{"phases":[{"id":2,"title":"Two","heading":"## Phase 2 - Two"},{"id":1,"title":"One","heading":"## Phase 1 - One"}]}"###,
+                r###"{"phases":[{"id":2,"title":"Cleanup Boundary","heading":"## Phase 2 - Cleanup Boundary"},{"id":1,"title":"One","heading":"## Phase 1 - One"}]}"###,
             )
             .unwrap();
 
@@ -132,11 +132,22 @@ mod tests {
                 },
                 Phase {
                     id: 2,
-                    title: "Two".to_string(),
-                    heading: "## Phase 2 - Two".to_string()
+                    title: "Cleanup Boundary".to_string(),
+                    heading: "## Phase 2 - Cleanup Boundary".to_string()
                 }
             ]
         );
+    }
+
+    #[test]
+    fn parser_prompt_includes_cleanup_phases_as_executable() {
+        let prompt = parser_prompt(
+            std::path::Path::new("PLAN.md"),
+            "# Plan\n\n## Phase 1 - Build\n\n## Phase 2 - Cleanup Boundary",
+        );
+
+        assert!(prompt.contains("Include every executable phase"));
+        assert!(prompt.contains("including cleanup phases"));
     }
 
     #[test]

@@ -7,6 +7,10 @@ managed-by: lgtm
 # lgtm Security Review
 
 Use this when the selected phase touches security-sensitive behavior.
+`PLAN.md` is immutable after `/finish`; record security findings, blockers,
+verification, and status notes in root-level `PLAN_STATUS.md`, creating it if
+it is missing. Use `lgtm-plan-update` only for an exceptional selected-phase
+contract defect.
 
 ## Trigger Surfaces
 
@@ -60,6 +64,9 @@ Do not introduce security frameworks unless the selected phase requires them.
 Do not rotate credentials or modify live services.
 
 Do not remove test fixtures just because they look like secrets unless confirmed unsafe.
+
+Do not edit `PLAN.md` for security findings, blockers, verification summaries,
+or future-work notes after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 

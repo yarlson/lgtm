@@ -9,6 +9,10 @@ managed-by: lgtm
 Use this only when the selected phase needs local browser, Electron, or UI verification.
 
 The goal is evidence from the actual UI surface, using repo-local tooling when available.
+`PLAN.md` is immutable after `/finish`; record UI evidence, blockers,
+verification, and status notes in root-level `PLAN_STATUS.md`, creating it if
+it is missing. Use `lgtm-plan-update` only for an exceptional selected-phase
+contract defect.
 
 ## Workflow
 
@@ -36,6 +40,9 @@ Avoid coordinate clicks unless a fresh screenshot was captured immediately befor
 Do not store screenshots, traces, HTTP bodies, or heap snapshots from sensitive workspaces unless needed and safe.
 
 Do not hardcode ports, selectors, or scripts from another repository.
+
+Do not edit `PLAN.md` for UI findings, blockers, verification summaries, or
+future-work notes after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 

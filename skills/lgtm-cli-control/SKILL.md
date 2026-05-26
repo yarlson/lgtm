@@ -9,6 +9,10 @@ managed-by: lgtm
 Use this only when the selected phase needs user-visible CLI or TUI verification.
 
 The goal is a repeatable local harness, not manual poking.
+`PLAN.md` is immutable after `/finish`; record CLI/TUI evidence, blockers,
+verification, and status notes in root-level `PLAN_STATUS.md`, creating it if
+it is missing. Use `lgtm-plan-update` only for an exceptional selected-phase
+contract defect.
 
 ## Workflow
 
@@ -44,6 +48,9 @@ Do not hardcode paths from another repository.
 Do not keep harness code in the repo unless the selected phase requires a reusable test.
 
 Do not treat screenshots or transcripts as sufficient when a stable automated test is practical.
+
+Do not edit `PLAN.md` for CLI/TUI findings, blockers, verification summaries,
+or future-work notes after `/finish`; those notes belong in `PLAN_STATUS.md`.
 
 ## Completion Criteria
 
