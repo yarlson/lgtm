@@ -114,12 +114,21 @@ instead of starting it directly on the host.
 
 Requirements:
 
-- macOS 26 on Apple silicon
+- macOS 26 or newer on Apple silicon
 - Apple's `container` CLI installed and available on `PATH`
 - a Codex auth file at `~/.codex/auth.json`
-- the sandbox image available locally or from a registry
+- the default sandbox image, pulled from GHCR or built locally
 
-Build the default image with Apple Container:
+The default image is published as `ghcr.io/yarlson/lgtm-codex:latest`.
+Pull it before running in Apple Container mode if you want to make image setup
+explicit:
+
+```bash
+container image pull ghcr.io/yarlson/lgtm-codex:latest
+```
+
+If the published image is unavailable, build the same default image locally
+with Apple Container:
 
 ```bash
 container build -t ghcr.io/yarlson/lgtm-codex:latest containers/codex
@@ -141,6 +150,19 @@ Run inside Apple Container:
 
 ```bash
 lgtm run --execution-sandbox apple-container --root ../target-repo
+```
+
+Before launching `codex app-server`, lgtm fails fast if the host is not macOS 26
+or newer on Apple silicon, the configured `container` executable cannot run,
+the Codex auth file is missing, Apple Container services are stopped, or the
+sandbox image is neither available locally nor pullable.
+
+Common remediation commands:
+
+```bash
+container system start
+container image pull ghcr.io/yarlson/lgtm-codex:latest
+container build -t ghcr.io/yarlson/lgtm-codex:latest containers/codex
 ```
 
 The container receives:
@@ -244,9 +266,22 @@ cargo test --all-features
 cargo build --all-targets --all-features
 ```
 
-Release packaging is defined in `.github/workflows/release.yml`; tagged
-releases build platform archives and can update the Homebrew formula through
-`scripts/update-homebrew-formula.sh`.
+Release packaging is defined in `.github/workflows/release.yml`. After merging
+the release changes, create the `v0.14.0` tag. The workflow validates that the
+tag matches `Cargo.toml`, builds platform archives, publishes the GitHub
+Release, pushes the arm64 Apple Container sandbox image as
+`ghcr.io/yarlson/lgtm-codex:0.14.0` and
+`ghcr.io/yarlson/lgtm-codex:latest`, and can update the Homebrew formula
+through `scripts/update-homebrew-formula.sh`.
+
+Release notes for v0.14.0 should announce macOS Apple Container sandboxing
+support, not generic Docker sandboxing. After the release workflow is green,
+verify the GitHub Release assets, Homebrew formula update, and GHCR image tags,
+then smoke the published image:
+
+```bash
+container run --rm ghcr.io/yarlson/lgtm-codex:latest codex --version
+```
 
 ## License
 

@@ -1,7 +1,7 @@
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
-    process,
+    process::{self, Command, Output},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -17,6 +17,7 @@ const CONTAINER_WORKDIR: &str = "/workspace";
 const CONTAINER_MISE_DIR: &str = "/mise";
 const CONTAINER_PATH: &str =
     "/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const SUPPORTED_MACOS_MAJOR: u32 = 26;
 const SANDBOX_MISE_INSTRUCTIONS: &str = r#"Apple Container sandbox guidance:
 - `mise` is installed and available on PATH. Use it to provision and activate missing project toolchains.
 - First inspect the repository for stack and version signals such as `mise.toml`, `.mise.toml`, `.tool-versions`, `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Gemfile`, `pom.xml`, `build.gradle`, `deno.json`, or `bun.lock`.
@@ -142,6 +143,17 @@ impl ExecutionTarget {
     }
 
     pub(super) fn prepare(&self, root: &Path) -> Result<PreparedAppServer> {
+        self.prepare_with_apple_container_preflight(root, preflight_apple_container)
+    }
+
+    fn prepare_with_apple_container_preflight<F>(
+        &self,
+        root: &Path,
+        preflight: F,
+    ) -> Result<PreparedAppServer>
+    where
+        F: FnOnce(&str, &str, &Path) -> Result<()>,
+    {
         match self {
             Self::Host { codex_bin } => Ok(PreparedAppServer {
                 launch: AppServerLaunch::host(codex_bin),
@@ -154,7 +166,7 @@ impl ExecutionTarget {
                 image,
                 auth_path,
             } => {
-                preflight_apple_container(auth_path)?;
+                preflight(container_bin, image, auth_path)?;
                 let mise_dir = prepare_mise_dir(root)?;
                 let mut resources = ExecutionResources::default();
                 let auth_dir = resources.track_cleanup_path(prepare_codex_auth_dir(auth_path)?);
@@ -239,12 +251,43 @@ fn default_codex_auth_path() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".codex").join("auth.json"))
 }
 
-fn preflight_apple_container(auth_path: &Path) -> Result<()> {
-    if std::env::consts::OS != "macos" {
-        bail!("Apple Container sandbox requires macOS");
+fn preflight_apple_container(container_bin: &str, image: &str, auth_path: &Path) -> Result<()> {
+    let platform = HostPlatform::detect()?;
+    preflight_apple_container_with_runner(container_bin, image, auth_path, platform, run_command)
+}
+
+fn preflight_apple_container_with_runner<F>(
+    container_bin: &str,
+    image: &str,
+    auth_path: &Path,
+    platform: HostPlatform,
+    mut run: F,
+) -> Result<()>
+where
+    F: FnMut(&str, &[&str]) -> io::Result<Output>,
+{
+    if platform.os != "macos" {
+        bail!(
+            "Apple Container sandbox requires macOS {SUPPORTED_MACOS_MAJOR} or newer on Apple silicon; this host is {}/{}",
+            platform.os,
+            platform.arch
+        );
     }
-    if std::env::consts::ARCH != "aarch64" {
-        bail!("Apple Container sandbox requires Apple silicon");
+    if platform.arch != "aarch64" {
+        bail!(
+            "Apple Container sandbox requires Apple silicon; this host architecture is {}",
+            platform.arch
+        );
+    }
+    let Some(macos_major) = platform.macos_major else {
+        bail!(
+            "Apple Container sandbox requires macOS {SUPPORTED_MACOS_MAJOR} or newer; failed to determine the macOS version"
+        );
+    };
+    if macos_major < SUPPORTED_MACOS_MAJOR {
+        bail!(
+            "Apple Container sandbox requires macOS {SUPPORTED_MACOS_MAJOR} or newer; this host is macOS {macos_major}"
+        );
     }
     if !auth_path.is_file() {
         bail!(
@@ -252,7 +295,147 @@ fn preflight_apple_container(auth_path: &Path) -> Result<()> {
             auth_path.display()
         );
     }
+
+    let status_args = ["system", "status"];
+    let status_output = run(container_bin, &status_args)
+        .map_err(|error| missing_container_cli_error(container_bin, &status_args, error))?;
+    if !status_output.status.success() {
+        bail!(
+            "Apple Container preflight failed: container services are not running.\nRun:\n  {}\nThen retry lgtm.\n{}",
+            format_shell_command(container_bin, &["system", "start"]),
+            command_output_summary(container_bin, &status_args, &status_output)
+        );
+    }
+
+    let inspect_args = ["image", "inspect", image];
+    let inspect_output = run(container_bin, &inspect_args)
+        .map_err(|error| missing_container_cli_error(container_bin, &inspect_args, error))?;
+    if inspect_output.status.success() {
+        return Ok(());
+    }
+
+    let pull_args = ["image", "pull", "--progress", "none", image];
+    let pull_output = run(container_bin, &pull_args)
+        .map_err(|error| missing_container_cli_error(container_bin, &pull_args, error))?;
+    if !pull_output.status.success() {
+        bail!(
+            "Apple Container preflight failed: sandbox image `{image}` is not available locally and could not be pulled.\nRun:\n  {}\nThen retry lgtm.\n{}\n{}",
+            format_shell_command(container_bin, &pull_args),
+            command_output_summary(container_bin, &inspect_args, &inspect_output),
+            command_output_summary(container_bin, &pull_args, &pull_output)
+        );
+    }
+
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HostPlatform {
+    os: &'static str,
+    arch: &'static str,
+    macos_major: Option<u32>,
+}
+
+impl HostPlatform {
+    fn detect() -> Result<Self> {
+        let mut platform = Self {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+            macos_major: None,
+        };
+        if platform.os == "macos" {
+            platform.macos_major = Some(read_macos_major()?);
+        }
+        Ok(platform)
+    }
+}
+
+fn read_macos_major() -> Result<u32> {
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .context("failed to run `sw_vers -productVersion`")?;
+    if !output.status.success() {
+        bail!(
+            "`sw_vers -productVersion` failed while checking Apple Container prerequisites: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let version = String::from_utf8_lossy(&output.stdout);
+    parse_macos_major(&version)
+        .with_context(|| format!("failed to parse macOS version from `{}`", version.trim()))
+}
+
+fn parse_macos_major(version: &str) -> Option<u32> {
+    version.trim().split('.').next()?.parse().ok()
+}
+
+fn run_command(program: &str, args: &[&str]) -> io::Result<Output> {
+    Command::new(program).args(args).output()
+}
+
+fn missing_container_cli_error(
+    container_bin: &str,
+    attempted_args: &[&str],
+    error: io::Error,
+) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Apple Container preflight failed: configured container CLI `{}` could not be executed while running `{}`: {error}\nInstall Apple Container, then run:\n  {}\nIf it is already installed outside PATH, rerun lgtm with:\n  lgtm run --execution-sandbox apple-container --container-bin /path/to/container",
+        container_bin,
+        format_shell_command(container_bin, attempted_args),
+        format_shell_command(container_bin, &["system", "start"])
+    )
+}
+
+fn command_output_summary(program: &str, args: &[&str], output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if !stderr.trim().is_empty() {
+        truncate_command_output(stderr.trim())
+    } else if !stdout.trim().is_empty() {
+        truncate_command_output(stdout.trim())
+    } else {
+        "no command output".to_string()
+    };
+    format!(
+        "`{}` exited with {}: {}",
+        format_shell_command(program, args),
+        output.status,
+        detail
+    )
+}
+
+fn truncate_command_output(output: &str) -> String {
+    const MAX_LEN: usize = 1000;
+    if output.len() <= MAX_LEN {
+        return output.to_string();
+    }
+    let end = output
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= MAX_LEN)
+        .last()
+        .unwrap_or(0);
+    format!("{}...", &output[..end])
+}
+
+fn format_shell_command(program: &str, args: &[&str]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().copied())
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b':' | b'=')
+        })
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn prepare_codex_auth_dir(auth_path: &Path) -> Result<PathBuf> {
@@ -294,6 +477,27 @@ fn prepare_mise_dir(root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    fn macos_26_arm64() -> HostPlatform {
+        HostPlatform {
+            os: "macos",
+            arch: "aarch64",
+            macos_major: Some(SUPPORTED_MACOS_MAJOR),
+        }
+    }
+
+    fn command_output(code: i32, stderr: &str) -> Output {
+        Output {
+            status: process::ExitStatus::from_raw(code << 8),
+            stdout: Vec::new(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    fn success_output() -> Output {
+        command_output(0, "")
+    }
 
     #[test]
     fn apple_container_launch_wraps_codex_app_server() {
@@ -401,7 +605,6 @@ mod tests {
         assert!(!cleanup_dir.exists());
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[test]
     fn apple_container_target_prepares_mise_mount_and_instructions() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -414,11 +617,18 @@ mod tests {
             "codex",
             "example.com/lgtm-codex:test",
             "container-test",
-            Some(auth_path),
+            Some(auth_path.clone()),
         ))
         .expect("target");
 
-        let prepared = target.prepare(&root).expect("prepared");
+        let prepared = target
+            .prepare_with_apple_container_preflight(&root, |container_bin, image, auth| {
+                assert_eq!(container_bin, "container-test");
+                assert_eq!(image, "example.com/lgtm-codex:test");
+                assert_eq!(auth, auth_path.as_path());
+                Ok(())
+            })
+            .expect("prepared");
 
         assert_eq!(target.app_server_binary(), "codex");
         assert_eq!(target.label(), "Apple Container");
@@ -447,13 +657,305 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[test]
     fn apple_container_preflight_reports_missing_auth_file() {
-        let err =
-            preflight_apple_container(Path::new("/tmp/lgtm-definitely-missing-codex-auth.json"))
-                .unwrap_err();
+        let err = preflight_apple_container_with_runner(
+            "container",
+            "example.com/lgtm-codex:test",
+            Path::new("/tmp/lgtm-definitely-missing-codex-auth.json"),
+            macos_26_arm64(),
+            |_, _| Ok(success_output()),
+        )
+        .unwrap_err();
 
         assert!(err.to_string().contains("Codex auth file"));
+    }
+
+    #[test]
+    fn parses_macos_major_version() {
+        assert_eq!(parse_macos_major("26.0.1\n"), Some(26));
+        assert_eq!(parse_macos_major("15"), Some(15));
+        assert_eq!(parse_macos_major("not-a-version"), None);
+    }
+
+    #[test]
+    fn apple_container_preflight_rejects_unsupported_platform_before_commands() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+        let mut calls = Vec::new();
+
+        let err = preflight_apple_container_with_runner(
+            "container",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            HostPlatform {
+                os: "linux",
+                arch: "x86_64",
+                macos_major: None,
+            },
+            |program, args| {
+                calls.push((program.to_string(), args.join(" ")));
+                Ok(success_output())
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("requires macOS 26"));
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn apple_container_preflight_rejects_intel_macos_before_commands() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+        let mut calls = Vec::new();
+
+        let err = preflight_apple_container_with_runner(
+            "container",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            HostPlatform {
+                os: "macos",
+                arch: "x86_64",
+                macos_major: Some(SUPPORTED_MACOS_MAJOR),
+            },
+            |program, args| {
+                calls.push((program.to_string(), args.join(" ")));
+                Ok(success_output())
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("requires Apple silicon"));
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn apple_container_preflight_rejects_old_macos_before_commands() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+        let mut calls = Vec::new();
+
+        let err = preflight_apple_container_with_runner(
+            "container",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            HostPlatform {
+                os: "macos",
+                arch: "aarch64",
+                macos_major: Some(SUPPORTED_MACOS_MAJOR - 1),
+            },
+            |program, args| {
+                calls.push((program.to_string(), args.join(" ")));
+                Ok(success_output())
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("requires macOS 26"));
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn apple_container_preflight_uses_local_image_without_pulling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+        let mut calls = Vec::new();
+
+        preflight_apple_container_with_runner(
+            "container-test",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            macos_26_arm64(),
+            |program, args| {
+                calls.push((program.to_string(), args.join(" ")));
+                Ok(success_output())
+            },
+        )
+        .expect("preflight");
+
+        assert_eq!(
+            calls,
+            [
+                ("container-test".to_string(), "system status".to_string()),
+                (
+                    "container-test".to_string(),
+                    "image inspect example.com/lgtm-codex:test".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn apple_container_preflight_pulls_missing_image_before_launch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+        let mut calls = Vec::new();
+
+        preflight_apple_container_with_runner(
+            "container-test",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            macos_26_arm64(),
+            |program, args| {
+                calls.push((program.to_string(), args.join(" ")));
+                if args == ["image", "inspect", "example.com/lgtm-codex:test"] {
+                    Ok(command_output(1, "image not found"))
+                } else {
+                    Ok(success_output())
+                }
+            },
+        )
+        .expect("preflight");
+
+        assert_eq!(
+            calls,
+            [
+                ("container-test".to_string(), "system status".to_string()),
+                (
+                    "container-test".to_string(),
+                    "image inspect example.com/lgtm-codex:test".to_string()
+                ),
+                (
+                    "container-test".to_string(),
+                    "image pull --progress none example.com/lgtm-codex:test".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn apple_container_preflight_can_use_fake_container_executable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        let log_path = temp.path().join("container.log");
+        let container_bin = temp.path().join("container-fake");
+        fs::write(&auth_path, "{}").expect("auth");
+        fs::write(
+            &container_bin,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$1 $2 $3 $4 $5\" >> {}\ncase \"$1 $2\" in\n  'system status') exit 0 ;;\n  'image inspect') exit 1 ;;\n  'image pull') exit 0 ;;\n  *) exit 42 ;;\nesac\n",
+                shell_quote(log_path.to_str().expect("utf-8 log path"))
+            ),
+        )
+        .expect("fake container");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&container_bin, fs::Permissions::from_mode(0o755))
+                .expect("fake container permissions");
+        }
+
+        preflight_apple_container_with_runner(
+            container_bin.to_str().expect("utf-8 container path"),
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            macos_26_arm64(),
+            run_command,
+        )
+        .expect("preflight");
+
+        assert_eq!(
+            fs::read_to_string(log_path).expect("container log"),
+            "system status   \nimage inspect example.com/lgtm-codex:test  \nimage pull --progress none example.com/lgtm-codex:test\n"
+        );
+    }
+
+    #[test]
+    fn apple_container_preflight_reports_missing_container_cli_with_remediation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+
+        let err = preflight_apple_container_with_runner(
+            "/missing/container",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            macos_26_arm64(),
+            |_, _| {
+                Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no such executable",
+                ))
+            },
+        )
+        .unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("configured container CLI `/missing/container`"));
+        assert!(message.contains("/missing/container system start"));
+        assert!(message.contains("--container-bin /path/to/container"));
+    }
+
+    #[test]
+    fn apple_container_preflight_reports_stopped_services_with_remediation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+
+        let err = preflight_apple_container_with_runner(
+            "container",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            macos_26_arm64(),
+            |_, args| {
+                if args == ["system", "status"] {
+                    Ok(command_output(1, "apiserver is not running"))
+                } else {
+                    Ok(success_output())
+                }
+            },
+        )
+        .unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("container services are not running"));
+        assert!(message.contains("container system start"));
+        assert!(message.contains("apiserver is not running"));
+    }
+
+    #[test]
+    fn apple_container_preflight_reports_unavailable_image_with_remediation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        fs::write(&auth_path, "{}").expect("auth");
+
+        let err = preflight_apple_container_with_runner(
+            "container",
+            "example.com/lgtm-codex:test",
+            &auth_path,
+            macos_26_arm64(),
+            |_, args| {
+                if args == ["image", "inspect", "example.com/lgtm-codex:test"] {
+                    Ok(command_output(1, "image not found"))
+                } else if args
+                    == [
+                        "image",
+                        "pull",
+                        "--progress",
+                        "none",
+                        "example.com/lgtm-codex:test",
+                    ]
+                {
+                    Ok(command_output(1, "pull denied"))
+                } else {
+                    Ok(success_output())
+                }
+            },
+        )
+        .unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("sandbox image `example.com/lgtm-codex:test`"));
+        assert!(
+            message.contains("container image pull --progress none example.com/lgtm-codex:test")
+        );
+        assert!(message.contains("image not found"));
+        assert!(message.contains("pull denied"));
     }
 }
