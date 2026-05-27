@@ -19,7 +19,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Run implementation, validation, and review passes for plan phases.
+    /// Run implementation, validation, review, and commit passes for plan phases.
     Run(RunArgs),
     /// Create or refine a PLAN.md through an interactive Codex planning session.
     Plan(PlanArgs),

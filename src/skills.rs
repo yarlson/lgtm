@@ -28,6 +28,7 @@ skill_registry! {
     PHASE_IMPLEMENT => "lgtm-phase-implement", "../skills/lgtm-phase-implement/SKILL.md";
     PHASE_VALIDATE => "lgtm-phase-validate", "../skills/lgtm-phase-validate/SKILL.md";
     PHASE_REVIEW => "lgtm-phase-review", "../skills/lgtm-phase-review/SKILL.md";
+    PHASE_COMMIT => "lgtm-phase-commit", "../skills/lgtm-phase-commit/SKILL.md";
     CONTEXT_MAP => "lgtm-context-map", "../skills/lgtm-context-map/SKILL.md";
     CLI_CONTROL => "lgtm-cli-control", "../skills/lgtm-cli-control/SKILL.md";
     UI_CONTROL => "lgtm-ui-control", "../skills/lgtm-ui-control/SKILL.md";
@@ -202,6 +203,22 @@ mod tests {
         for skill in SKILLS {
             assert!(is_managed_skill(skill.name, skill.body), "{}", skill.name);
         }
+    }
+
+    #[test]
+    fn phase_review_skill_requires_strict_fixing_review() {
+        let body = SKILLS
+            .iter()
+            .find(|skill| skill.name == PHASE_REVIEW)
+            .expect("phase review skill")
+            .body;
+
+        assert!(body.contains("code-judo"));
+        assert!(body.contains("Fix every safe, phase-scoped finding"));
+        assert!(body.contains("$lgtm-refactor-plan"));
+        assert!(body.contains("1000 lines"));
+        assert!(body.contains("Do not approve merely because behavior seems correct"));
+        assert!(body.contains("The commit pass owns committing"));
     }
 
     #[test]

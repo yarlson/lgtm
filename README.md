@@ -1,16 +1,16 @@
 <div align="center">
 
-<img src="assets/banner.png" alt="lgtm workflow banner showing plan, PLAN.md, AGENTS.md, implementation, validation, and review" width="100%">
+<img src="assets/banner.png" alt="lgtm workflow banner" width="100%">
 
 # lgtm
 
-Plan the work. Execute one phase. Verify. Review. Repeat.
+Plan the work. Execute one phase. Verify. Review. Commit. Repeat.
 
 </div>
 
 `lgtm` is a local Codex harness for repo-sized work that should not be done
 as one giant prompt. It creates or refines a `PLAN.md`, then runs selected plan
-phases through implementation, validation, and review passes.
+phases through implementation, validation, review, and commit passes.
 
 Use it for migrations, cleanup, feature slices, test hardening, and docs drift
 where Codex needs a repeatable local loop.
@@ -26,7 +26,7 @@ where Codex needs a repeatable local loop.
 - After planning produces final artifacts, choose whether to implement the
   completed plan now or exit.
 - `lgtm run` executes selected phases from `PLAN.md`.
-- Each run phase gets implement, validate, and review passes.
+- Each run phase gets implement, validate, review, and commit passes.
 - Prompts are anchored to `PLAN.md`, `AGENTS.md`, and the exact phase heading.
 - `PLAN.md` is reloaded before each phase so earlier phases can update later
   phases.
@@ -256,6 +256,7 @@ Logs are written as JSONL:
 .lgtm/logs/<run-stamp>-phase-01-implement.jsonl
 .lgtm/logs/<run-stamp>-phase-01-validate.jsonl
 .lgtm/logs/<run-stamp>-phase-01-review.jsonl
+.lgtm/logs/<run-stamp>-phase-01-commit.jsonl
 ```
 
 Each log line records app-server protocol direction and payload. Managed skills

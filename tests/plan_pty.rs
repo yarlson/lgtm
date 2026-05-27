@@ -231,9 +231,10 @@ fn plan_mode_implement_choice_hands_off_to_run_mode() {
     assert!(plain_stdout.contains("• Phase 01 implementation: Generated"));
     assert!(plain_stdout.contains("• Phase 01 validation: Generated"));
     assert!(plain_stdout.contains("• Phase 01 review: Generated"));
+    assert!(plain_stdout.contains("• Phase 01 commit: Generated"));
     assert_eq!(
         fs::read_to_string(temp.path().join("counter")).expect("counter"),
-        "6\n"
+        "7\n"
     );
 
     assert!(repo.join("handoff-logs/test-plan-001.jsonl").is_file());
@@ -254,6 +255,10 @@ fn plan_mode_implement_choice_hands_off_to_run_mode() {
             .is_file()
     );
     assert!(
+        repo.join("handoff-logs/test-phase-01-commit.jsonl")
+            .is_file()
+    );
+    assert!(
         repo.join("handoff-logs/test-phase-02-index.jsonl")
             .is_file()
     );
@@ -264,6 +269,7 @@ fn plan_mode_implement_choice_hands_off_to_run_mode() {
     let validate_turn =
         fs::read_to_string(temp.path().join("turn-4.json")).expect("validate prompt");
     let review_turn = fs::read_to_string(temp.path().join("turn-5.json")).expect("review prompt");
+    let commit_turn = fs::read_to_string(temp.path().join("turn-6.json")).expect("commit prompt");
     assert!(index_turn.contains("# Plan"));
     assert!(index_turn.contains("## Phase 1 - Generated"));
     assert!(index_turn.contains("Goal: generated."));
@@ -271,6 +277,8 @@ fn plan_mode_implement_choice_hands_off_to_run_mode() {
     assert!(implement_turn.contains("## Phase 1 - Generated"));
     assert!(validate_turn.contains("$lgtm-phase-validate"));
     assert!(review_turn.contains("$lgtm-phase-review"));
+    assert!(commit_turn.contains("$lgtm-phase-commit"));
+    assert!(commit_turn.contains("## Phase 1 - Generated"));
 }
 
 #[test]
@@ -330,6 +338,11 @@ fn plan_mode_implement_choice_propagates_run_mode_failure() {
     assert!(
         !repo
             .join("handoff-logs/test-phase-01-review.jsonl")
+            .exists()
+    );
+    assert!(
+        !repo
+            .join("handoff-logs/test-phase-01-commit.jsonl")
             .exists()
     );
 }
@@ -545,7 +558,7 @@ if [ "$n" = 1 ]; then
 Goal: generated.
 PLAN
   printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-plan","text":"final plan written","status":"completed"}]}}}'
-elif [ "$n" = 2 ] || [ "$n" = 6 ]; then
+elif [ "$n" = 2 ] || [ "$n" = 7 ]; then
   printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Generated\",\"heading\":\"## Phase 1 - Generated\"}]}","status":"completed"}]}}}'
 else
   printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'

@@ -6,16 +6,18 @@ pub enum PhasePass {
     Implement,
     Validate,
     Review,
+    Commit,
 }
 
 impl PhasePass {
-    pub const ALL: [Self; 3] = [Self::Implement, Self::Validate, Self::Review];
+    pub const ALL: [Self; 4] = [Self::Implement, Self::Validate, Self::Review, Self::Commit];
 
     pub fn action(self) -> &'static str {
         match self {
             Self::Implement => "implement",
             Self::Validate => "validate",
             Self::Review => "review",
+            Self::Commit => "commit",
         }
     }
 
@@ -24,6 +26,7 @@ impl PhasePass {
             Self::Implement => "implementation",
             Self::Validate => "validation",
             Self::Review => "review",
+            Self::Commit => "commit",
         }
     }
 }
@@ -164,14 +167,33 @@ Open {plan} and locate this exact selected phase heading:
 {heading}
 
 Use $lgtm-phase-review for the local phase review pass.
+Use $lgtm-refactor-plan if a review finding has a clear behavior-preserving restructuring path that is larger than a trivial edit.
 Use $lgtm-cli-control if the phase changes CLI/TUI behavior, terminal output, prompts, interrupts, hangs, resize behavior, or terminal demos and validation did not already prove the user-visible behavior.
 Use $lgtm-ui-control if the phase changes browser, Electron, or local UI behavior and validation did not already prove the user-visible behavior.
 Use $lgtm-final-review before finishing.
 
 Review Phase {number} in the current target repo after implementation and validation.
-Fix only small, high-confidence, phase-scoped review findings.
+Run a strict structural maintainability review, then fix every safe phase-scoped finding before finishing.
 If a finding requires broad redesign, unrelated refactor, new product behavior, PR/CI workflow, or later-phase work, report it as out of scope or blocked instead of fixing it.
 Do not commit or push unless the user explicitly requested it for this run.",
+            plan = plan_path.display(),
+            number = phase.id,
+            heading = phase.heading,
+        ),
+        PhasePass::Commit => format!(
+            "\
+Open {plan} and locate this exact selected phase heading:
+{heading}
+
+Use $lgtm-phase-commit for the after-phase commit pass.
+
+Commit Phase {number} after implementation, validation, and review are complete.
+Inspect git status plus staged and unstaged diffs.
+Stage only changes that belong to this selected phase.
+Create a real git commit with a rich message: concise subject, body summary of the phase scope, key changes, verification performed, and any blockers or skipped checks.
+Do not create an empty commit. If there are no selected-phase changes to commit, report that explicitly.
+If unrelated changes are mixed in and cannot be safely separated, stop and report a blocker instead of committing them.
+Do not push, create branches, open PRs, manage CI, or commit later-phase work.",
             plan = plan_path.display(),
             number = phase.id,
             heading = phase.heading,
@@ -201,6 +223,62 @@ mod tests {
         assert!(prompt.contains("$lgtm-phase-implement"));
         assert!(prompt.contains("$lgtm-refactor-plan"));
         assert!(prompt.contains("Do not commit or push"));
+    }
+
+    #[test]
+    fn phase_passes_include_commit_after_review() {
+        assert_eq!(
+            PhasePass::ALL,
+            [
+                PhasePass::Implement,
+                PhasePass::Validate,
+                PhasePass::Review,
+                PhasePass::Commit
+            ]
+        );
+        assert_eq!(PhasePass::Commit.action(), "commit");
+        assert_eq!(PhasePass::Commit.label(), "commit");
+    }
+
+    #[test]
+    fn commit_prompt_includes_phase_and_guardrails() {
+        let prompt = phase_prompt(
+            std::path::Path::new("PLAN.md"),
+            std::path::Path::new("AGENTS.md"),
+            &Phase {
+                id: 4,
+                title: "Path And Environment Resolution".to_string(),
+                heading: "## Phase 4 - Path And Environment Resolution".to_string(),
+            },
+            PhasePass::Commit,
+        );
+
+        assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
+        assert!(prompt.contains("$lgtm-phase-commit"));
+        assert!(prompt.contains("Stage only changes that belong to this selected phase"));
+        assert!(prompt.contains("Create a real git commit with a rich message"));
+        assert!(prompt.contains("Do not create an empty commit"));
+        assert!(prompt.contains("Do not push, create branches, open PRs, manage CI"));
+    }
+
+    #[test]
+    fn review_prompt_requires_strict_fixing_review() {
+        let prompt = phase_prompt(
+            std::path::Path::new("PLAN.md"),
+            std::path::Path::new("AGENTS.md"),
+            &Phase {
+                id: 4,
+                title: "Path And Environment Resolution".to_string(),
+                heading: "## Phase 4 - Path And Environment Resolution".to_string(),
+            },
+            PhasePass::Review,
+        );
+
+        assert!(prompt.contains("$lgtm-phase-review"));
+        assert!(prompt.contains("$lgtm-refactor-plan"));
+        assert!(prompt.contains("strict structural maintainability review"));
+        assert!(prompt.contains("fix every safe phase-scoped finding"));
+        assert!(prompt.contains("out of scope or blocked"));
     }
 
     #[test]
