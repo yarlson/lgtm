@@ -158,9 +158,7 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
         let Some(phase) = phase_index::next_phase(&phases, phase_id, end_phase) else {
             break;
         };
-        for pass in PhasePass::ALL {
-            run_phase_pass(&config, &phase, pass, &mut output)?;
-        }
+        run_phase(&config, &phase, &mut output)?;
 
         if phase.id < end_phase {
             println!(
@@ -318,33 +316,55 @@ fn run_phase_index_turn(
     })
 }
 
-fn run_phase_pass(
-    config: &RunConfig,
-    phase: &Phase,
-    pass: PhasePass,
-    output: &mut RunOutput<impl Write>,
-) -> Result<()> {
-    let log_name = format!(
-        "{}-phase-{phase:02}-{action}.jsonl",
-        config.runtime.run_stamp(),
-        phase = phase.id,
-        action = pass.action()
-    );
+fn run_phase(config: &RunConfig, phase: &Phase, output: &mut RunOutput<impl Write>) -> Result<()> {
+    let first_pass = PhasePass::Implement;
+    let log_name = phase_pass_log_name(config, phase, first_pass);
     let mut client = config.runtime.connect_logged_app_server(
         None,
         &log_name,
         config.stream_mode == StreamMode::Raw,
     )?;
     let thread_id = client.start_thread()?;
+
+    run_phase_pass(config, phase, first_pass, &mut client, &thread_id, output)?;
+    for pass in PhasePass::ALL.into_iter().skip(1) {
+        let log_name = phase_pass_log_name(config, phase, pass);
+        config.runtime.set_log_sink(
+            &mut client,
+            &log_name,
+            config.stream_mode == StreamMode::Raw,
+        )?;
+        run_phase_pass(config, phase, pass, &mut client, &thread_id, output)?;
+    }
+
+    client.stop()
+}
+
+fn phase_pass_log_name(config: &RunConfig, phase: &Phase, pass: PhasePass) -> String {
+    format!(
+        "{}-phase-{phase:02}-{action}.jsonl",
+        config.runtime.run_stamp(),
+        phase = phase.id,
+        action = pass.action()
+    )
+}
+
+fn run_phase_pass(
+    config: &RunConfig,
+    phase: &Phase,
+    pass: PhasePass,
+    client: &mut AppServerClient,
+    thread_id: &str,
+    output: &mut RunOutput<impl Write>,
+) -> Result<()> {
     output.phase_header(phase, pass)?;
     run_streaming_turn(
-        &mut client,
-        &thread_id,
+        client,
+        thread_id,
         &prompt::phase_prompt(&config.plan_path, &config.agents_path, phase, pass),
         |event| output.render_event(event),
     )?;
-    output.finish()?;
-    client.stop()
+    output.finish()
 }
 
 fn run_streaming_turn(

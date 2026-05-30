@@ -30,15 +30,14 @@ No approve just because behavior seems correct. Phase review passes only when no
 
 ## Workflow
 
-1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from selected phase.
-2. Find exact selected phase heading.
-3. Re-read selected phase Goal, Steps, Validation sections.
-4. Inspect current diff, staged diff, changed files, surrounding modules.
-5. Review diff against strict standards below.
-6. Fix every safe, phase-scoped finding you find.
-7. Use `$lgtm-refactor-plan` before fix needing non-trivial behavior-preserving restructure.
-8. Re-run affected checks after review fixes.
-9. Stop and report blocker only when finding real but cannot fix safely inside selected phase.
+1. Use current session context for `AGENTS.md`, `PLAN.md`, selected phase, and prior validation result.
+2. Re-open plan docs only when context missing, stale, or contradicted by current diff.
+3. Inspect current diff, staged diff, changed files, surrounding modules.
+4. Review diff against strict standards below.
+5. Fix every safe, phase-scoped finding you find.
+6. Use `$lgtm-refactor-plan` before fix needing non-trivial behavior-preserving restructure.
+7. Re-run affected checks after review fixes.
+8. Stop and report blocker only when finding real but cannot fix safely inside selected phase.
 
 ## Strict Review Questions
 

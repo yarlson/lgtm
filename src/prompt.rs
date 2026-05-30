@@ -39,7 +39,7 @@ pub fn phase_prompt(
 ) -> String {
     format!(
         "{}\n\n{}\n",
-        context_docs_block(plan_path, agents_path),
+        phase_context_block(plan_path, agents_path, pass),
         phase_task_block(plan_path, phase, pass)
     )
 }
@@ -105,9 +105,15 @@ fn plan_brief_block(brief: Option<&str>) -> String {
     }
 }
 
-fn context_docs_block(plan_path: &std::path::Path, agents_path: &std::path::Path) -> String {
-    format!(
-        "\
+fn phase_context_block(
+    plan_path: &std::path::Path,
+    agents_path: &std::path::Path,
+    pass: PhasePass,
+) -> String {
+    match pass {
+        PhasePass::Implement => format!(
+            "\
+This is the first turn for the selected phase.
 Read these context files before coding:
 - {agents}
 - {plan}
@@ -115,9 +121,19 @@ Treat {plan} as the implementation order and the source of any linked project-co
 Treat {agents} as the authoritative agent instructions for this run.
 Use only repo-local files and official docs relevant to the selected phase.
 When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior, check the installed version and repo-local config first; use current official docs when local evidence is not enough.",
-        agents = agents_path.display(),
-        plan = plan_path.display(),
-    )
+            agents = agents_path.display(),
+            plan = plan_path.display(),
+        ),
+        PhasePass::Validate | PhasePass::Review | PhasePass::Commit => format!(
+            "\
+Continue the same Codex session for this selected phase.
+Use the {agents}, {plan}, selected phase, and implementation context already established in this session.
+Re-open repo files only when needed to verify current state, inspect diffs, or resolve uncertainty.
+Do not redo broad codebase discovery unless earlier session context is missing or stale.",
+            agents = agents_path.display(),
+            plan = plan_path.display(),
+        ),
+    }
 }
 
 fn phase_task_block(plan_path: &std::path::Path, phase: &Phase, pass: PhasePass) -> String {
@@ -144,7 +160,7 @@ Implement Phase {number} completely in the current target repo. Do not commit or
         ),
         PhasePass::Validate => format!(
             "\
-Open {plan} and locate this exact selected phase heading:
+Continue with this exact selected phase heading:
 {heading}
 
 Use $lgtm-phase-validate for the validation pass.
@@ -157,13 +173,12 @@ Use $lgtm-dependency-review if the phase changes dependencies, lockfiles, packag
 Validate that Phase {number} was implemented fully and correctly in the current target repo.
 Fix only correctness, test, docs, security, dependency, or rollout gaps needed to complete this selected phase.
 Do not commit or push unless the user explicitly requested it for this run.",
-            plan = plan_path.display(),
             number = phase.id,
             heading = phase.heading,
         ),
         PhasePass::Review => format!(
             "\
-Open {plan} and locate this exact selected phase heading:
+Continue with this exact selected phase heading:
 {heading}
 
 Use $lgtm-phase-review for the local phase review pass.
@@ -176,25 +191,22 @@ Review Phase {number} in the current target repo after implementation and valida
 Run a strict structural maintainability review, then fix every safe phase-scoped finding before finishing.
 If a finding requires broad redesign, unrelated refactor, new product behavior, PR/CI workflow, or later-phase work, report it as out of scope or blocked instead of fixing it.
 Do not commit or push unless the user explicitly requested it for this run.",
-            plan = plan_path.display(),
             number = phase.id,
             heading = phase.heading,
         ),
         PhasePass::Commit => format!(
             "\
-Open {plan} and locate this exact selected phase heading:
+Continue with this exact selected phase heading:
 {heading}
 
 Use $lgtm-phase-commit for the after-phase commit pass.
 
 Commit Phase {number} after implementation, validation, and review are complete.
 Inspect git status plus staged and unstaged diffs.
-Stage only changes that belong to this selected phase.
+Stage all changes.
 Create a real git commit with a rich message: concise subject, body summary of the phase scope, key changes, verification performed, and any blockers or skipped checks.
-Do not create an empty commit. If there are no selected-phase changes to commit, report that explicitly.
-If unrelated changes are mixed in and cannot be safely separated, stop and report a blocker instead of committing them.
-Do not push, create branches, open PRs, manage CI, or commit later-phase work.",
-            plan = plan_path.display(),
+Do not create an empty commit. If there are no changes to commit, report that explicitly.
+Do not push, create branches, open PRs, manage CI, or release tags.",
             number = phase.id,
             heading = phase.heading,
         ),
@@ -255,10 +267,11 @@ mod tests {
 
         assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
         assert!(prompt.contains("$lgtm-phase-commit"));
-        assert!(prompt.contains("Stage only changes that belong to this selected phase"));
+        assert!(prompt.contains("Stage all changes"));
         assert!(prompt.contains("Create a real git commit with a rich message"));
         assert!(prompt.contains("Do not create an empty commit"));
         assert!(prompt.contains("Do not push, create branches, open PRs, manage CI"));
+        assert!(!prompt.contains("safely separated"));
     }
 
     #[test]

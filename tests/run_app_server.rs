@@ -20,28 +20,38 @@ fn run_reloads_plan_index_and_runs_four_passes_through_app_server() {
 	set -eu
 	repo=__REPO__
 	dir=$(dirname "$0")
-	counter="$dir/counter"
-	if [ -f "$counter" ]; then
-  n=$(cat "$counter")
-else
-  n=0
-fi
-n=$((n + 1))
-printf '%s\n' "$n" >"$counter"
+	session_counter="$dir/session-counter"
+	if [ -f "$session_counter" ]; then
+	  session_n=$(cat "$session_counter")
+	else
+	  session_n=0
+	fi
+	session_n=$((session_n + 1))
+	printf '%s\n' "$session_n" >"$session_counter"
 
-read initialize
-printf '%s\n' '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp/codex"}}'
-read initialized
-read thread_start
-printf '%s\n' '{"id":2,"result":{"thread":{"id":"thr-test"}}}'
-read turn_start
-	printf '%s\n' "$turn_start" >"$dir/turn-$n.json"
-	printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-test","status":"inProgress","items":[]}}}'
-	if [ "$n" = 1 ]; then
-	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Follow Up\",\"heading\":\"## Phase 2 - Follow Up\"}]}","status":"completed"}]}}}'
-	elif [ "$n" = 2 ]; then
-	  cat >"$repo/PLAN.md" <<'PLAN'
-# Plan
+	read initialize
+	printf '%s\n' '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp/codex"}}'
+	read initialized
+	read thread_start
+	printf '%s\n' "$thread_start" >>"$dir/thread-starts.jsonl"
+	printf '%s\n' '{"id":2,"result":{"thread":{"id":"thr-test"}}}'
+	while IFS= read -r turn_start; do
+	  turn_counter="$dir/turn-counter"
+	  if [ -f "$turn_counter" ]; then
+	    turn_n=$(cat "$turn_counter")
+	  else
+	    turn_n=0
+	  fi
+	  turn_n=$((turn_n + 1))
+	  printf '%s\n' "$turn_n" >"$turn_counter"
+	  id=$(printf '%s\n' "$turn_start" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+	  printf '%s\n' "$turn_start" >"$dir/turn-$turn_n.json"
+	  printf '{"id":%s,"result":{"turn":{"id":"turn-test","status":"inProgress","items":[]}}}\n' "$id"
+		if [ "$turn_n" = 1 ]; then
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Follow Up\",\"heading\":\"## Phase 2 - Follow Up\"}]}","status":"completed"}]}}}'
+		elif [ "$turn_n" = 2 ]; then
+		  cat >"$repo/PLAN.md" <<-'PLAN'
+	# Plan
 
 ## Phase 1 - Skeleton
 
@@ -50,14 +60,15 @@ Done.
 ## Phase 2 - Updated Title
 
 Goal: updated.
-PLAN
-	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
-	elif [ "$n" = 6 ]; then
-	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Updated Title\",\"heading\":\"## Phase 2 - Updated Title\"}]}","status":"completed"}]}}}'
-	else
-	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
-	fi
-	"###
+	PLAN
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
+		elif [ "$turn_n" = 6 ]; then
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Updated Title\",\"heading\":\"## Phase 2 - Updated Title\"}]}","status":"completed"}]}}}'
+		else
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
+		fi
+	done
+		"###
         .replace("__REPO__", &repo_sh),
     );
 
@@ -138,6 +149,8 @@ PLAN
     let phase_two_implement_turn =
         fs::read_to_string(temp.path().join("turn-7.json")).expect("phase two implement prompt");
     let commit_turn = fs::read_to_string(temp.path().join("turn-5.json")).expect("commit prompt");
+    let session_count = fs::read_to_string(temp.path().join("session-counter")).expect("sessions");
+    assert_eq!(session_count.trim(), "4");
     assert!(index_turn.contains("gpt-5.4-mini") || index_turn.contains("PLAN.md content"));
     assert!(index_turn.contains("## Phase 2 - Follow Up"));
     assert!(implement_turn.contains("$lgtm-phase-implement"));

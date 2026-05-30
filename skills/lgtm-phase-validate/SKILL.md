@@ -1,6 +1,6 @@
 ---
 name: lgtm-phase-validate
-description: "lgtm validation pass for exactly one PLAN.md phase. Use when lgtm asks Codex validate implemented phase. Independently re-read selected phase, compare implementation to Goal, Steps, Validation, Web validation sections, fix scoped gaps, verify concrete checks."
+description: "lgtm validation pass for exactly one PLAN.md phase. Use when lgtm asks Codex validate implemented phase in the same session, compare implementation to Goal, Steps, Validation, Web validation sections, fix scoped gaps, verify concrete checks."
 managed-by: lgtm
 ---
 
@@ -16,16 +16,15 @@ lgtm give:
 - path to `PLAN.md`
 - path to `AGENTS.md`
 
-Treat validation as independent review, not continuation of implementation assumptions.
+Treat validation as independent judgment, not blind trust in implementation assumptions. Use session context already gathered.
 
 ## Workflow
 
-1. Re-open `AGENTS.md`, `PLAN.md`, context docs linked from selected phase.
-2. Find exact selected phase heading.
-3. Re-read selected phase Goal, Steps, Validation, Web validation sections.
-4. Inspect files touched by implementation and surrounding modules.
-5. Compare current behavior vs phase contract.
-6. Look for:
+1. Use current session context for `AGENTS.md`, `PLAN.md`, and selected phase.
+2. Re-open plan docs only when context missing, stale, or contradicted by implementation.
+3. Inspect files touched by implementation and surrounding modules.
+4. Compare current behavior vs phase contract.
+5. Look for:
    - missing behavior
    - incomplete edge cases
    - unsafe broad changes
@@ -33,11 +32,11 @@ Treat validation as independent review, not continuation of implementation assum
    - stale docs or product-contract drift
    - security-sensitive surfaces from change
    - skipped required checks
-7. Fix only gaps needed complete selected phase.
-8. Strengthen tests/verification when existing checks not prove phase works.
-9. Re-run required checks after fixes.
-10. If compile or type-check fail, group errors by file and category, fix highest-confidence selected-phase issues first, rerun until clean or blocked.
-11. Leave structural quality and final closeout to review pass.
+6. Fix only gaps needed complete selected phase.
+7. Strengthen tests/verification when existing checks not prove phase works.
+8. Re-run required checks after fixes.
+9. If compile or type-check fail, group errors by file and category, fix highest-confidence selected-phase issues first, rerun until clean or blocked.
+10. Leave structural quality and final closeout to review pass.
 
 ## Validation Standard
 

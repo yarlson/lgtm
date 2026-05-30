@@ -233,8 +233,8 @@ fn plan_mode_implement_choice_hands_off_to_run_mode() {
     assert!(plain_stdout.contains("• Phase 01 review: Generated"));
     assert!(plain_stdout.contains("• Phase 01 commit: Generated"));
     assert_eq!(
-        fs::read_to_string(temp.path().join("counter")).expect("counter"),
-        "7\n"
+        fs::read_to_string(temp.path().join("session-counter")).expect("sessions"),
+        "4\n"
     );
 
     assert!(repo.join("handoff-logs/test-plan-001.jsonl").is_file());
@@ -529,41 +529,51 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
 
 fn immediate_handoff_codex_script() -> &'static str {
     r###"#!/usr/bin/env sh
-set -eu
-dir=$(dirname "$0")
-counter="$dir/counter"
-if [ -f "$counter" ]; then
-  n=$(cat "$counter")
-else
-  n=0
-fi
-n=$((n + 1))
-printf '%s\n' "$n" >"$counter"
+	set -eu
+	dir=$(dirname "$0")
+	session_counter="$dir/session-counter"
+	if [ -f "$session_counter" ]; then
+	  session_n=$(cat "$session_counter")
+	else
+	  session_n=0
+	fi
+	session_n=$((session_n + 1))
+	printf '%s\n' "$session_n" >"$session_counter"
 
-read initialize
-printf '%s\n' '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp/codex"}}'
-read initialized
-read thread_start
-printf '%s\n' '{"id":2,"result":{"thread":{"id":"thr-plan"}}}'
-read turn_start
-printf '%s\n' "$turn_start" >"$dir/turn-$n.json"
-printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-plan","status":"inProgress","items":[]}}}'
+	read initialize
+	printf '%s\n' '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp/codex"}}'
+	read initialized
+	read thread_start
+	printf '%s\n' '{"id":2,"result":{"thread":{"id":"thr-plan"}}}'
+	while IFS= read -r turn_start; do
+	  turn_counter="$dir/turn-counter"
+	  if [ -f "$turn_counter" ]; then
+	    turn_n=$(cat "$turn_counter")
+	  else
+	    turn_n=0
+	  fi
+	  turn_n=$((turn_n + 1))
+	  printf '%s\n' "$turn_n" >"$turn_counter"
+	  id=$(printf '%s\n' "$turn_start" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+	  printf '%s\n' "$turn_start" >"$dir/turn-$turn_n.json"
+	  printf '{"id":%s,"result":{"turn":{"id":"turn-plan","status":"inProgress","items":[]}}}\n' "$id"
 
-if [ "$n" = 1 ]; then
-  cat >"$dir/repo/PLAN.md" <<'PLAN'
-# Plan
+	if [ "$turn_n" = 1 ]; then
+	  cat >"$dir/repo/PLAN.md" <<-'PLAN'
+	# Plan
 
-## Phase 1 - Generated
+	## Phase 1 - Generated
 
 Goal: generated.
-PLAN
-  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-plan","text":"final plan written","status":"completed"}]}}}'
-elif [ "$n" = 2 ] || [ "$n" = 7 ]; then
-  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Generated\",\"heading\":\"## Phase 1 - Generated\"}]}","status":"completed"}]}}}'
-else
-  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
-fi
-"###
+	PLAN
+	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-plan","text":"final plan written","status":"completed"}]}}}'
+	elif [ "$turn_n" = 2 ] || [ "$turn_n" = 7 ]; then
+	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Generated\",\"heading\":\"## Phase 1 - Generated\"}]}","status":"completed"}]}}}'
+	else
+	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
+	fi
+	done
+	"###
 }
 
 fn failing_handoff_codex_script() -> &'static str {
