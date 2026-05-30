@@ -6,14 +6,14 @@ managed-by: lgtm
 
 # lgtm UI Control
 
-Use this only when the selected phase needs local browser, Electron, or UI verification.
+Use only when selected phase needs local browser, Electron, or UI verification.
 
-The goal is evidence from the actual UI surface, using repo-local tooling when available.
+Goal: evidence from actual UI surface, using repo-local tooling when available.
 
 ## Workflow
 
-1. Identify the UI surface and behavior under test.
-2. Start the app using the repo's documented local command.
+1. Identify UI surface and behavior under test.
+2. Start app using repo's documented local command.
 3. Prefer existing repo-native harnesses:
    - Playwright
    - Cypress
@@ -21,22 +21,22 @@ The goal is evidence from the actual UI surface, using repo-local tooling when a
    - browser scripts
    - Electron launch scripts
 4. Select pages and controls by stable roles, labels, or app markers.
-5. Capture before/after evidence when it proves the selected phase.
+5. Capture before/after evidence when it proves selected phase.
 6. Inspect console, network, trace, screenshot, or accessibility output only as needed.
-7. Clean up servers, debug sessions, temp profiles, and artifacts unless the user asked to keep them.
+7. Clean up servers, debug sessions, temp profiles, artifacts unless user asked to keep.
 
 ## Guardrails
 
-Do not add Playwright, Cypress, or browser dependencies just for a probe unless the selected phase requires it.
+Don't add Playwright, Cypress, or browser deps just for a probe unless selected phase requires.
 
-Do not rely on stale selectors after navigation.
+Don't rely on stale selectors after navigation.
 
-Avoid coordinate clicks unless a fresh screenshot was captured immediately before the click.
+Avoid coordinate clicks unless fresh screenshot captured immediately before click.
 
-Do not store screenshots, traces, HTTP bodies, or heap snapshots from sensitive workspaces unless needed and safe.
+Don't store screenshots, traces, HTTP bodies, or heap snapshots from sensitive workspaces unless needed and safe.
 
-Do not hardcode ports, selectors, or scripts from another repository.
+Don't hardcode ports, selectors, or scripts from another repo.
 
 ## Completion Criteria
 
-UI control is complete when the UI behavior is verified with local evidence, fixed within selected-phase scope, or blocked with a clear reason.
+UI control complete when UI behavior verified with local evidence, fixed within selected-phase scope, or blocked with clear reason.

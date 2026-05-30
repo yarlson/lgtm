@@ -6,19 +6,19 @@ managed-by: lgtm
 
 # lgtm Technical Spike
 
-Use this only when implementation or validation depends on unknown technical behavior.
+Use only when implementation or validation depends on unknown technical behavior.
 
 Examples:
 
 - unfamiliar framework APIs
 - version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior
 - unclear build or runtime constraints
-- a library behavior that affects implementation shape
-- a tool command needed for validation
+- library behavior affecting implementation shape
+- tool command needed for validation
 
 ## Workflow
 
-1. State the exact technical question.
+1. State exact technical question.
 2. Check repo-local evidence first:
    - manifests
    - lockfiles
@@ -27,14 +27,14 @@ Examples:
    - tests
    - installed versions
    - local help output
-3. If local evidence is insufficient, consult current official docs for the specific tool or library.
-4. Record only conclusions that affect the selected phase.
+3. If local evidence insufficient, consult current official docs for specific tool or library.
+4. Record only conclusions affecting selected phase.
 5. Convert findings into implementation or validation implications.
-6. Stop once the phase can be implemented or validated safely.
+6. Stop once phase can be implemented or validated safely.
 
 ## Output Shape
 
-Use this concise structure in your reasoning or final report:
+Use this concise structure in reasoning or final report:
 
 ```md
 ## Technical Spike Result
@@ -49,14 +49,14 @@ Remaining uncertainty: ...
 
 ## Guardrails
 
-Do not research adjacent features.
+Don't research adjacent features.
 
-Do not upgrade dependencies unless the selected phase explicitly requires it.
+Don't upgrade dependencies unless selected phase explicitly requires it.
 
-Do not add abstractions to hide uncertainty.
+Don't add abstractions to hide uncertainty.
 
-Do not cite unofficial sources when official docs are available.
+Don't cite unofficial sources when official docs available.
 
 ## Completion Criteria
 
-The spike is complete when the selected phase has a clear implementation or validation path.
+Spike complete when selected phase has clear implementation or validation path.

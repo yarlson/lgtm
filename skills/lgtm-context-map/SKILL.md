@@ -1,29 +1,29 @@
 ---
 name: lgtm-context-map
-description: "lgtm context discovery skill. Use before implementation or validation to identify files, docs, commands, risks, unknowns, and local patterns relevant to the selected PLAN.md phase."
+description: "lgtm context discovery skill. Use before implement or validate to find files, docs, commands, risks, unknowns, local patterns for selected PLAN.md phase."
 managed-by: lgtm
 ---
 
 # lgtm Context Map
 
-Use this before editing or validating a selected phase.
+Use before edit or validate selected phase.
 
-The goal is to gather enough local context to work safely without reading the whole repository.
+Goal: gather enough local context to work safe without read whole repo.
 
 ## Workflow
 
-1. Read the selected `PLAN.md` phase.
+1. Read selected `PLAN.md` phase.
 2. Read `AGENTS.md` for repo instructions.
-3. Read context docs linked from the selected phase.
-4. Search for files, modules, tests, commands, docs, and config relevant to the selected phase.
-5. Inspect nearby code patterns before deciding how to implement or validate.
-6. Identify unknowns that affect implementation correctness.
-7. Resolve discoverable unknowns through repo-local files, config, tests, or installed tool versions.
-8. Use official docs only when local evidence is insufficient for unfamiliar or version-sensitive behavior.
+3. Read context docs linked from phase.
+4. Search files, modules, tests, commands, docs, config for phase.
+5. Inspect nearby code patterns before decide how to implement or validate.
+6. Find unknowns that affect implementation correctness.
+7. Resolve discoverable unknowns via repo-local files, config, tests, or installed tool versions.
+8. Use official docs only when local evidence not enough for unfamiliar or version-sensitive behavior.
 
 ## Output To Keep In Working Memory
 
-Before proceeding, know:
+Before proceed, know:
 
 - relevant source files
 - relevant tests
@@ -35,17 +35,17 @@ Before proceeding, know:
 
 ## Guardrails
 
-Do not turn context mapping into broad documentation work.
+No turn context mapping into broad doc work.
 
-Do not inspect generated output, build artifacts, vendored dependencies, or unrelated modules unless the selected phase requires it.
+No inspect generated output, build artifacts, vendored deps, or unrelated modules unless phase needs it.
 
-Do not ask the user for file locations that can be discovered locally.
+No ask user for file locations findable locally.
 
 ## Completion Criteria
 
-Context mapping is complete when you can explain:
+Context mapping done when you can explain:
 
 - what files you need to touch
 - what files you need to verify
-- what repo conventions constrain the change
+- what repo conventions constrain change
 - what risks or unknowns remain

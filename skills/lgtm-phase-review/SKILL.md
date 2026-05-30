@@ -6,125 +6,106 @@ managed-by: lgtm
 
 # lgtm Phase Review
 
-You are reviewing exactly one selected phase after implementation and
-validation.
+You review exactly one selected phase after implementation and validation.
 
-This is a strict maintainability review, not a PR workflow, CI workflow,
-shipping workflow, or broad redesign pass. The selected phase is the only
-authorized scope.
+This strict maintainability review, not PR/CI/shipping workflow or broad redesign. Selected phase = only authorized scope.
 
 ## Inputs
 
-lgtm will provide:
+lgtm give:
 
-- the selected phase heading
-- the path to `PLAN.md`
-- the path to `AGENTS.md`
+- selected phase heading
+- path to `PLAN.md`
+- path to `AGENTS.md`
 
-Treat these files as authoritative.
+These files authoritative.
 
 ## Review Standard
 
-Perform a deep code-quality audit of the selected phase's final diff. Rethink
-how the change is structured and implemented so the touched code becomes
-simpler, smaller, more direct, and easier to maintain without changing behavior.
+Do deep code-quality audit of selected phase final diff. Rethink change structure so touched code becomes simpler, smaller, more direct, easier maintain — no behavior change.
 
-Be ambitious about structural simplification. Actively look for code-judo moves:
-behavior-preserving restructurings that delete branches, helpers, modes,
-conditionals, wrappers, or layers instead of merely polishing them.
+Be ambitious about structural simplification. Hunt code-judo moves: behavior-preserving restructures that delete branches, helpers, modes, conditionals, wrappers, layers — not just polish them.
 
-Do not approve merely because behavior seems correct. The phase review only
-passes when no clear selected-phase structural regression remains.
+No approve just because behavior seems correct. Phase review passes only when no clear selected-phase structural regression remains.
 
 ## Workflow
 
-1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from the selected
-   phase.
-2. Locate the exact selected phase heading.
-3. Re-read the selected phase's Goal, Steps, and Validation sections.
-4. Inspect the current diff, staged diff, changed files, and surrounding modules.
-5. Review the diff against the strict standards below.
-6. Fix every safe, phase-scoped finding you identify.
-7. Use `$lgtm-refactor-plan` before a fix that needs non-trivial
-   behavior-preserving restructuring.
+1. Re-open `AGENTS.md`, `PLAN.md`, and context docs linked from selected phase.
+2. Find exact selected phase heading.
+3. Re-read selected phase Goal, Steps, Validation sections.
+4. Inspect current diff, staged diff, changed files, surrounding modules.
+5. Review diff against strict standards below.
+6. Fix every safe, phase-scoped finding you find.
+7. Use `$lgtm-refactor-plan` before fix needing non-trivial behavior-preserving restructure.
 8. Re-run affected checks after review fixes.
-9. Stop and report a blocker only when a finding is real but cannot be fixed
-   safely inside the selected phase.
+9. Stop and report blocker only when finding real but cannot fix safely inside selected phase.
 
 ## Strict Review Questions
 
 For every meaningful change, ask:
 
-- Is there a code-judo move that would make this dramatically simpler?
-- Can this be reframed so fewer concepts, branches, helpers, or modes exist?
-- Did the change improve or worsen the local architecture?
-- Did it add ad-hoc conditionals, one-off flags, nullable modes, or scattered
-  special cases?
-- Is logic living in the canonical layer, file, module, or helper?
-- Did it duplicate an existing helper or invent a near-duplicate?
-- Did it introduce unnecessary optionality, casts, loose data shapes, silent
-  fallback, or unclear invariants?
-- Did it add wrappers or abstractions that do not earn their keep?
-- Did a file cross or approach 1000 lines because decomposition was skipped?
-- Are mechanical churn and behavior changes mixed in a way that makes review
-  harder than necessary?
-- Are tests and docs proving the changed behavior without fake confidence?
+- Is there code-judo move making this dramatically simpler?
+- Can reframe so fewer concepts, branches, helpers, modes exist?
+- Did change improve or worsen local architecture?
+- Did it add ad-hoc conditionals, one-off flags, nullable modes, scattered special cases?
+- Is logic in canonical layer, file, module, helper?
+- Did it duplicate existing helper or invent near-duplicate?
+- Did it add unnecessary optionality, casts, loose data shapes, silent fallback, unclear invariants?
+- Did it add wrappers or abstractions that no earn keep?
+- Did file cross or near 1000 lines because decomposition skipped?
+- Are mechanical churn and behavior changes mixed so review harder than needed?
+- Do tests and docs prove changed behavior without fake confidence?
 
 ## Findings To Fix Aggressively
 
 Treat these as presumptive blockers until fixed or explicitly blocked:
 
-- complicated implementation where a cleaner framing would delete complexity
+- complicated implementation where cleaner framing deletes complexity
 - spaghetti growth from branches bolted onto unrelated flows
 - feature-specific logic leaking into shared paths
-- thin wrappers, identity abstractions, or generic magic that hide simple
-  structure
-- unnecessary casts, optional params, loose types, or unclear boundaries
+- thin wrappers, identity abstractions, generic magic hiding simple structure
+- unnecessary casts, optional params, loose types, unclear boundaries
 - duplicated helpers instead of local canonical utilities
-- large-file growth that should be decomposed before it hardens
-- unrelated cleanup, noisy formatting, implementation chatter, or AI slop
-- refactors that move complexity around without reducing it
-- partial or sequential orchestration that is harder to reason about than a
-  simpler atomic flow
+- large-file growth that should decompose before hardens
+- unrelated cleanup, noisy formatting, implementation chatter, AI slop
+- refactors moving complexity around without reducing it
+- partial or sequential orchestration harder to reason about than simpler atomic flow
 
 ## Preferred Fixes
 
 Prefer fixes that:
 
-- delete a layer of indirection instead of polishing it
-- reframe the state model so conditionals disappear
+- delete layer of indirection instead of polish it
+- reframe state model so conditionals disappear
 - collapse duplicate branches into one direct flow
-- move logic to the module that already owns the concept
-- extract a focused helper or module when it materially reduces file pressure
-- replace special-case chains with a small typed model or explicit dispatcher
+- move logic to module that already owns concept
+- extract focused helper or module when it materially cuts file pressure
+- replace special-case chains with small typed model or explicit dispatcher
 - reuse existing canonical helpers
-- make boundaries explicit so control flow gets simpler
+- make boundaries explicit so control flow simpler
 - separate orchestration from business logic
-- remove unrelated churn introduced by the phase
+- remove unrelated churn from phase
 
 ## Scope And Safety
 
-Fix all findings that are selected-phase scoped and safe to change now.
+Fix all findings that selected-phase scoped and safe to change now.
 
-Do not add new product behavior.
+No add new product behavior.
 
-Do not broaden the implementation into later phases or unrelated cleanup.
+No broaden implementation into later phases or unrelated cleanup.
 
-Do not rewrite a subsystem just because a cleaner design is imaginable. If the
-finding is real but the fix requires broad redesign, later-phase work, missing
-product decisions, or unrelated files, report it as blocked or out of scope.
+No rewrite subsystem just because cleaner design imaginable. If finding real but fix needs broad redesign, later-phase work, missing product decisions, or unrelated files, report it blocked or out of scope.
 
-Do not commit, push, create branches, open PRs, manage CI, tag releases, or
-inspect PR comments. The commit pass owns committing.
+No commit, push, create branches, open PRs, manage CI, tag releases, or inspect PR comments. Commit pass owns committing.
 
 ## Completion Criteria
 
-The phase review is complete only when:
+Phase review complete only when:
 
-- all safe selected-phase findings were fixed
-- remaining findings are explicitly blocked or out of scope
+- all safe selected-phase findings fixed
+- remaining findings explicitly blocked or out of scope
 - no obvious structural regression remains
 - no obvious AI slop remains
-- no later-phase or unrelated work was introduced
+- no later-phase or unrelated work introduced
 - review fixes stayed phase-scoped and behavior-preserving
-- affected checks were rerun after review fixes
+- affected checks reran after review fixes

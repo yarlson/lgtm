@@ -217,8 +217,8 @@ mod tests {
         assert!(body.contains("Fix every safe, phase-scoped finding"));
         assert!(body.contains("$lgtm-refactor-plan"));
         assert!(body.contains("1000 lines"));
-        assert!(body.contains("Do not approve merely because behavior seems correct"));
-        assert!(body.contains("The commit pass owns committing"));
+        assert!(body.contains("No approve just because behavior seems correct"));
+        assert!(body.contains("Commit pass owns committing"));
     }
 
     #[test]

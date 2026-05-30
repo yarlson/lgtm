@@ -6,27 +6,27 @@ managed-by: lgtm
 
 # lgtm Test Gap Review
 
-Use this during validation after inspecting the implementation.
+Use during validation after inspecting implementation.
 
-The goal is to verify behavior, not implementation trivia.
+Goal: verify behavior, not implementation trivia.
 
 ## Workflow
 
-1. Re-read the selected phase's Validation and Web validation sections.
-2. Identify what behavior must be proven.
-3. Inspect existing tests and checks for that behavior.
-4. Identify gaps:
-   - no test covers the new behavior
-   - assertions are too weak
-   - only happy path is covered
-   - test checks implementation details instead of behavior
+1. Re-read selected phase's Validation + Web validation sections.
+2. Identify behavior to prove.
+3. Inspect existing tests/checks for that behavior.
+4. Find gaps:
+   - no test covers new behavior
+   - assertions too weak
+   - only happy path covered
+   - test checks implementation details not behavior
    - test uses fixtures that cannot fail meaningfully
-   - required command was skipped
-   - manual verification is claimed without evidence
-5. Add or strengthen tests only where they materially improve confidence.
-6. Run the relevant checks.
-7. For measurable claims, restate the claim in falsifiable form and classify the result as `VERIFIED`, `NOT VERIFIED`, or `INCONCLUSIVE`.
-8. If a required check cannot run, report the blocker and residual risk.
+   - required command skipped
+   - manual verification claimed without evidence
+5. Add/strengthen tests only where they materially improve confidence.
+6. Run relevant checks.
+7. For measurable claims, restate claim in falsifiable form, classify result as `VERIFIED`, `NOT VERIFIED`, or `INCONCLUSIVE`.
+8. If required check cannot run, report blocker + residual risk.
 
 ## Verification Preference
 
@@ -49,18 +49,18 @@ Evidence: ...
 Reasoning: ...
 ```
 
-Use `INCONCLUSIVE` when there is no valid baseline, the signal is noisy, the environment differs, or the check failed for reasons unrelated to the claim.
+Use `INCONCLUSIVE` when no valid baseline, signal is noisy, environment differs, or check failed for reasons unrelated to claim.
 
 ## Guardrails
 
-Do not chase 100% coverage for its own sake.
+Don't chase 100% coverage for its own sake.
 
-Do not add fake-confidence tests.
+Don't add fake-confidence tests.
 
-Do not snapshot unstable output unless that is the established local pattern.
+Don't snapshot unstable output unless that's the established local pattern.
 
-Do not broaden test infrastructure unless the selected phase requires it.
+Don't broaden test infrastructure unless selected phase requires it.
 
 ## Completion Criteria
 
-This review is complete when the selected phase's behavior is proven by meaningful checks, disproven clearly, or remaining verification gaps are explicitly reported.
+Review complete when selected phase's behavior is proven by meaningful checks, disproven clearly, or remaining verification gaps explicitly reported.

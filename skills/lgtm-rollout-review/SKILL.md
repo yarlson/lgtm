@@ -1,16 +1,16 @@
 ---
 name: lgtm-rollout-review
-description: "lgtm rollout and operational readiness review skill. Use for selected phases involving deployment, infrastructure, runtime config, migrations, observability, production behavior, or operational failure modes."
+description: "lgtm rollout + operational readiness review skill. Use for phases involving deployment, infra, runtime config, migrations, observability, production behavior, or operational failure modes."
 managed-by: lgtm
 ---
 
 # lgtm Rollout Review
 
-Use this when the selected phase affects runtime or production operations.
+Use when selected phase affects runtime or production ops.
 
 ## Trigger Surfaces
 
-Use this for phases involving:
+Use for phases involving:
 
 - deployment
 - infrastructure
@@ -27,9 +27,9 @@ Use this for phases involving:
 ## Workflow
 
 1. Identify what operational behavior changes.
-2. Check required config and defaults.
-3. Check startup, shutdown, retry, timeout, and failure behavior where relevant.
-4. Check observability: logs, metrics, traces, health checks, or user-visible errors.
+2. Check required config + defaults.
+3. Check startup, shutdown, retry, timeout, failure behavior where relevant.
+4. Check observability: logs, metrics, traces, health checks, user-visible errors.
 5. Check rollback or recovery path.
 6. Check migration or deploy ordering if applicable.
 7. Check whether docs or runbooks need direct updates.
@@ -38,25 +38,25 @@ Use this for phases involving:
 
 ## Rollout Questions
 
-Know the answer to:
+Know answer to:
 
 - What changes at runtime?
-- What config is required?
+- What config required?
 - How would failure show up?
-- How would an operator verify success?
-- How would an operator roll back or recover?
-- What is the smallest safe deploy order?
+- How would operator verify success?
+- How would operator roll back or recover?
+- Smallest safe deploy order?
 
 ## Guardrails
 
-Do not add production infrastructure unless the selected phase requires it.
+No add production infra unless selected phase requires it.
 
-Do not invent observability systems.
+No invent observability systems.
 
-Do not hardcode toy assumptions into runtime paths.
+No hardcode toy assumptions into runtime paths.
 
-Do not expand into release automation unless it is part of the selected phase.
+No expand into release automation unless part of selected phase.
 
 ## Completion Criteria
 
-Rollout review is complete when runtime risk introduced by the selected phase is understood, verified where practical, and documented if needed.
+Rollout review done when runtime risk introduced by selected phase is understood, verified where practical, documented if needed.

@@ -6,11 +6,11 @@ managed-by: lgtm
 
 # lgtm Dependency Review
 
-Use this when the selected phase changes dependencies or tool supply chain.
+Use when selected phase change deps or tool supply chain.
 
 ## Trigger Surfaces
 
-Use this for changes to:
+Use for change to:
 
 - package manifests
 - lockfiles
@@ -22,29 +22,29 @@ Use this for changes to:
 - MCP servers or plugin config
 - tool versions
 - dependency update policy
-- scripts downloaded from the network
+- scripts downloaded from network
 
 ## Workflow
 
-1. Identify every dependency or toolchain change.
-2. Check whether the change is required by the selected phase.
-3. Confirm lockfiles or equivalent generated dependency state are updated consistently.
-4. Prefer pinned versions over floating versions when the repo pattern allows.
-5. Watch for `latest`, unpinned Git URLs, curl-to-shell, broad install scripts, or unknown registries.
-6. Check for secrets or credentials in package, tool, or CI config.
-7. Run dependency-related checks available in the repo.
-8. Report out-of-scope supply-chain risks without expanding the phase.
+1. Find every dep or toolchain change.
+2. Check if change needed by selected phase.
+3. Confirm lockfiles or equivalent generated dep state updated consistent.
+4. Prefer pinned versions over floating when repo pattern allows.
+5. Watch for `latest`, unpinned Git URLs, curl-to-shell, broad install scripts, unknown registries.
+6. Check secrets or credentials in package, tool, or CI config.
+7. Run dep checks available in repo.
+8. Report out-of-scope supply-chain risk, no expand phase.
 
 ## Guardrails
 
-Do not upgrade unrelated dependencies.
+No upgrade unrelated deps.
 
-Do not normalize the whole lockfile unless the selected phase requires it.
+No normalize whole lockfile unless phase need it.
 
-Do not add scanners or services unless already part of the repo or phase.
+No add scanners or services unless already in repo or phase.
 
-Do not trust generated code blindly; inspect whether it is intended to be committed.
+No trust generated code blind; inspect if meant to be committed.
 
 ## Completion Criteria
 
-Dependency review is complete when dependency/tool changes are necessary, consistent, pinned where appropriate, and verified by available checks.
+Done when dep/tool change necessary, consistent, pinned where right, verified by available checks.
