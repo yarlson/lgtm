@@ -63,3 +63,5 @@ Validation complete only when:
 - any fixes stayed in selected-phase scope
 - no later-phase work added
 - compile or type-check failures resolved or explicitly blocked
+
+Final response concise: validation result, fixes, checks, blockers only.

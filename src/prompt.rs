@@ -29,6 +29,14 @@ impl PhasePass {
             Self::Commit => "commit",
         }
     }
+
+    pub fn reasoning_effort(self) -> &'static str {
+        match self {
+            Self::Implement | Self::Review => "high",
+            Self::Validate => "medium",
+            Self::Commit => "low",
+        }
+    }
 }
 
 pub fn phase_prompt(
@@ -120,7 +128,8 @@ Read these context files before coding:
 Treat {plan} as the implementation order and the source of any linked project-contract context.
 Treat {agents} as the authoritative agent instructions for this run.
 Use only repo-local files and official docs relevant to the selected phase.
-When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior, check the installed version and repo-local config first; use current official docs when local evidence is not enough.",
+When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner behavior, check the installed version and repo-local config first; use current official docs when local evidence is not enough.
+Keep the final response concise: changes, verification, blockers only.",
             agents = agents_path.display(),
             plan = plan_path.display(),
         ),
@@ -129,7 +138,8 @@ When validating version-sensitive Rust, Cargo, Git, dependency, or test-runner b
 Continue the same Codex session for this selected phase.
 Use the {agents}, {plan}, selected phase, and implementation context already established in this session.
 Re-open repo files only when needed to verify current state, inspect diffs, or resolve uncertainty.
-Do not redo broad codebase discovery unless earlier session context is missing or stale.",
+Do not redo broad codebase discovery unless earlier session context is missing or stale.
+Keep the final response concise: findings, fixes, verification, blockers only.",
             agents = agents_path.display(),
             plan = plan_path.display(),
         ),
@@ -250,6 +260,14 @@ mod tests {
         );
         assert_eq!(PhasePass::Commit.action(), "commit");
         assert_eq!(PhasePass::Commit.label(), "commit");
+    }
+
+    #[test]
+    fn phase_passes_use_targeted_reasoning_effort() {
+        assert_eq!(PhasePass::Implement.reasoning_effort(), "high");
+        assert_eq!(PhasePass::Validate.reasoning_effort(), "medium");
+        assert_eq!(PhasePass::Review.reasoning_effort(), "high");
+        assert_eq!(PhasePass::Commit.reasoning_effort(), "low");
     }
 
     #[test]

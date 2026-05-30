@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 pub const PARSER_MODEL: &str = "gpt-5.4-mini";
+pub const PARSER_REASONING_EFFORT: &str = "low";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Phase {

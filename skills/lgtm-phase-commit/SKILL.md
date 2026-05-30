@@ -32,3 +32,5 @@ Never: "this commit", "I/we/now", AI attribution, emoji, file name when scope sa
 - No empty commit.
 - Stage all changes.
 - No push, branch, PR, CI, release tag.
+
+Final response concise: commit hash and one-line summary only.

@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 
 use crate::{
-    app_server::{AppServerClient, CompletedTurn, TurnControl, TurnStreamEvent},
+    app_server::{AppServerClient, CompletedTurn, TokenUsage, TurnControl, TurnStreamEvent},
     cli::{RunArgs, StreamMode},
     commands::execution::ExecutionConfig,
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, require_file},
@@ -122,6 +122,7 @@ pub fn run(args: RunArgs) -> Result<()> {
 
 pub(super) fn run_config(config: RunConfig) -> Result<()> {
     let mut output = RunOutput::stdout(config.stream_mode);
+    let mut usage = TokenUsage::default();
     output.banner(Banner {
         mode: BannerMode::Run,
         root: config.runtime.root(),
@@ -145,7 +146,7 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
         }
 
         let phases = output.with_status_line("parsing plan phases", |output| {
-            load_phase_index(&config, phase_id, output)
+            load_phase_index(&config, phase_id, output, &mut usage)
         })?;
         let end_phase = match config.end_phase {
             Some(end_phase) => end_phase,
@@ -158,7 +159,7 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
         let Some(phase) = phase_index::next_phase(&phases, phase_id, end_phase) else {
             break;
         };
-        run_phase(&config, &phase, &mut output)?;
+        run_phase(&config, &phase, &mut output, &mut usage)?;
 
         if phase.id < end_phase {
             println!(
@@ -172,7 +173,7 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
         phase_id = phase.id + 1;
     }
 
-    Ok(())
+    output.token_summary(usage)
 }
 
 struct RunOutput<W> {
@@ -253,6 +254,13 @@ impl<W: Write> RunOutput<W> {
         self.write(rendered)
     }
 
+    fn token_summary(&mut self, usage: TokenUsage) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty || usage.is_zero() {
+            return Ok(());
+        }
+        self.write(token_summary_line(usage))
+    }
+
     fn write(&mut self, rendered: String) -> Result<()> {
         write_run_output(&mut self.output, rendered)
     }
@@ -262,6 +270,7 @@ fn load_phase_index(
     config: &RunConfig,
     phase_id: u32,
     output: &mut RunOutput<impl Write>,
+    usage: &mut TokenUsage,
 ) -> Result<Vec<Phase>> {
     let plan_text = fs::read_to_string(config.plan_abs())
         .with_context(|| format!("failed to read {}", config.plan_path.display()))?;
@@ -282,6 +291,7 @@ fn load_phase_index(
         &phase_index::parser_prompt(&config.plan_path, &plan_text),
         output,
     )?;
+    add_usage(usage, &first_turn);
     let first_output = first_turn.transcript.response_text();
     match phase_index::parse_phase_index(&first_output) {
         Ok(phases) => {
@@ -295,6 +305,7 @@ fn load_phase_index(
                 &phase_index::repair_prompt(&first_output),
                 output,
             )?;
+            add_usage(usage, &repair_turn);
             let repair_output = repair_turn.transcript.response_text();
             let phases = phase_index::parse_phase_index(&repair_output).with_context(|| {
                 format!("phase index parser returned invalid JSON after retry: {first_error}")
@@ -311,12 +322,21 @@ fn run_phase_index_turn(
     prompt: &str,
     output: &mut RunOutput<impl Write>,
 ) -> Result<CompletedTurn> {
-    run_streaming_turn(client, thread_id, prompt, |event| {
-        output.tick_on_idle(event)
-    })
+    run_streaming_turn(
+        client,
+        thread_id,
+        prompt,
+        |event| output.tick_on_idle(event),
+        phase_index::PARSER_REASONING_EFFORT,
+    )
 }
 
-fn run_phase(config: &RunConfig, phase: &Phase, output: &mut RunOutput<impl Write>) -> Result<()> {
+fn run_phase(
+    config: &RunConfig,
+    phase: &Phase,
+    output: &mut RunOutput<impl Write>,
+    usage: &mut TokenUsage,
+) -> Result<()> {
     let first_pass = PhasePass::Implement;
     let log_name = phase_pass_log_name(config, phase, first_pass);
     let mut client = config.runtime.connect_logged_app_server(
@@ -326,7 +346,15 @@ fn run_phase(config: &RunConfig, phase: &Phase, output: &mut RunOutput<impl Writ
     )?;
     let thread_id = client.start_thread()?;
 
-    run_phase_pass(config, phase, first_pass, &mut client, &thread_id, output)?;
+    run_phase_pass(
+        config,
+        phase,
+        first_pass,
+        &mut client,
+        &thread_id,
+        output,
+        usage,
+    )?;
     for pass in PhasePass::ALL.into_iter().skip(1) {
         let log_name = phase_pass_log_name(config, phase, pass);
         config.runtime.set_log_sink(
@@ -334,7 +362,7 @@ fn run_phase(config: &RunConfig, phase: &Phase, output: &mut RunOutput<impl Writ
             &log_name,
             config.stream_mode == StreamMode::Raw,
         )?;
-        run_phase_pass(config, phase, pass, &mut client, &thread_id, output)?;
+        run_phase_pass(config, phase, pass, &mut client, &thread_id, output, usage)?;
     }
 
     client.stop()
@@ -356,14 +384,17 @@ fn run_phase_pass(
     client: &mut AppServerClient,
     thread_id: &str,
     output: &mut RunOutput<impl Write>,
+    usage: &mut TokenUsage,
 ) -> Result<()> {
     output.phase_header(phase, pass)?;
-    run_streaming_turn(
+    let turn = run_streaming_turn(
         client,
         thread_id,
         &prompt::phase_prompt(&config.plan_path, &config.agents_path, phase, pass),
         |event| output.render_event(event),
+        pass.reasoning_effort(),
     )?;
+    add_usage(usage, &turn);
     output.finish()
 }
 
@@ -372,9 +403,10 @@ fn run_streaming_turn(
     thread_id: &str,
     prompt: &str,
     mut render_event: impl FnMut(&TurnStreamEvent) -> Result<()>,
+    effort: &str,
 ) -> Result<CompletedTurn> {
     let mut output_result = Ok(());
-    let turn = client.run_turn_streaming(thread_id, prompt, |event| {
+    let turn = client.run_turn_streaming_with_effort(thread_id, prompt, effort, |event| {
         if output_result.is_ok() {
             output_result = render_event(&event);
         }
@@ -382,6 +414,23 @@ fn run_streaming_turn(
     })?;
     output_result?;
     Ok(turn)
+}
+
+fn add_usage(total: &mut TokenUsage, turn: &CompletedTurn) {
+    if let Some(usage) = turn.usage {
+        *total = total.add(usage);
+    }
+}
+
+fn token_summary_line(usage: TokenUsage) -> String {
+    format!(
+        "• Tokens: input {} (cached {}), output {}, reasoning {}, total {}\n",
+        usage.input_tokens,
+        usage.cached_input_tokens,
+        usage.output_tokens,
+        usage.reasoning_tokens,
+        usage.total_tokens
+    )
 }
 
 fn write_run_output(output: &mut impl Write, rendered: String) -> Result<()> {
@@ -482,5 +531,43 @@ mod tests {
 
         assert!(output.output.content.is_empty());
         assert_eq!(output.output.flushes, 0);
+    }
+
+    #[test]
+    fn pretty_mode_prints_token_summary() {
+        let mut output = RunOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+
+        output
+            .token_summary(TokenUsage {
+                input_tokens: 100,
+                cached_input_tokens: 80,
+                output_tokens: 20,
+                reasoning_tokens: 5,
+                total_tokens: 120,
+            })
+            .expect("summary");
+
+        let rendered = String::from_utf8(output.output.content).expect("utf8");
+        assert_eq!(
+            rendered,
+            "• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
+        );
+    }
+
+    #[test]
+    fn raw_mode_suppresses_token_summary() {
+        let mut output = RunOutput::new(StreamMode::Raw, FlushCountingWriter::default());
+
+        output
+            .token_summary(TokenUsage {
+                input_tokens: 100,
+                cached_input_tokens: 80,
+                output_tokens: 20,
+                reasoning_tokens: 5,
+                total_tokens: 120,
+            })
+            .expect("summary");
+
+        assert!(output.output.content.is_empty());
     }
 }

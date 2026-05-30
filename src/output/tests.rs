@@ -357,6 +357,7 @@ fn renders_completed_turn_without_duplicating_streamed_items() {
         turn_id: "turn_1".to_string(),
         status: "completed".to_string(),
         transcript: TurnTranscript::from_items(Vec::new(), vec![final_message.clone()]),
+        usage: None,
     };
     let mut renderer = no_color_renderer();
 

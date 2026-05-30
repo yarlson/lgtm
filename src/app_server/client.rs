@@ -105,6 +105,17 @@ impl AppServerClient {
             .run_turn_streaming(thread_id, prompt, on_event)
     }
 
+    pub fn run_turn_streaming_with_effort(
+        &mut self,
+        thread_id: &str,
+        prompt: &str,
+        effort: &str,
+        on_event: impl FnMut(TurnStreamEvent) -> TurnControl,
+    ) -> Result<CompletedTurn> {
+        self.connection
+            .run_turn_streaming_with_effort(thread_id, prompt, effort, on_event)
+    }
+
     pub fn stop(mut self) -> Result<()> {
         drop(self.connection.stdin.take());
 
@@ -191,11 +202,21 @@ where
         on_event: impl FnMut(TurnStreamEvent) -> TurnControl,
     ) -> Result<CompletedTurn> {
         let effort = self.config.reasoning_effort.clone();
+        self.run_turn_streaming_with_effort(thread_id, prompt, effort.as_str(), on_event)
+    }
+
+    pub fn run_turn_streaming_with_effort(
+        &mut self,
+        thread_id: &str,
+        prompt: &str,
+        effort: &str,
+        on_event: impl FnMut(TurnStreamEvent) -> TurnControl,
+    ) -> Result<CompletedTurn> {
         let result = self
             .call(ClientRequest::TurnStart {
                 thread_id,
                 prompt,
-                effort: effort.as_str(),
+                effort,
             })
             .with_context(|| format!("turn/start failed for prompt `{prompt}`"))?;
 
@@ -554,6 +575,40 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn run_turn_streaming_accepts_effort_override() {
+        let mut connection = connection(vec![
+            json!({
+                "id": 1,
+                "result": {
+                    "turn": {
+                        "id": "turn_456",
+                        "status": "inProgress",
+                        "items": []
+                    }
+                }
+            }),
+            json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thr_123",
+                    "turn": {
+                        "id": "turn_456",
+                        "items": [],
+                        "status": "completed"
+                    }
+                }
+            }),
+        ]);
+
+        connection
+            .run_turn_streaming_with_effort("thr_123", "Parse", "low", |_| TurnControl::Continue)
+            .unwrap();
+
+        let written = written_messages(&connection);
+        assert_eq!(written[0]["params"]["effort"], "low");
     }
 
     #[test]

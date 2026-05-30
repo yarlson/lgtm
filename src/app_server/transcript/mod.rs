@@ -21,6 +21,32 @@ pub struct CompletedTurn {
     pub turn_id: String,
     pub status: String,
     pub transcript: TurnTranscript,
+    pub usage: Option<TokenUsage>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub output_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub total_tokens: u64,
+}
+
+impl TokenUsage {
+    pub fn add(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            cached_input_tokens: self.cached_input_tokens + other.cached_input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            reasoning_tokens: self.reasoning_tokens + other.reasoning_tokens,
+            total_tokens: self.total_tokens + other.total_tokens,
+        }
+    }
+
+    pub fn is_zero(self) -> bool {
+        self == Self::default()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -268,8 +294,54 @@ impl<'a> TurnCollector<'a> {
             turn_id: self.turn_id.to_string(),
             status,
             transcript: self.transcript.clone(),
+            usage: token_usage(message),
         })
     }
+}
+
+fn token_usage(message: &Value) -> Option<TokenUsage> {
+    let usage = get_value(message, &["params", "turn", "usage"])
+        .or_else(|| get_value(message, &["params", "usage"]))?;
+    let usage = TokenUsage {
+        input_tokens: token_count(usage, &["input_tokens", "prompt_tokens", "inputTokens"]),
+        cached_input_tokens: nested_token_count(
+            usage,
+            &[
+                &["input_tokens_details", "cached_tokens"][..],
+                &["prompt_tokens_details", "cached_tokens"][..],
+                &["cached_input_tokens"][..],
+                &["cachedInputTokens"][..],
+            ],
+        ),
+        output_tokens: token_count(
+            usage,
+            &["output_tokens", "completion_tokens", "outputTokens"],
+        ),
+        reasoning_tokens: nested_token_count(
+            usage,
+            &[
+                &["output_tokens_details", "reasoning_tokens"][..],
+                &["completion_tokens_details", "reasoning_tokens"][..],
+                &["reasoning_tokens"][..],
+                &["reasoningTokens"][..],
+            ],
+        ),
+        total_tokens: token_count(usage, &["total_tokens", "totalTokens"]),
+    };
+    (!usage.is_zero()).then_some(usage)
+}
+
+fn token_count(value: &Value, keys: &[&str]) -> u64 {
+    keys.iter()
+        .find_map(|key| value.get(key).and_then(Value::as_u64))
+        .unwrap_or_default()
+}
+
+fn nested_token_count(value: &Value, paths: &[&[&str]]) -> u64 {
+    paths
+        .iter()
+        .find_map(|path| get_value(value, path).and_then(Value::as_u64))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -338,7 +410,82 @@ mod tests {
                     transcript.upsert_item(item);
                     transcript
                 },
+                usage: None,
             }
+        );
+    }
+
+    #[test]
+    fn completed_turn_extracts_openai_usage() {
+        let mut collector = TurnCollector::new("thr_123", "turn_456");
+
+        let completed = collector
+            .handle(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thr_123",
+                    "turn": {
+                        "id": "turn_456",
+                        "status": "completed",
+                        "usage": {
+                            "input_tokens": 100,
+                            "input_tokens_details": { "cached_tokens": 80 },
+                            "output_tokens": 30,
+                            "output_tokens_details": { "reasoning_tokens": 10 },
+                            "total_tokens": 130
+                        }
+                    }
+                }
+            }))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            completed.usage,
+            Some(TokenUsage {
+                input_tokens: 100,
+                cached_input_tokens: 80,
+                output_tokens: 30,
+                reasoning_tokens: 10,
+                total_tokens: 130,
+            })
+        );
+    }
+
+    #[test]
+    fn completed_turn_extracts_legacy_and_camel_case_usage() {
+        let mut collector = TurnCollector::new("thr_123", "turn_456");
+
+        let completed = collector
+            .handle(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thr_123",
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "prompt_tokens_details": { "cached_tokens": 70 },
+                        "completion_tokens": 30,
+                        "completion_tokens_details": { "reasoning_tokens": 12 },
+                        "totalTokens": 130
+                    },
+                    "turn": {
+                        "id": "turn_456",
+                        "status": "completed"
+                    }
+                }
+            }))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            completed.usage,
+            Some(TokenUsage {
+                input_tokens: 100,
+                cached_input_tokens: 70,
+                output_tokens: 30,
+                reasoning_tokens: 12,
+                total_tokens: 130,
+            })
         );
     }
 

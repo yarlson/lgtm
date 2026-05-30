@@ -48,7 +48,7 @@ fn run_reloads_plan_index_and_runs_four_passes_through_app_server() {
 	  printf '%s\n' "$turn_start" >"$dir/turn-$turn_n.json"
 	  printf '{"id":%s,"result":{"turn":{"id":"turn-test","status":"inProgress","items":[]}}}\n' "$id"
 		if [ "$turn_n" = 1 ]; then
-		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Follow Up\",\"heading\":\"## Phase 2 - Follow Up\"}]}","status":"completed"}]}}}'
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":80},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":5},"total_tokens":120},"items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Follow Up\",\"heading\":\"## Phase 2 - Follow Up\"}]}","status":"completed"}]}}}'
 		elif [ "$turn_n" = 2 ]; then
 		  cat >"$repo/PLAN.md" <<-'PLAN'
 	# Plan
@@ -107,6 +107,7 @@ Goal: updated.
     assert!(stdout.contains("• Phase 02 commit: Updated Title"));
     assert!(stdout.contains("• Codex"));
     assert!(stdout.contains("  done"));
+    assert!(stdout.contains("• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120"));
 
     assert!(repo.join(".lgtm/logs/test-phase-01-index.jsonl").is_file());
     assert!(
@@ -152,12 +153,17 @@ Goal: updated.
     let session_count = fs::read_to_string(temp.path().join("session-counter")).expect("sessions");
     assert_eq!(session_count.trim(), "4");
     assert!(index_turn.contains("gpt-5.4-mini") || index_turn.contains("PLAN.md content"));
+    assert!(index_turn.contains(r#""effort":"low""#));
     assert!(index_turn.contains("## Phase 2 - Follow Up"));
     assert!(implement_turn.contains("$lgtm-phase-implement"));
+    assert!(implement_turn.contains(r#""effort":"high""#));
     assert!(implement_turn.contains("## Phase 1 - Skeleton"));
     assert!(validate_turn.contains("$lgtm-phase-validate"));
+    assert!(validate_turn.contains(r#""effort":"medium""#));
     assert!(review_turn.contains("$lgtm-phase-review"));
+    assert!(review_turn.contains(r#""effort":"high""#));
     assert!(commit_turn.contains("$lgtm-phase-commit"));
+    assert!(commit_turn.contains(r#""effort":"low""#));
     assert!(commit_turn.contains("## Phase 1 - Skeleton"));
     assert!(commit_turn.contains("Create a real git commit with a rich message"));
     assert!(phase_two_index_turn.contains("## Phase 2 - Updated Title"));

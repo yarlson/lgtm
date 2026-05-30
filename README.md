@@ -259,8 +259,9 @@ Logs are written as JSONL:
 .lgtm/logs/<run-stamp>-phase-01-commit.jsonl
 ```
 
-Each log line records app-server protocol direction and payload. Managed skills
-and logs are ignored in target repositories through:
+Each log line records app-server protocol direction and payload. When Codex
+reports token usage, pretty output also prints an aggregate token summary.
+Managed skills and logs are ignored in target repositories through:
 
 ```gitignore
 .agents/skills/lgtm-*

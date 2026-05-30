@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    app_server::{AppServerClient, CompletedTurn, ItemKind, TurnControl},
+    app_server::{AppServerClient, CompletedTurn, ItemKind, TokenUsage, TurnControl},
     cli::PlanArgs,
     commands::execution::ExecutionConfig,
     commands::run::{self, RunConfig},
@@ -91,6 +91,7 @@ pub fn run(args: PlanArgs) -> Result<()> {
     let mut client = connect_client(&config)?;
     set_turn_log(&config, &mut client, 1)?;
     let thread_id = client.start_thread()?;
+    let mut usage = TokenUsage::default();
     let first_prompt = prompt::plan_initial_prompt(
         &config.plan_path,
         &config.agents_path,
@@ -103,11 +104,13 @@ pub fn run(args: PlanArgs) -> Result<()> {
         &thread_id,
         first_prompt,
         &artifacts_before,
+        &mut usage,
         &mut stdout,
     )?;
 
     loop {
         if artifacts_complete {
+            write_token_summary(&mut stdout, usage)?;
             let choice = read_post_plan_choice(&mut stdout);
             let stop_result = client.stop();
             match (choice, stop_result) {
@@ -121,7 +124,10 @@ pub fn run(args: PlanArgs) -> Result<()> {
         }
 
         let resume_prompt = match composer::read_inline_answer()? {
-            ComposerSubmission::Quit => return client.stop(),
+            ComposerSubmission::Quit => {
+                write_token_summary(&mut stdout, usage)?;
+                return client.stop();
+            }
             ComposerSubmission::Finish => prompt::plan_resume_prompt("/finish"),
             ComposerSubmission::Answer(answer) => prompt::plan_resume_prompt(&answer),
         };
@@ -134,6 +140,7 @@ pub fn run(args: PlanArgs) -> Result<()> {
             &thread_id,
             resume_prompt,
             &artifacts_before,
+            &mut usage,
             &mut stdout,
         )?;
     }
@@ -145,6 +152,7 @@ fn run_planning_turn(
     thread_id: &str,
     prompt: String,
     artifacts_before: &PlanningArtifactsSnapshot,
+    usage: &mut TokenUsage,
     output: &mut impl Write,
 ) -> Result<bool> {
     let mut renderer = Renderer::new(RenderOptions::default());
@@ -156,6 +164,7 @@ fn run_planning_turn(
         }
         TurnControl::Continue
     })?;
+    add_usage(usage, &turn);
     if output_result.is_ok() {
         output_result = write_planning_output(output, renderer.finish());
     }
@@ -171,6 +180,29 @@ fn run_planning_turn(
     }
 
     Ok(artifacts_complete)
+}
+
+fn add_usage(total: &mut TokenUsage, turn: &CompletedTurn) {
+    if let Some(usage) = turn.usage {
+        *total = total.add(usage);
+    }
+}
+
+fn write_token_summary(output: &mut impl Write, usage: TokenUsage) -> Result<()> {
+    if usage.is_zero() {
+        return Ok(());
+    }
+    write_planning_output(
+        output,
+        format!(
+            "• Tokens: input {} (cached {}), output {}, reasoning {}, total {}\n",
+            usage.input_tokens,
+            usage.cached_input_tokens,
+            usage.output_tokens,
+            usage.reasoning_tokens,
+            usage.total_tokens
+        ),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -516,6 +548,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         set_turn_log(&config, &mut client, 1).expect("log");
         let thread_id = client.start_thread().expect("thread");
         let mut rendered = Vec::new();
+        let mut usage = TokenUsage::default();
 
         let artifacts_complete = run_planning_turn(
             &config,
@@ -523,6 +556,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
             &thread_id,
             "planning prompt".to_string(),
             &before,
+            &mut usage,
             &mut rendered,
         )
         .expect("planning turn");
@@ -560,6 +594,29 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
 
         assert!(rendered.contains("exploring repo"));
         assert!(rendered.contains("... 7s"));
+    }
+
+    #[test]
+    fn planning_token_summary_renders_when_usage_exists() {
+        let mut output = Vec::new();
+
+        write_token_summary(
+            &mut output,
+            TokenUsage {
+                input_tokens: 100,
+                cached_input_tokens: 80,
+                output_tokens: 20,
+                reasoning_tokens: 5,
+                total_tokens: 120,
+            },
+        )
+        .expect("summary");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert_eq!(
+            rendered,
+            "• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
+        );
     }
 
     fn executable(dir: &Path, body: &str) -> PathBuf {

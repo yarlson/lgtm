@@ -14,5 +14,5 @@ pub use launch::AppServerLaunch;
 pub use transcript::TurnTranscript;
 pub use transcript::{
     CommandExecution, CompletedTurn, DynamicToolCall, FileChange, ItemKind, McpToolCall, PlanStep,
-    TranscriptItem, TranscriptItemData,
+    TokenUsage, TranscriptItem, TranscriptItemData,
 };
