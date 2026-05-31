@@ -260,7 +260,8 @@ Logs are written as JSONL:
 ```
 
 Each log line records app-server protocol direction and payload. When Codex
-reports token usage, pretty output also prints an aggregate token summary.
+reports token usage, pretty output also prints per-phase and aggregate token
+summaries.
 Managed skills and logs are ignored in target repositories through:
 
 ```gitignore

@@ -61,9 +61,11 @@ Done.
 
 Goal: updated.
 	PLAN
-		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12},"items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
 		elif [ "$turn_n" = 6 ]; then
 		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Skeleton\",\"heading\":\"## Phase 1 - Skeleton\"},{\"id\":2,\"title\":\"Updated Title\",\"heading\":\"## Phase 2 - Updated Title\"}]}","status":"completed"}]}}}'
+		elif [ "$turn_n" = 7 ]; then
+		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","usage":{"input_tokens":30,"input_tokens_details":{"cached_tokens":24},"output_tokens":6,"output_tokens_details":{"reasoning_tokens":3},"total_tokens":36},"items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
 		else
 		  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-test","turn":{"id":"turn-test","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
 		fi
@@ -114,7 +116,14 @@ Goal: updated.
     assert!(stdout.contains("• Phase 02 commit: Updated Title"));
     assert!(stdout.contains("• Codex"));
     assert!(stdout.contains("  done"));
-    assert!(stdout.contains("• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120"));
+    assert!(
+        stdout
+            .contains("• Phase 1 tokens: input 110 (cached 88), output 22, reasoning 6, total 132")
+    );
+    assert!(
+        stdout.contains("• Phase 2 tokens: input 30 (cached 24), output 6, reasoning 3, total 36")
+    );
+    assert!(stdout.contains("• Tokens: input 140 (cached 112), output 28, reasoning 9, total 168"));
 
     assert!(repo.join(".lgtm/logs/test-phase-01-index.jsonl").is_file());
     assert!(

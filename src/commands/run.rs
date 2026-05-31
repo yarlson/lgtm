@@ -145,21 +145,25 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
             break;
         }
 
+        let mut phase_usage = TokenUsage::default();
         let phases = output.with_status_line("parsing plan phases", |output| {
-            load_phase_index(&config, phase_id, output, &mut usage)
+            load_phase_index(&config, phase_id, output, &mut phase_usage)
         })?;
         let end_phase = match config.end_phase {
             Some(end_phase) => end_phase,
             None => phase_index::detected_end_phase(&phases, &config.plan_path)?,
         };
         if phase_id > end_phase {
+            usage = usage.add(phase_usage);
             break;
         }
 
         let Some(phase) = phase_index::next_phase(&phases, phase_id, end_phase) else {
+            usage = usage.add(phase_usage);
             break;
         };
-        run_phase(&config, &phase, &mut output, &mut usage)?;
+        run_phase(&config, &phase, &mut output, &mut phase_usage)?;
+        usage = usage.add(phase_usage);
 
         if phase.id < end_phase {
             println!(
@@ -259,6 +263,13 @@ impl<W: Write> RunOutput<W> {
             return Ok(());
         }
         self.write(token_summary_line(usage))
+    }
+
+    fn phase_token_summary(&mut self, phase_id: u32, usage: TokenUsage) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty || usage.is_zero() {
+            return Ok(());
+        }
+        self.write(phase_token_summary_line(phase_id, usage))
     }
 
     fn write(&mut self, rendered: String) -> Result<()> {
@@ -365,7 +376,8 @@ fn run_phase(
         run_phase_pass(config, phase, pass, &mut client, &thread_id, output, usage)?;
     }
 
-    client.stop()
+    client.stop()?;
+    output.phase_token_summary(phase.id, *usage)
 }
 
 fn phase_pass_log_name(config: &RunConfig, phase: &Phase, pass: PhasePass) -> String {
@@ -423,8 +435,16 @@ fn add_usage(total: &mut TokenUsage, turn: &CompletedTurn) {
 }
 
 fn token_summary_line(usage: TokenUsage) -> String {
+    token_summary_line_with_label("Tokens", usage)
+}
+
+fn phase_token_summary_line(phase_id: u32, usage: TokenUsage) -> String {
+    token_summary_line_with_label(&format!("Phase {phase_id} tokens"), usage)
+}
+
+fn token_summary_line_with_label(label: &str, usage: TokenUsage) -> String {
     format!(
-        "• Tokens: input {} (cached {}), output {}, reasoning {}, total {}\n",
+        "• {label}: input {} (cached {}), output {}, reasoning {}, total {}\n",
         usage.input_tokens,
         usage.cached_input_tokens,
         usage.output_tokens,
@@ -551,6 +571,30 @@ mod tests {
         assert_eq!(
             rendered,
             "• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
+        );
+    }
+
+    #[test]
+    fn pretty_mode_prints_phase_token_summary() {
+        let mut output = RunOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+
+        output
+            .phase_token_summary(
+                2,
+                TokenUsage {
+                    input_tokens: 100,
+                    cached_input_tokens: 80,
+                    output_tokens: 20,
+                    reasoning_tokens: 5,
+                    total_tokens: 120,
+                },
+            )
+            .expect("summary");
+
+        let rendered = String::from_utf8(output.output.content).expect("utf8");
+        assert_eq!(
+            rendered,
+            "• Phase 2 tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
         );
     }
 
