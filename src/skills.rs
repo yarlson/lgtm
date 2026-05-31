@@ -218,6 +218,10 @@ mod tests {
         assert!(body.contains("$lgtm-refactor-plan"));
         assert!(body.contains("1000 lines"));
         assert!(body.contains("No approve just because behavior seems correct"));
+        assert!(body.contains("Non-Negotiable Review Rules"));
+        assert!(body.contains("Do not soften major maintainability issues"));
+        assert!(body.contains("Approval Bar"));
+        assert!(body.contains("no obvious missed opportunity"));
         assert!(body.contains("Commit pass owns committing"));
     }
 
