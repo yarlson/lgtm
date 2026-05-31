@@ -23,9 +23,9 @@ Conventional Commits. `<type>(<scope>): <imperative summary>`, scope optional, s
 
 Types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `build`, `ci`, `style`, `revert`.
 
-Body only when why not obvious. Always body for breaking, security, migration, revert. Wrap 72. Bullets `-`. Issues at end: `Closes #42`.
+Prefer subject-only. Body only when why not obvious. Always body for breaking, security, migration, revert. Body explains reason or behavior, not an inventory. Wrap 72. Issues at end: `Closes #42`.
 
-Never: "this commit", "I/we/now", AI attribution, emoji, file name when scope says it.
+Never: changed-file list, file inventory, file paths, key-changes section, verification section, blockers section, "this commit", "I/we/now", AI attribution, emoji.
 
 ## Guardrails
 

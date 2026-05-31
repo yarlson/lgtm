@@ -222,6 +222,20 @@ mod tests {
     }
 
     #[test]
+    fn phase_commit_skill_rejects_commit_message_inventories() {
+        let body = SKILLS
+            .iter()
+            .find(|skill| skill.name == PHASE_COMMIT)
+            .expect("phase commit skill")
+            .body;
+
+        assert!(body.contains("Prefer subject-only"));
+        assert!(body.contains("Never: changed-file list"));
+        assert!(body.contains("verification section"));
+        assert!(!body.contains("Key changes"));
+    }
+
+    #[test]
     fn malformed_frontmatter_does_not_authorize_overwrite() {
         let body = "\
 ---

@@ -214,7 +214,9 @@ Use $lgtm-phase-commit for the after-phase commit pass.
 Commit Phase {number} after implementation, validation, and review are complete.
 Inspect git status plus staged and unstaged diffs.
 Stage all changes.
-Create a real git commit with a rich message: concise subject, body summary of the phase scope, key changes, verification performed, and any blockers or skipped checks.
+Create a real git commit with a concise Conventional Commit subject.
+Use a body only when the reason is not obvious or the change requires one.
+Never include changed-file lists, file paths, key-changes sections, verification sections, blockers sections, or inventories in the commit message.
 Do not create an empty commit. If there are no changes to commit, report that explicitly.
 Do not push, create branches, open PRs, manage CI, or release tags.",
             number = phase.id,
@@ -286,9 +288,13 @@ mod tests {
         assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
         assert!(prompt.contains("$lgtm-phase-commit"));
         assert!(prompt.contains("Stage all changes"));
-        assert!(prompt.contains("Create a real git commit with a rich message"));
+        assert!(
+            prompt.contains("Create a real git commit with a concise Conventional Commit subject")
+        );
+        assert!(prompt.contains("Never include changed-file lists"));
         assert!(prompt.contains("Do not create an empty commit"));
         assert!(prompt.contains("Do not push, create branches, open PRs, manage CI"));
+        assert!(!prompt.contains("rich message"));
         assert!(!prompt.contains("safely separated"));
     }
 

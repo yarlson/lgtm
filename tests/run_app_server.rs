@@ -176,7 +176,10 @@ Goal: updated.
     assert!(commit_turn.contains("$lgtm-phase-commit"));
     assert!(commit_turn.contains(r#""effort":"low""#));
     assert!(commit_turn.contains("## Phase 1 - Skeleton"));
-    assert!(commit_turn.contains("Create a real git commit with a rich message"));
+    assert!(
+        commit_turn.contains("Create a real git commit with a concise Conventional Commit subject")
+    );
+    assert!(commit_turn.contains("Never include changed-file lists"));
     assert!(phase_two_index_turn.contains("## Phase 2 - Updated Title"));
     assert!(phase_two_implement_turn.contains("## Phase 2 - Updated Title"));
 }
