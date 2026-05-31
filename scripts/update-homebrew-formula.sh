@@ -52,6 +52,7 @@ class Lgtm < Formula
   desc "Plan and run Codex-backed local phase work"
   homepage "https://github.com/${github_repository}"
   version "${version}"
+  link_overwrite "bin/${bin_name}"
 
   on_macos do
     if Hardware::CPU.arm?
