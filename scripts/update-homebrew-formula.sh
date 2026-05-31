@@ -41,6 +41,12 @@ linux_arm64_sha="$(artifact_sha "$linux_arm64")"
 
 mkdir -p "$(dirname "$formula_path")"
 
+# Older lgtm releases published a cask with the same token. Keeping both a
+# formula and cask makes `brew upgrade lgtm` ambiguous and can leave the binary
+# unlinked after upgrade. The formula owns the CLI now.
+stale_cask_path="$(dirname "$formula_path")/../Casks/${bin_name}.rb"
+rm -f "$stale_cask_path"
+
 cat >"$formula_path" <<RUBY
 class Lgtm < Formula
   desc "Plan and run Codex-backed local phase work"

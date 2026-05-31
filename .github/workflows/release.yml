@@ -244,6 +244,9 @@ jobs:
           git -C tap config user.name "github-actions[bot]"
           git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C tap add Formula/lgtm.rb
+          if git -C tap ls-files --error-unmatch Casks/lgtm.rb >/dev/null 2>&1; then
+            git -C tap add Casks/lgtm.rb
+          fi
 
           if git -C tap diff --cached --quiet; then
             echo "Formula/lgtm.rb is already up to date."
