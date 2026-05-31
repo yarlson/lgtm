@@ -78,6 +78,12 @@ class Lgtm < Formula
     bin.install "${bin_name}"
   end
 
+  def post_install
+    # Old cask installs make Homebrew skip formula linking before post_install.
+    # Keep the CLI available after formula upgrades without manual brew link.
+    system "ln", "-sf", "#{opt_bin}/${bin_name}", "#{HOMEBREW_PREFIX}/bin/${bin_name}"
+  end
+
   test do
     system "#{bin}/${bin_name}", "--version"
   end
