@@ -9,6 +9,7 @@ use crate::{
     app_server::AppServerLaunch,
     cli::{ExecutionArgs, ExecutionSandbox},
     commands::apple_container,
+    rtk,
 };
 
 #[derive(Debug, Clone)]
@@ -150,6 +151,13 @@ impl ExecutionTarget {
                 image,
                 auth_path,
             } => apple_container::prepare(container_bin, image, auth_path, root),
+        }
+    }
+
+    pub(super) fn rtk_developer_instructions_suffix(&self) -> Option<&'static str> {
+        match self {
+            Self::Host { .. } => rtk::developer_instructions_suffix(),
+            Self::AppleContainer { .. } => None,
         }
     }
 }

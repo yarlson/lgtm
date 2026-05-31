@@ -150,8 +150,17 @@ impl CommandRuntime {
             resources,
         } = self.execution.prepare(&self.root)?;
         let mut config = AppServerConfig::for_run(cwd, model);
-        if let Some(suffix) = developer_instructions_suffix {
-            let developer_instructions = format!("{}\n\n{}", config.developer_instructions, suffix);
+        let rtk_developer_instructions_suffix = self.execution.rtk_developer_instructions_suffix();
+        let suffixes = [
+            developer_instructions_suffix,
+            rtk_developer_instructions_suffix,
+        ];
+        if suffixes.iter().any(Option::is_some) {
+            let mut developer_instructions = config.developer_instructions.clone();
+            for suffix in suffixes.into_iter().flatten() {
+                developer_instructions.push_str("\n\n");
+                developer_instructions.push_str(suffix);
+            }
             config = config.with_developer_instructions(developer_instructions);
         }
         Ok(RuntimeAppServer {

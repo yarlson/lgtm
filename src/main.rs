@@ -7,6 +7,7 @@ mod output;
 mod paths;
 mod phase_index;
 mod prompt;
+mod rtk;
 mod skills;
 
 use anyhow::Result;

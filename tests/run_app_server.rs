@@ -1,4 +1,4 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+use std::{env, ffi::OsString, fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 #[test]
 fn run_reloads_plan_index_and_runs_four_passes_through_app_server() {
@@ -71,6 +71,12 @@ Goal: updated.
 		"###
         .replace("__REPO__", &repo_sh),
     );
+    let _fake_rtk = executable_named(
+        temp.path(),
+        "rtk",
+        "#!/usr/bin/env sh\nprintf '%s\\n' rtk-test\n",
+    );
+    let path_with_rtk = prepend_path(temp.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
         .arg("run")
@@ -84,6 +90,7 @@ Goal: updated.
         .arg(&fake_codex)
         .arg("--run-stamp")
         .arg("test")
+        .env("PATH", path_with_rtk)
         .output()
         .expect("run lgtm");
 
@@ -138,6 +145,10 @@ Goal: updated.
         repo.join(".agents/skills/lgtm-phase-commit/SKILL.md")
             .is_file()
     );
+    let thread_starts =
+        fs::read_to_string(temp.path().join("thread-starts.jsonl")).expect("thread starts");
+    assert!(thread_starts.contains("RTK - Rust Token Killer"));
+    assert!(thread_starts.contains("Always prefix shell commands with `rtk`."));
 
     let index_turn = fs::read_to_string(temp.path().join("turn-1.json")).expect("index prompt");
     let implement_turn =
@@ -186,12 +197,22 @@ fn init_git_repo(repo: &Path) {
 }
 
 fn executable(dir: &Path, body: &str) -> std::path::PathBuf {
-    let path = dir.join("codex");
+    executable_named(dir, "codex", body)
+}
+
+fn executable_named(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
     fs::write(&path, body).expect("script");
     let mut permissions = fs::metadata(&path).expect("metadata").permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("chmod");
     path
+}
+
+fn prepend_path(directory: &Path) -> OsString {
+    let current_path = env::var_os("PATH").unwrap_or_default();
+    env::join_paths(std::iter::once(directory.to_path_buf()).chain(env::split_paths(&current_path)))
+        .expect("PATH")
 }
 
 fn shell_quote(path: &Path) -> String {
