@@ -198,7 +198,13 @@ fn run_shape_orchestration(
         output,
     )
     .context("shape session B round 1 evidence answer failed")?;
-    let answer = handoff_excerpt("Session B", &answer_turn, HANDOFF_CHAR_BUDGET)?;
+    let answer = validate_or_repair_evidence_answer(
+        &mut sessions.session_b,
+        &sessions.thread_b,
+        &question,
+        &answer_turn,
+        output,
+    )?;
 
     run_shape_streaming_turn(
         &mut sessions.session_a,
@@ -209,6 +215,60 @@ fn run_shape_orchestration(
     .context("shape session A round 2 sparring turn failed")?;
 
     bail!("lgtm shape loop completion is not implemented yet")
+}
+
+fn validate_or_repair_evidence_answer(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    question: &str,
+    answer_turn: &CompletedTurn,
+    output: &mut CommandOutput<impl Write>,
+) -> Result<String> {
+    let invalid_answer = match parse_evidence_answer(&answer_turn.transcript.response_text()) {
+        Ok(answer) => return Ok(answer),
+        Err(invalid_answer) => invalid_answer,
+    };
+
+    let repair_turn = run_shape_hidden_turn(
+        client,
+        thread_id,
+        &prompt::shape_session_b_answer_repair_prompt(
+            question,
+            &truncate_handoff_text(&invalid_answer, HANDOFF_CHAR_BUDGET),
+        ),
+        output,
+    )
+    .context("shape session B round 1 evidence answer repair failed")?;
+
+    parse_evidence_answer(&repair_turn.transcript.response_text()).map_err(|invalid_answer| {
+        let invalid_answer = truncate_handoff_text(&invalid_answer, HANDOFF_CHAR_BUDGET);
+        anyhow::anyhow!(
+            "Session B evidence answer remained invalid after one repair attempt: {invalid_answer:?}"
+        )
+    })
+}
+
+fn parse_evidence_answer(response: &str) -> std::result::Result<String, String> {
+    let answer = response;
+    if answer.lines().count() != 1 {
+        return Err(answer.to_string());
+    }
+
+    if matches!(answer, "1" | "2" | "3") || is_numbered_correction(answer) {
+        return Ok(answer.to_string());
+    }
+
+    Err(answer.to_string())
+}
+
+fn is_numbered_correction(answer: &str) -> bool {
+    let Some((number, correction)) = answer.split_once(", but ") else {
+        return false;
+    };
+
+    !number.is_empty()
+        && number.chars().all(|c| c.is_ascii_digit())
+        && !correction.trim().is_empty()
 }
 
 fn handoff_excerpt(role: &str, turn: &CompletedTurn, char_budget: usize) -> Result<String> {
@@ -624,6 +684,38 @@ mod tests {
         assert_eq!(excerpt, "Session A assistant excerpt:\nUse option 2.");
         assert!(!excerpt.contains("SECRET_OUTPUT"));
         assert!(!excerpt.contains("secret.patch"));
+    }
+
+    #[test]
+    fn evidence_answer_parser_accepts_required_formats() {
+        assert_eq!(parse_evidence_answer("1").expect("bare 1"), "1");
+        assert_eq!(parse_evidence_answer("2").expect("bare 2"), "2");
+        assert_eq!(parse_evidence_answer("3").expect("bare 3"), "3");
+        assert_eq!(
+            parse_evidence_answer("4, but split the persistence phase first").expect("correction"),
+            "4, but split the persistence phase first"
+        );
+    }
+
+    #[test]
+    fn evidence_answer_parser_rejects_prose_and_malformed_answers() {
+        for answer in [
+            "",
+            "I recommend option 2.",
+            "2 because it is simpler",
+            "2, because it is simpler",
+            "2,but missing space",
+            "2, but ",
+            "- 2",
+            "2\nextra",
+            " 2",
+            "2 ",
+        ] {
+            assert!(
+                parse_evidence_answer(answer).is_err(),
+                "answer should be rejected: {answer:?}"
+            );
+        }
     }
 
     fn completed_turn(text: &str) -> CompletedTurn {

@@ -142,7 +142,7 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
     let answer_prompt =
         fs::read_to_string(temp.path().join("turn-1-2.json")).expect("answer prompt");
     assert!(answer_prompt.contains("Session B answered the previous forced-choice question"));
-    assert!(answer_prompt.contains("Session B assistant excerpt"));
+    assert!(answer_prompt.contains("Evidence answer:\\n2, but keep local UX"));
     assert!(answer_prompt.contains("2, but keep local UX"));
 
     let session_count = fs::read_to_string(temp.path().join("session-counter")).expect("sessions");
@@ -154,7 +154,7 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
 }
 
 #[test]
-fn shape_bounds_large_evidence_answer_before_returning_it_to_sparring_session() {
+fn shape_rejects_large_invalid_evidence_answer_before_returning_it_to_sparring_session() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repo = temp.path().join("repo");
     fs::create_dir(&repo).expect("repo");
@@ -175,11 +175,94 @@ fn shape_bounds_large_evidence_answer_before_returning_it_to_sparring_session() 
         .expect("run lgtm");
 
     assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Session B evidence answer remained invalid after one repair attempt"),
+        "{stderr}"
+    );
+    let repair_prompt =
+        fs::read_to_string(temp.path().join("turn-2-3.json")).expect("repair prompt");
+    assert!(repair_prompt.contains("[truncated to 4000 chars]"));
+    assert!(!repair_prompt.contains("TAIL_SHOULD_NOT_REACH_SESSION_A"));
+    assert!(!temp.path().join("turn-1-2.json").exists());
+}
+
+#[test]
+fn shape_repairs_invalid_evidence_answer_once() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_INVALID_EVIDENCE_ONCE", "1")
+        .output()
+        .expect("run lgtm");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("lgtm shape loop completion is not implemented yet"),
+        "{stderr}"
+    );
+    let repair_prompt =
+        fs::read_to_string(temp.path().join("turn-2-3.json")).expect("repair prompt");
+    assert!(repair_prompt.contains("Your previous evidence answer did not match"));
+    assert!(repair_prompt.contains("Original forced-choice question"));
+    assert!(repair_prompt.contains("A SPARRING QUESTION"));
+    assert!(repair_prompt.contains("Invalid answer"));
+    assert!(repair_prompt.contains("I recommend option 2 because it is cleaner."));
     let answer_prompt =
         fs::read_to_string(temp.path().join("turn-1-2.json")).expect("answer prompt");
-    assert!(answer_prompt.contains("Session B assistant excerpt"));
-    assert!(answer_prompt.contains("[truncated to 4000 chars]"));
-    assert!(!answer_prompt.contains("TAIL_SHOULD_NOT_REACH_SESSION_A"));
+    assert!(answer_prompt.contains("Evidence answer:\\n3"));
+    assert!(!answer_prompt.contains("I recommend option 2"));
+    let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
+    assert_eq!(
+        turn_order.lines().collect::<Vec<_>>(),
+        ["2", "1", "2", "2", "1"]
+    );
+}
+
+#[test]
+fn shape_fails_when_repaired_evidence_answer_is_still_invalid() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_INVALID_EVIDENCE_TWICE", "1")
+        .output()
+        .expect("run lgtm");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Session B evidence answer remained invalid after one repair attempt"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("still invalid after repair"), "{stderr}");
+    assert!(!temp.path().join("turn-1-2.json").exists());
+    assert!(temp.path().join("stopped-1").is_file());
+    assert!(temp.path().join("stopped-2").is_file());
 }
 
 #[test]
@@ -319,6 +402,18 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	    if [ "${LGTM_TEST_LARGE_EVIDENCE:-}" = 1 ]; then
 	      text=$(printf 'x%.0s' $(seq 1 4500))
 	      text="${text}TAIL_SHOULD_NOT_REACH_SESSION_A"
+	    elif [ "${LGTM_TEST_INVALID_EVIDENCE_TWICE:-}" = 1 ]; then
+	      if [ "$turn_n" = 2 ]; then
+	        text='I recommend option 2 because it is cleaner.'
+	      else
+	        text='still invalid after repair'
+	      fi
+	    elif [ "${LGTM_TEST_INVALID_EVIDENCE_ONCE:-}" = 1 ]; then
+	      if [ "$turn_n" = 2 ]; then
+	        text='I recommend option 2 because it is cleaner.'
+	      else
+	        text='3'
+	      fi
 	    else
 	      text='2, but keep local UX'
 	    fi
