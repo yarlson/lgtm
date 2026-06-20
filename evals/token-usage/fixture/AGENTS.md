@@ -11,4 +11,3 @@ Rules:
 - Add tests for behavior that can break.
 - Run validation commands from `PLAN.md` before final response.
 - Do not change `PLAN.md` or this file unless implementation is impossible.
-

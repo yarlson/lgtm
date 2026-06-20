@@ -30,4 +30,3 @@ Outputs:
 - `runs/<run-id>/metrics.json`
 - `results.jsonl`
 - `summary.md`
-

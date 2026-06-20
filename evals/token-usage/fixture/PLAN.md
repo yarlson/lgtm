@@ -24,4 +24,3 @@ cargo test --all
 cargo run --quiet -- add 2 3
 cargo run --quiet -- sub 9 4
 ```
-
