@@ -131,6 +131,13 @@ impl<W: Write> CommandOutput<W> {
         self.write(phase_token_summary_line(phase_id, usage))
     }
 
+    pub(crate) fn message_line(&mut self, message: impl Into<String>) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty {
+            return Ok(());
+        }
+        self.write(format!("{}\n", message.into()))
+    }
+
     fn write(&mut self, rendered: String) -> Result<()> {
         if rendered.is_empty() {
             return Ok(());

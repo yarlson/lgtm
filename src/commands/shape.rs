@@ -19,7 +19,9 @@ use crate::{
     skills,
 };
 
-use completion::{parse_final_plan_marker, validate_reported_plan_path};
+use completion::{
+    parse_final_plan_marker, validate_final_plan_contract, validate_reported_plan_path,
+};
 
 const STARTUP_STATUS: &str = "Started 2 Codex sessions; gathering context";
 const HANDOFF_CHAR_BUDGET: usize = 4_000;
@@ -96,8 +98,9 @@ fn run_config(config: ShapeConfig) -> Result<()> {
     let finish_result = output.finish();
     let stop_result = stop_shape_sessions(sessions);
 
-    orchestration_result?;
+    let final_plan_path = orchestration_result?;
     finish_result?;
+    output.message_line(format!("Final plan: {}", final_plan_path.display()))?;
     stop_result?;
     Ok(())
 }
@@ -175,7 +178,7 @@ fn run_shape_orchestration(
     config: &ShapeConfig,
     sessions: &mut ShapeSessions,
     output: &mut CommandOutput<impl Write>,
-) -> Result<()> {
+) -> Result<PathBuf> {
     output.start_visible_status_line(STARTUP_STATUS)?;
     let context = ShapePromptContext {
         brief: &config.brief,
@@ -202,13 +205,7 @@ fn run_shape_orchestration(
         .with_context(|| format!("shape session A round {round} sparring turn failed"))?;
 
         if let Some(marker) = parse_final_plan_marker(&sparring_turn.transcript.response_text())? {
-            validate_reported_plan_path(
-                config.runtime.root(),
-                &config.plan_path,
-                &config.runtime.resolve_root_path(&config.plan_path),
-                &marker,
-            )?;
-            return Ok(());
+            return complete_shape_plan(config, &marker);
         }
 
         if round == config.max_rounds {
@@ -243,19 +240,25 @@ fn run_shape_orchestration(
     .context("shape session A finalization turn failed")?;
 
     if let Some(marker) = parse_final_plan_marker(&final_turn.transcript.response_text())? {
-        validate_reported_plan_path(
-            config.runtime.root(),
-            &config.plan_path,
-            &config.runtime.resolve_root_path(&config.plan_path),
-            &marker,
-        )?;
-        return Ok(());
+        return complete_shape_plan(config, &marker);
     }
 
     bail!(
         "shape session A finalization did not report a final plan; expected PLAN_PATH: <path> after --max-rounds={}",
         config.max_rounds
     )
+}
+
+fn complete_shape_plan(config: &ShapeConfig, marker: &Path) -> Result<PathBuf> {
+    let resolved_plan_path = config.runtime.resolve_root_path(&config.plan_path);
+    validate_reported_plan_path(
+        config.runtime.root(),
+        &config.plan_path,
+        &resolved_plan_path,
+        marker,
+    )?;
+    validate_final_plan_contract(&resolved_plan_path)?;
+    Ok(resolved_plan_path)
 }
 
 fn validate_or_repair_evidence_answer(

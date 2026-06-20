@@ -63,6 +63,12 @@ pub(super) fn validate_reported_plan_path(
     Ok(())
 }
 
+pub(super) fn validate_final_plan_contract(plan_path: &Path) -> Result<()> {
+    let plan = fs::read_to_string(plan_path)
+        .with_context(|| format!("failed to read final shape plan {}", plan_path.display()))?;
+    validate_plan_contract(plan_path, &plan)
+}
+
 fn canonicalize_plan_file(path: &Path) -> Result<PathBuf> {
     if !path.is_file() {
         bail!(
@@ -72,6 +78,100 @@ fn canonicalize_plan_file(path: &Path) -> Result<PathBuf> {
     }
     fs::canonicalize(path)
         .with_context(|| format!("failed to resolve shape plan path {}", path.display()))
+}
+
+fn validate_plan_contract(plan_path: &Path, plan: &str) -> Result<()> {
+    if !plan.lines().any(|line| line.trim() == "# Plan") {
+        bail!(
+            "final shape plan {} is missing required `# Plan` heading",
+            plan_path.display()
+        )
+    }
+
+    let mut phase_count = 0;
+    let mut current_phase: Option<PhaseContract> = None;
+    for line in plan.lines() {
+        let trimmed = line.trim();
+        if is_phase_heading(trimmed) {
+            if let Some(phase) = current_phase.take() {
+                phase.validate(plan_path)?;
+            }
+            phase_count += 1;
+            current_phase = Some(PhaseContract::new(trimmed));
+            continue;
+        }
+
+        if let Some(phase) = current_phase.as_mut() {
+            phase.observe(line);
+        }
+    }
+
+    if let Some(phase) = current_phase {
+        phase.validate(plan_path)?;
+    }
+
+    if phase_count == 0 {
+        bail!(
+            "final shape plan {} does not contain any `## Phase N - Name` headings",
+            plan_path.display()
+        )
+    }
+
+    Ok(())
+}
+
+struct PhaseContract {
+    heading: String,
+    has_goal: bool,
+    has_steps: bool,
+    has_validation: bool,
+}
+
+impl PhaseContract {
+    fn new(heading: &str) -> Self {
+        Self {
+            heading: heading.to_string(),
+            has_goal: false,
+            has_steps: false,
+            has_validation: false,
+        }
+    }
+
+    fn observe(&mut self, line: &str) {
+        self.has_goal |= line.contains("Goal:");
+        self.has_steps |= line.contains("Steps:");
+        self.has_validation |= line.contains("Validation:");
+    }
+
+    fn validate(self, plan_path: &Path) -> Result<()> {
+        for (label, found) in [
+            ("Goal:", self.has_goal),
+            ("Steps:", self.has_steps),
+            ("Validation:", self.has_validation),
+        ] {
+            if !found {
+                bail!(
+                    "final shape plan {} phase `{}` is missing required `{}` label",
+                    plan_path.display(),
+                    self.heading,
+                    label
+                )
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn is_phase_heading(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("## Phase ") else {
+        return false;
+    };
+    let Some((number, name)) = rest.split_once(" - ") else {
+        return false;
+    };
+
+    !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) && !name.trim().is_empty()
 }
 
 #[cfg(test)]
@@ -176,5 +276,51 @@ mod tests {
         fs::write(&plan, "# Plan\n").expect("plan");
 
         validate_reported_plan_path(temp.path(), &plan, &plan, &plan).expect("path");
+    }
+
+    #[test]
+    fn accepts_valid_plan_contract() {
+        validate_plan_contract(
+            Path::new("PLAN.md"),
+            "# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
+        )
+        .expect("contract");
+    }
+
+    #[test]
+    fn rejects_plan_contract_missing_plan_heading() {
+        let error = validate_plan_contract(
+            Path::new("PLAN.md"),
+            "## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
+        )
+        .expect_err("missing plan heading");
+
+        assert!(error.to_string().contains("missing required `# Plan`"));
+    }
+
+    #[test]
+    fn rejects_plan_contract_missing_phase_heading() {
+        let error = validate_plan_contract(
+            Path::new("PLAN.md"),
+            "# Plan\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
+        )
+        .expect_err("missing phase heading");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not contain any `## Phase N - Name`")
+        );
+    }
+
+    #[test]
+    fn rejects_plan_contract_missing_required_block_label() {
+        let error = validate_plan_contract(
+            Path::new("PLAN.md"),
+            "# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nValidation:\n- Check it.\n",
+        )
+        .expect_err("missing label");
+
+        assert!(error.to_string().contains("missing required `Steps:`"));
     }
 }

@@ -97,6 +97,8 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
     assert!(stdout.contains("• Codex"), "{stdout}");
     assert!(stdout.contains("A SPARRING QUESTION"), "{stdout}");
     assert!(stdout.contains("PLAN_PATH: PLAN.md"), "{stdout}");
+    assert!(stdout.contains("Final plan: "), "{stdout}");
+    assert!(stdout.contains("PLAN.md"), "{stdout}");
     assert!(!stdout.contains("B HIDDEN DISCOVERY"), "{stdout}");
     assert!(repo.join("PLAN.md").is_file());
 
@@ -249,9 +251,38 @@ fn shape_exits_after_final_marker_and_plan_file_creation() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     assert!(stdout.contains("PLAN_PATH: PLAN.md"), "{stdout}");
+    assert!(stdout.contains("Final plan: "), "{stdout}");
     assert!(repo.join("PLAN.md").is_file());
     let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
     assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+}
+
+#[test]
+fn shape_fails_when_fake_codex_created_plan_breaks_final_contract() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_INVALID_FINAL_PLAN_CONTRACT", "1")
+        .output()
+        .expect("run lgtm");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("missing required `Steps:`"), "{stderr}");
+    assert!(!stdout.contains("Final plan: "), "{stdout}");
 }
 
 #[test]
@@ -508,7 +539,11 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	printf '{"id":2,"result":{"thread":{"id":"thr-%s"}}}\n' "$session_n"
 	turn_n=0
 	write_plan() {
-	  printf '# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n' > PLAN.md
+	  if [ "${LGTM_TEST_INVALID_FINAL_PLAN_CONTRACT:-}" = 1 ]; then
+	    printf '# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nValidation:\n- Check it.\n' > PLAN.md
+	  else
+	    printf '# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n' > PLAN.md
+	  fi
 	}
 	while IFS= read -r turn_start; do
 	  turn_n=$((turn_n + 1))
