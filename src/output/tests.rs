@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
+use std::path::Path;
 
 use super::{
-    RenderOptions, Verbosity,
+    CommandOutput, RenderOptions, Verbosity,
+    banner::{Banner, BannerMode},
     options::{Charset, ColorMode},
     renderer::Renderer,
 };
@@ -9,6 +11,7 @@ use crate::app_server::{
     CompletedTurn, ItemKind, PlanStep, TranscriptItem, TranscriptItemData, TurnStreamEvent,
     TurnTranscript,
 };
+use crate::cli::StreamMode;
 
 fn no_color_renderer() -> Renderer {
     Renderer::new(RenderOptions {
@@ -29,6 +32,24 @@ fn interactive_renderer() -> Renderer {
 
 fn item(value: Value) -> TranscriptItem {
     TranscriptItem::from_app_server_item(&value).expect("fixture should produce transcript item")
+}
+
+#[derive(Default)]
+struct FlushCountingWriter {
+    content: Vec<u8>,
+    flushes: usize,
+}
+
+impl std::io::Write for FlushCountingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.content.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushes += 1;
+        Ok(())
+    }
 }
 
 #[test]
@@ -434,4 +455,106 @@ fn transcript_items_expose_typed_payloads() {
         TranscriptItemData::CommandExecution(command)
             if command.command == "cargo test" && command.exit_code == Some(0)
     ));
+}
+
+#[test]
+fn command_output_renders_agent_message_with_codex_block() {
+    let mut output = CommandOutput::new(StreamMode::Pretty, Vec::new());
+
+    output
+        .render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+            "type": "agentMessage",
+            "id": "msg_shape",
+            "status": "completed",
+            "text": "Shape question ready"
+        }))))
+        .expect("render");
+
+    let rendered = String::from_utf8(output.into_inner()).expect("utf8");
+    assert!(rendered.contains("• Codex"));
+    assert!(rendered.contains("  Shape question ready"));
+}
+
+#[test]
+fn command_output_visible_status_falls_back_when_not_interactive() {
+    let mut output = CommandOutput::new(StreamMode::Pretty, Vec::new());
+
+    output
+        .start_visible_status_line("Started 2 Codex sessions; gathering context")
+        .expect("status");
+
+    let rendered = String::from_utf8(output.into_inner()).expect("utf8");
+    assert_eq!(rendered, "Started 2 Codex sessions; gathering context\n");
+}
+
+#[test]
+fn command_output_start_status_line_uses_spinner_when_interactive() {
+    let renderer = Renderer::with_interactive(
+        RenderOptions {
+            color_mode: ColorMode::Never,
+            ..RenderOptions::default()
+        },
+        true,
+    );
+    let mut output = CommandOutput::with_renderer(StreamMode::Pretty, renderer, Vec::new());
+
+    output
+        .start_status_line("Started 2 Codex sessions; gathering context")
+        .expect("status");
+    output.finish().expect("finish");
+
+    let rendered = String::from_utf8(output.into_inner()).expect("utf8");
+    assert!(rendered.contains("\r\x1b[2K"));
+    assert!(rendered.contains("Started 2 Codex sessions; gathering context"));
+    assert!(rendered.contains("0s"));
+    assert!(rendered.contains("\x1b[?25h"));
+}
+
+#[test]
+fn command_output_flushes_after_rendered_content() {
+    let mut output = CommandOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+
+    output
+        .render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+            "type": "agentMessage",
+            "id": "msg_flush",
+            "status": "completed",
+            "text": "flush me"
+        }))))
+        .expect("render");
+
+    let output = output.into_inner();
+    assert!(
+        String::from_utf8(output.content)
+            .expect("utf8")
+            .contains("flush me")
+    );
+    assert_eq!(output.flushes, 1);
+}
+
+#[test]
+fn command_output_raw_mode_suppresses_pretty_ui() {
+    let mut output = CommandOutput::new(StreamMode::Raw, Vec::new());
+
+    output
+        .banner(Banner {
+            mode: BannerMode::Shape,
+            root: Path::new("/repo"),
+            codex_bin: "codex",
+            execution: "host YOLO",
+        })
+        .expect("banner");
+    output
+        .start_visible_status_line("Started 2 Codex sessions; gathering context")
+        .expect("status");
+    output
+        .render_event(&TurnStreamEvent::ItemUpdated(item(json!({
+            "type": "agentMessage",
+            "id": "msg_shape",
+            "status": "completed",
+            "text": "Hidden"
+        }))))
+        .expect("event");
+
+    assert!(output.into_inner().is_empty());
 }

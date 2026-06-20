@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -12,10 +12,7 @@ use crate::{
     commands::execution::ExecutionConfig,
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, RuntimeAppServerClient},
     git,
-    output::{
-        RenderOptions, Renderer,
-        banner::{self, Banner, BannerMode},
-    },
+    output::{CommandOutput, banner::Banner, banner::BannerMode},
     prompt::{self, ShapePromptContext},
     skills,
 };
@@ -72,7 +69,7 @@ pub fn run(args: ShapeArgs) -> Result<()> {
 }
 
 fn run_config(config: ShapeConfig) -> Result<()> {
-    let mut output = ShapeOutput::stdout(config.stream_mode);
+    let mut output = CommandOutput::stdout(config.stream_mode);
     output.banner(Banner {
         mode: BannerMode::Shape,
         root: config.runtime.root(),
@@ -167,9 +164,9 @@ fn connect_shape_session(config: &ShapeConfig, role: &str) -> Result<RuntimeAppS
 fn run_shape_orchestration(
     config: &ShapeConfig,
     sessions: &mut ShapeSessions,
-    output: &mut ShapeOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
 ) -> Result<()> {
-    output.start_status_line(STARTUP_STATUS)?;
+    output.start_visible_status_line(STARTUP_STATUS)?;
     let context = ShapePromptContext {
         brief: &config.brief,
         root: config.runtime.root(),
@@ -199,7 +196,7 @@ fn run_shape_hidden_turn(
     client: &mut AppServerClient,
     thread_id: &str,
     prompt: &str,
-    output: &mut ShapeOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
 ) -> Result<CompletedTurn> {
     run_shape_turn(client, thread_id, prompt, |event| {
         output.tick_on_idle(event)
@@ -210,7 +207,7 @@ fn run_shape_streaming_turn(
     client: &mut AppServerClient,
     thread_id: &str,
     prompt: &str,
-    output: &mut ShapeOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
 ) -> Result<CompletedTurn> {
     run_shape_turn(client, thread_id, prompt, |event| {
         output.render_event(event)
@@ -232,83 +229,6 @@ fn run_shape_turn(
     })?;
     output_result?;
     Ok(turn)
-}
-
-struct ShapeOutput<W> {
-    stream_mode: StreamMode,
-    renderer: Renderer,
-    output: W,
-}
-
-impl ShapeOutput<io::Stdout> {
-    fn stdout(stream_mode: StreamMode) -> Self {
-        Self::new(stream_mode, io::stdout())
-    }
-}
-
-impl<W: Write> ShapeOutput<W> {
-    fn new(stream_mode: StreamMode, output: W) -> Self {
-        Self {
-            stream_mode,
-            renderer: Renderer::new(RenderOptions::default()),
-            output,
-        }
-    }
-
-    fn banner(&mut self, banner: Banner<'_>) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        self.write(banner::render(banner, &RenderOptions::default()))
-    }
-
-    fn start_status_line(&mut self, label: impl Into<String>) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let label = label.into();
-        let rendered = self.renderer.start_status_line(label.clone());
-        let rendered = if rendered.is_empty() {
-            format!("{label}\n")
-        } else {
-            rendered
-        };
-        self.write(rendered)
-    }
-
-    fn render_event(&mut self, event: &TurnStreamEvent) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let rendered = self.renderer.render_event(event);
-        self.write(rendered)
-    }
-
-    fn tick_on_idle(&mut self, event: &TurnStreamEvent) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || event != &TurnStreamEvent::Idle {
-            return Ok(());
-        }
-        let rendered = self.renderer.tick();
-        self.write(rendered)
-    }
-
-    fn finish(&mut self) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let rendered = self.renderer.finish();
-        self.write(rendered)
-    }
-
-    fn write(&mut self, rendered: String) -> Result<()> {
-        if rendered.is_empty() {
-            return Ok(());
-        }
-        self.output
-            .write_all(rendered.as_bytes())
-            .context("failed to write shape output")?;
-        self.output.flush().context("failed to flush shape output")
-    }
 }
 
 fn read_brief_source(
@@ -550,7 +470,7 @@ mod tests {
 
     #[test]
     fn raw_mode_suppresses_banner_and_status_line() {
-        let mut output = ShapeOutput::new(StreamMode::Raw, Vec::new());
+        let mut output = CommandOutput::new(StreamMode::Raw, Vec::new());
 
         output
             .banner(Banner {
@@ -560,18 +480,22 @@ mod tests {
                 execution: "host YOLO",
             })
             .expect("banner");
-        output.start_status_line(STARTUP_STATUS).expect("status");
+        output
+            .start_visible_status_line(STARTUP_STATUS)
+            .expect("status");
 
-        assert!(output.output.is_empty());
+        assert!(output.into_inner().is_empty());
     }
 
     #[test]
     fn pretty_mode_prints_startup_status_when_stdout_is_not_interactive() {
-        let mut output = ShapeOutput::new(StreamMode::Pretty, Vec::new());
+        let mut output = CommandOutput::new(StreamMode::Pretty, Vec::new());
 
-        output.start_status_line(STARTUP_STATUS).expect("status");
+        output
+            .start_visible_status_line(STARTUP_STATUS)
+            .expect("status");
 
-        let rendered = String::from_utf8(output.output).expect("utf8");
+        let rendered = String::from_utf8(output.into_inner()).expect("utf8");
         assert_eq!(rendered, "Started 2 Codex sessions; gathering context\n");
     }
 }

@@ -98,6 +98,10 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
         1,
         "{stdout}"
     );
+    assert!(stdout.contains("• Ran cargo test"), "{stdout}");
+    assert!(stdout.contains("• Edited src/lib.rs"), "{stdout}");
+    assert!(stdout.contains("• Searched rust shape output"), "{stdout}");
+    assert!(stdout.contains("• Codex"), "{stdout}");
     assert!(stdout.contains("A SPARRING QUESTION"), "{stdout}");
     assert!(!stdout.contains("B HIDDEN DISCOVERY"), "{stdout}");
 
@@ -268,10 +272,11 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	  printf '{"id":%s,"result":{"turn":{"id":"%s","status":"inProgress","items":[]}}}\n' "$id" "$turn_id"
 	  if [ "$session_n" = 1 ]; then
 	    text='A SPARRING QUESTION: 1. Keep current shape 2. Split shape workflow'
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"commandExecution","id":"cmd-%s-%s","command":"cargo test","status":"completed","exitCode":0},{"type":"fileChange","id":"file-%s-%s","status":"completed","changes":[{"kind":"update","path":"src/lib.rs"}]},{"type":"webSearch","id":"web-%s-%s","query":"rust shape output","status":"completed"},{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$text"
 	  else
 	    text='B HIDDEN DISCOVERY'
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
 	  fi
-	  printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
 	done
 	: >"$dir/stopped-$session_n"
 	"###,

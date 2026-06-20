@@ -1,4 +1,5 @@
 pub(crate) mod banner;
+mod command;
 mod item;
 mod markdown;
 mod options;
@@ -7,6 +8,7 @@ pub(crate) mod spinner;
 mod style;
 mod terminal;
 
+pub(crate) use command::CommandOutput;
 pub(crate) use options::{RenderOptions, Verbosity};
 pub(crate) use renderer::Renderer;
 

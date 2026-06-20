@@ -1,10 +1,4 @@
-use std::{
-    fs,
-    io::{self, Write},
-    path::PathBuf,
-    thread,
-    time::Duration,
-};
+use std::{fs, io::Write, path::PathBuf, thread, time::Duration};
 
 use anyhow::{Context, Result};
 
@@ -14,10 +8,7 @@ use crate::{
     commands::execution::ExecutionConfig,
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, require_file},
     git,
-    output::{
-        RenderOptions, Renderer,
-        banner::{self, Banner, BannerMode},
-    },
+    output::{CommandOutput, banner::Banner, banner::BannerMode},
     phase_index::{self, Phase},
     prompt::{self, PhasePass},
     skills,
@@ -121,7 +112,7 @@ pub fn run(args: RunArgs) -> Result<()> {
 }
 
 pub(super) fn run_config(config: RunConfig) -> Result<()> {
-    let mut output = RunOutput::stdout(config.stream_mode);
+    let mut output = CommandOutput::stdout(config.stream_mode);
     let mut usage = TokenUsage::default();
     output.banner(Banner {
         mode: BannerMode::Run,
@@ -180,107 +171,10 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
     output.token_summary(usage)
 }
 
-struct RunOutput<W> {
-    stream_mode: StreamMode,
-    renderer: Renderer,
-    output: W,
-}
-
-impl RunOutput<io::Stdout> {
-    fn stdout(stream_mode: StreamMode) -> Self {
-        Self::new(stream_mode, io::stdout())
-    }
-}
-
-impl<W: Write> RunOutput<W> {
-    fn new(stream_mode: StreamMode, output: W) -> Self {
-        Self {
-            stream_mode,
-            renderer: Renderer::new(RenderOptions::default()),
-            output,
-        }
-    }
-
-    fn with_status_line<T>(
-        &mut self,
-        label: impl Into<String>,
-        action: impl FnOnce(&mut Self) -> Result<T>,
-    ) -> Result<T> {
-        self.start_status_line(label)?;
-        let result = action(self);
-        let finish_result = self.finish();
-        if result.is_ok() {
-            finish_result?;
-        }
-        result
-    }
-
-    fn start_status_line(&mut self, label: impl Into<String>) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let rendered = self.renderer.start_status_line(label);
-        self.write(rendered)
-    }
-
-    fn banner(&mut self, banner: Banner<'_>) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        self.write(banner::render(banner, &RenderOptions::default()))
-    }
-
-    fn phase_header(&mut self, phase: &Phase, pass: PhasePass) -> Result<()> {
-        let rendered = self
-            .renderer
-            .phase_header(phase.id, &phase.title, pass.label());
-        self.write(rendered)
-    }
-
-    fn render_event(&mut self, event: &TurnStreamEvent) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let rendered = self.renderer.render_event(event);
-        self.write(rendered)
-    }
-
-    fn tick_on_idle(&mut self, event: &TurnStreamEvent) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || event != &TurnStreamEvent::Idle {
-            return Ok(());
-        }
-        let rendered = self.renderer.tick();
-        self.write(rendered)
-    }
-
-    fn finish(&mut self) -> Result<()> {
-        let rendered = self.renderer.finish();
-        self.write(rendered)
-    }
-
-    fn token_summary(&mut self, usage: TokenUsage) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || usage.is_zero() {
-            return Ok(());
-        }
-        self.write(token_summary_line(usage))
-    }
-
-    fn phase_token_summary(&mut self, phase_id: u32, usage: TokenUsage) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || usage.is_zero() {
-            return Ok(());
-        }
-        self.write(phase_token_summary_line(phase_id, usage))
-    }
-
-    fn write(&mut self, rendered: String) -> Result<()> {
-        write_run_output(&mut self.output, rendered)
-    }
-}
-
 fn load_phase_index(
     config: &RunConfig,
     phase_id: u32,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
     usage: &mut TokenUsage,
 ) -> Result<Vec<Phase>> {
     let plan_text = fs::read_to_string(config.plan_abs())
@@ -331,7 +225,7 @@ fn run_phase_index_turn(
     client: &mut AppServerClient,
     thread_id: &str,
     prompt: &str,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
 ) -> Result<CompletedTurn> {
     run_streaming_turn(
         client,
@@ -345,7 +239,7 @@ fn run_phase_index_turn(
 fn run_phase(
     config: &RunConfig,
     phase: &Phase,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
     usage: &mut TokenUsage,
 ) -> Result<()> {
     let first_pass = PhasePass::Implement;
@@ -395,10 +289,10 @@ fn run_phase_pass(
     pass: PhasePass,
     client: &mut AppServerClient,
     thread_id: &str,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
     usage: &mut TokenUsage,
 ) -> Result<()> {
-    output.phase_header(phase, pass)?;
+    output.phase_header(phase.id, &phase.title, pass.label())?;
     let turn = run_streaming_turn(
         client,
         thread_id,
@@ -432,36 +326,6 @@ fn add_usage(total: &mut TokenUsage, turn: &CompletedTurn) {
     if let Some(usage) = turn.usage {
         *total = total.add(usage);
     }
-}
-
-fn token_summary_line(usage: TokenUsage) -> String {
-    token_summary_line_with_label("Tokens", usage)
-}
-
-fn phase_token_summary_line(phase_id: u32, usage: TokenUsage) -> String {
-    token_summary_line_with_label(&format!("Phase {phase_id} tokens"), usage)
-}
-
-fn token_summary_line_with_label(label: &str, usage: TokenUsage) -> String {
-    format!(
-        "• {label}: input {} (cached {}), output {}, reasoning {}, total {}\n",
-        usage.input_tokens,
-        usage.cached_input_tokens,
-        usage.output_tokens,
-        usage.reasoning_tokens,
-        usage.total_tokens
-    )
-}
-
-fn write_run_output(output: &mut impl Write, rendered: String) -> Result<()> {
-    if rendered.is_empty() {
-        return Ok(());
-    }
-
-    output
-        .write_all(rendered.as_bytes())
-        .context("failed to write run output")?;
-    output.flush().context("failed to flush run output")
 }
 
 #[cfg(test)]
@@ -526,18 +390,8 @@ mod tests {
     }
 
     #[test]
-    fn run_output_is_flushed_after_each_render() {
-        let mut output = FlushCountingWriter::default();
-
-        write_run_output(&mut output, "status line".to_string()).expect("write output");
-
-        assert_eq!(output.content, b"status line");
-        assert_eq!(output.flushes, 1);
-    }
-
-    #[test]
     fn raw_mode_suppresses_banner() {
-        let mut output = RunOutput::new(StreamMode::Raw, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Raw, FlushCountingWriter::default());
         let root = PathBuf::from("/repo");
 
         output
@@ -549,13 +403,14 @@ mod tests {
             })
             .expect("banner");
 
-        assert!(output.output.content.is_empty());
-        assert_eq!(output.output.flushes, 0);
+        let output = output.into_inner();
+        assert!(output.content.is_empty());
+        assert_eq!(output.flushes, 0);
     }
 
     #[test]
     fn pretty_mode_prints_token_summary() {
-        let mut output = RunOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
 
         output
             .token_summary(TokenUsage {
@@ -567,7 +422,8 @@ mod tests {
             })
             .expect("summary");
 
-        let rendered = String::from_utf8(output.output.content).expect("utf8");
+        let output = output.into_inner();
+        let rendered = String::from_utf8(output.content).expect("utf8");
         assert_eq!(
             rendered,
             "• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
@@ -576,7 +432,7 @@ mod tests {
 
     #[test]
     fn pretty_mode_prints_phase_token_summary() {
-        let mut output = RunOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
 
         output
             .phase_token_summary(
@@ -591,7 +447,8 @@ mod tests {
             )
             .expect("summary");
 
-        let rendered = String::from_utf8(output.output.content).expect("utf8");
+        let output = output.into_inner();
+        let rendered = String::from_utf8(output.content).expect("utf8");
         assert_eq!(
             rendered,
             "• Phase 2 tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
@@ -600,7 +457,7 @@ mod tests {
 
     #[test]
     fn raw_mode_suppresses_token_summary() {
-        let mut output = RunOutput::new(StreamMode::Raw, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Raw, FlushCountingWriter::default());
 
         output
             .token_summary(TokenUsage {
@@ -612,6 +469,6 @@ mod tests {
             })
             .expect("summary");
 
-        assert!(output.output.content.is_empty());
+        assert!(output.into_inner().content.is_empty());
     }
 }
