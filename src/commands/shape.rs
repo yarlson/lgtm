@@ -24,7 +24,6 @@ use completion::{
 };
 
 const STARTUP_STATUS: &str = "Started 2 Codex sessions; gathering context";
-const EVIDENCE_DISCOVERY_STATUS: &str = "gathering evidence";
 const HANDOFF_CHAR_BUDGET: usize = 4_000;
 
 #[derive(Debug, Clone)]
@@ -191,11 +190,12 @@ fn run_shape_orchestration(
         plan_path: &config.runtime.resolve_root_path(&config.plan_path),
     };
 
-    run_shape_status_turn(
+    run_shape_streaming_round(
         &mut sessions.session_b,
         &sessions.thread_b,
+        0,
+        "evidence discovery",
         &prompt::shape_session_b_initial_prompt(&context),
-        EVIDENCE_DISCOVERY_STATUS,
         output,
         usage,
     )
@@ -203,6 +203,7 @@ fn run_shape_orchestration(
 
     let mut sparring_prompt = prompt::shape_session_a_initial_prompt(&context);
     for round in 1..=config.max_rounds {
+        let plan_before = snapshot_configured_plan(config)?;
         let sparring_turn = run_shape_streaming_round(
             &mut sessions.session_a,
             &sessions.thread_a,
@@ -217,17 +218,21 @@ fn run_shape_orchestration(
         if let Some(marker) = parse_final_plan_marker(&sparring_turn.transcript.response_text())? {
             return complete_shape_plan(config, &marker);
         }
+        if let Some(plan_path) = complete_shape_plan_if_changed(config, &plan_before)? {
+            return Ok(plan_path);
+        }
 
         if round == config.max_rounds {
             break;
         }
 
         let question = handoff_excerpt("Session A", &sparring_turn, HANDOFF_CHAR_BUDGET)?;
-        let answer_turn = run_shape_status_turn(
+        let answer_turn = run_shape_streaming_round(
             &mut sessions.session_b,
             &sessions.thread_b,
+            round,
+            "evidence",
             &prompt::shape_session_b_question_prompt(&question),
-            evidence_answer_status(round),
             output,
             usage,
         )
@@ -244,6 +249,7 @@ fn run_shape_orchestration(
         sparring_prompt = prompt::shape_session_a_answer_prompt(&question, &answer);
     }
 
+    let plan_before = snapshot_configured_plan(config)?;
     let final_turn = run_shape_streaming_round(
         &mut sessions.session_a,
         &sessions.thread_a,
@@ -258,19 +264,14 @@ fn run_shape_orchestration(
     if let Some(marker) = parse_final_plan_marker(&final_turn.transcript.response_text())? {
         return complete_shape_plan(config, &marker);
     }
+    if let Some(plan_path) = complete_shape_plan_if_changed(config, &plan_before)? {
+        return Ok(plan_path);
+    }
 
     bail!(
         "shape session A finalization did not report a final plan; expected PLAN_PATH: <path> after --max-rounds={}",
         config.max_rounds
     )
-}
-
-fn evidence_answer_status(round: u32) -> String {
-    format!("answering shape round {round} from evidence")
-}
-
-fn evidence_repair_status(round: u32) -> String {
-    format!("repairing shape round {round} evidence answer")
 }
 
 fn complete_shape_plan(config: &ShapeConfig, marker: &Path) -> Result<PathBuf> {
@@ -283,6 +284,49 @@ fn complete_shape_plan(config: &ShapeConfig, marker: &Path) -> Result<PathBuf> {
     )?;
     validate_final_plan_contract(&resolved_plan_path)?;
     Ok(resolved_plan_path)
+}
+
+fn complete_shape_plan_if_changed(
+    config: &ShapeConfig,
+    before: &PlanSnapshot,
+) -> Result<Option<PathBuf>> {
+    let after = snapshot_configured_plan(config)?;
+    if &after == before {
+        return Ok(None);
+    }
+
+    let resolved_plan_path = config.runtime.resolve_root_path(&config.plan_path);
+    validate_final_plan_contract(&resolved_plan_path).with_context(|| {
+        format!(
+            "shape session A changed configured plan path {} without producing a valid final plan",
+            resolved_plan_path.display()
+        )
+    })?;
+    Ok(Some(resolved_plan_path))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PlanSnapshot {
+    content: Option<Vec<u8>>,
+}
+
+fn snapshot_configured_plan(config: &ShapeConfig) -> Result<PlanSnapshot> {
+    let resolved_plan_path = config.runtime.resolve_root_path(&config.plan_path);
+    snapshot_plan(&resolved_plan_path)
+}
+
+fn snapshot_plan(path: &Path) -> Result<PlanSnapshot> {
+    match fs::read(path) {
+        Ok(content) => Ok(PlanSnapshot {
+            content: Some(content),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(PlanSnapshot { content: None })
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to read configured plan {}", path.display()))
+        }
+    }
 }
 
 fn validate_or_repair_evidence_answer(
@@ -303,11 +347,12 @@ fn validate_or_repair_evidence_answer(
         question,
         &truncate_handoff_text(&invalid_answer, HANDOFF_CHAR_BUDGET),
     );
-    let repair_turn = run_shape_status_turn(
+    let repair_turn = run_shape_streaming_round(
         client,
         thread_id,
+        round,
+        "evidence repair",
         &repair_prompt,
-        evidence_repair_status(round),
         output,
         usage,
     )
@@ -374,17 +419,6 @@ fn truncate_handoff_text(text: &str, char_budget: usize) -> String {
     truncated
 }
 
-fn run_shape_hidden_turn(
-    client: &mut AppServerClient,
-    thread_id: &str,
-    prompt: &str,
-    output: &mut CommandOutput<impl Write>,
-) -> Result<CompletedTurn> {
-    run_shape_turn(client, thread_id, prompt, |event| {
-        output.tick_on_idle(event)
-    })
-}
-
 fn run_shape_streaming_turn(
     client: &mut AppServerClient,
     thread_id: &str,
@@ -394,21 +428,6 @@ fn run_shape_streaming_turn(
     run_shape_turn(client, thread_id, prompt, |event| {
         output.render_event(event)
     })
-}
-
-fn run_shape_status_turn(
-    client: &mut AppServerClient,
-    thread_id: &str,
-    prompt: &str,
-    status: impl Into<String>,
-    output: &mut CommandOutput<impl Write>,
-    usage: &mut TokenUsage,
-) -> Result<CompletedTurn> {
-    let turn = output.with_status_line(status, |output| {
-        run_shape_hidden_turn(client, thread_id, prompt, output)
-    })?;
-    add_usage(usage, &turn);
-    Ok(turn)
 }
 
 fn run_shape_streaming_round(
@@ -732,19 +751,6 @@ mod tests {
 
         let rendered = String::from_utf8(output.into_inner()).expect("utf8");
         assert_eq!(rendered, "Started 2 Codex sessions; gathering context\n");
-    }
-
-    #[test]
-    fn evidence_status_labels_stay_compact_and_round_specific() {
-        assert_eq!(EVIDENCE_DISCOVERY_STATUS, "gathering evidence");
-        assert_eq!(
-            evidence_answer_status(7),
-            "answering shape round 7 from evidence"
-        );
-        assert_eq!(
-            evidence_repair_status(7),
-            "repairing shape round 7 evidence answer"
-        );
     }
 
     #[test]

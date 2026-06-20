@@ -88,6 +88,21 @@ fn validate_plan_contract(plan_path: &Path, plan: &str) -> Result<()> {
         )
     }
 
+    for heading in [
+        "## Decisions",
+        "## Non-Goals",
+        "## Open Risks",
+        "## Loopholes To Close",
+    ] {
+        if !plan.lines().any(|line| line.trim() == heading) {
+            bail!(
+                "final shape plan {} is missing required `{}` section",
+                plan_path.display(),
+                heading
+            )
+        }
+    }
+
     let mut phase_count = 0;
     let mut current_phase: Option<PhaseContract> = None;
     for line in plan.lines() {
@@ -178,6 +193,37 @@ fn is_phase_heading(line: &str) -> bool {
 mod tests {
     use super::*;
 
+    const VALID_SHAPE_PLAN: &str = "\
+# Plan
+
+## Decisions
+
+- Ship the smallest viable implementation.
+
+## Non-Goals
+
+- Do not broaden scope.
+
+## Open Risks
+
+- Keep validation explicit.
+
+## Loopholes To Close
+
+- Confirm runtime behavior before implementation.
+
+## Phase 1 - Test
+
+Goal:
+Ship.
+
+Steps:
+- Do it.
+
+Validation:
+- Check it.
+";
+
     #[test]
     fn final_plan_marker_parser_accepts_marker_line() {
         let marker = parse_final_plan_marker("Done.\nPLAN_PATH: docs/PLAN.md\n").expect("marker");
@@ -204,7 +250,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("repo");
         fs::create_dir(&root).expect("repo");
-        fs::write(root.join("PLAN.md"), "# Plan\n").expect("plan");
+        fs::write(root.join("PLAN.md"), VALID_SHAPE_PLAN).expect("plan");
 
         validate_reported_plan_path(
             &root,
@@ -280,11 +326,7 @@ mod tests {
 
     #[test]
     fn accepts_valid_plan_contract() {
-        validate_plan_contract(
-            Path::new("PLAN.md"),
-            "# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
-        )
-        .expect("contract");
+        validate_plan_contract(Path::new("PLAN.md"), VALID_SHAPE_PLAN).expect("contract");
     }
 
     #[test]
@@ -299,10 +341,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_plan_contract_missing_decision_sections() {
+        let error = validate_plan_contract(
+            Path::new("PLAN.md"),
+            "# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
+        )
+        .expect_err("missing decisions");
+
+        assert!(
+            error
+                .to_string()
+                .contains("missing required `## Decisions` section")
+        );
+    }
+
+    #[test]
     fn rejects_plan_contract_missing_phase_heading() {
         let error = validate_plan_contract(
             Path::new("PLAN.md"),
-            "# Plan\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
+            "# Plan\n\n## Decisions\n\n- D.\n\n## Non-Goals\n\n- N.\n\n## Open Risks\n\n- R.\n\n## Loopholes To Close\n\n- L.\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n",
         )
         .expect_err("missing phase heading");
 
@@ -317,7 +374,7 @@ mod tests {
     fn rejects_plan_contract_missing_required_block_label() {
         let error = validate_plan_contract(
             Path::new("PLAN.md"),
-            "# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nValidation:\n- Check it.\n",
+            "# Plan\n\n## Decisions\n\n- D.\n\n## Non-Goals\n\n- N.\n\n## Open Risks\n\n- R.\n\n## Loopholes To Close\n\n- L.\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nValidation:\n- Check it.\n",
         )
         .expect_err("missing label");
 

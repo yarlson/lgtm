@@ -96,16 +96,18 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
     assert!(stdout.contains("Inspect shape workflow"), "{stdout}");
     assert!(stdout.contains("• Edited src/lib.rs"), "{stdout}");
     assert!(stdout.contains("• Searched rust shape output"), "{stdout}");
+    assert!(stdout.contains("• Shape 00 evidence discovery"), "{stdout}");
     assert!(stdout.contains("• Shape 01 sparring"), "{stdout}");
+    assert!(stdout.contains("• Shape 01 evidence"), "{stdout}");
     assert!(stdout.contains("• Shape 02 sparring"), "{stdout}");
     assert!(stdout.contains("• Codex"), "{stdout}");
+    assert!(stdout.contains("B EVIDENCE DISCOVERY"), "{stdout}");
     assert!(stdout.contains("A SPARRING QUESTION"), "{stdout}");
+    assert!(stdout.contains("2, but keep local UX"), "{stdout}");
     assert!(stdout.contains("PLAN_PATH: PLAN.md"), "{stdout}");
     assert!(stdout.contains("Final plan: "), "{stdout}");
     assert!(stdout.contains("PLAN.md"), "{stdout}");
     assert!(stdout.contains("• Tokens: input 40 (cached 32), output 8, reasoning 4, total 48"));
-    assert!(!stdout.contains("B HIDDEN DISCOVERY"), "{stdout}");
-    assert!(!stdout.contains("2, but keep local UX"), "{stdout}");
     assert!(repo.join("PLAN.md").is_file());
 
     assert!(repo.join(".git").is_dir());
@@ -212,8 +214,12 @@ fn shape_repairs_invalid_evidence_answer_once() {
         .expect("run lgtm");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{stderr}");
     assert!(stderr.is_empty(), "{stderr}");
+    assert!(stdout.contains("• Shape 01 evidence repair"), "{stdout}");
+    assert!(stdout.contains("I recommend option 2 because it is cleaner."));
+    assert!(stdout.contains("\n  3\n"), "{stdout}");
     let repair_prompt =
         fs::read_to_string(temp.path().join("turn-2-3.json")).expect("repair prompt");
     assert!(repair_prompt.contains("Your previous evidence answer did not match"));
@@ -261,6 +267,144 @@ fn shape_exits_after_final_marker_and_plan_file_creation() {
     assert!(repo.join("PLAN.md").is_file());
     let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
     assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+}
+
+#[test]
+fn shape_exits_after_valid_plan_file_creation_without_final_marker() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_PLAN_WITHOUT_MARKER", "1")
+        .output()
+        .expect("run lgtm");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stdout.contains("PLAN_PATH: PLAN.md"), "{stdout}");
+    assert!(stdout.contains("Final plan: "), "{stdout}");
+    assert!(repo.join("PLAN.md").is_file());
+    let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
+    assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+    assert!(!temp.path().join("turn-2-3.json").exists());
+    assert!(!temp.path().join("turn-1-3.json").exists());
+}
+
+#[test]
+fn shape_exits_after_valid_plan_file_update_without_final_marker() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    fs::write(
+        repo.join("PLAN.md"),
+        "# Plan\n\n## Phase 1 - Existing\n\nGoal:\nOld.\n\nSteps:\n- Old.\n\nValidation:\n- Old.\n",
+    )
+    .expect("plan");
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_PLAN_WITHOUT_MARKER", "1")
+        .output()
+        .expect("run lgtm");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stdout.contains("PLAN_PATH: PLAN.md"), "{stdout}");
+    assert!(stdout.contains("Final plan: "), "{stdout}");
+    let plan = fs::read_to_string(repo.join("PLAN.md")).expect("plan");
+    assert!(plan.contains("## Phase 1 - Test"));
+    let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
+    assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+    assert!(!temp.path().join("turn-2-3.json").exists());
+    assert!(!temp.path().join("turn-1-3.json").exists());
+}
+
+#[test]
+fn shape_fails_when_plan_file_changed_without_valid_final_contract() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_PLAN_WITHOUT_MARKER", "1")
+        .env("LGTM_TEST_INVALID_FINAL_PLAN_CONTRACT", "1")
+        .output()
+        .expect("run lgtm");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("changed configured plan path"), "{stderr}");
+    assert!(stderr.contains("missing required `Steps:`"), "{stderr}");
+    let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
+    assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+    assert!(!temp.path().join("turn-2-3.json").exists());
+    assert!(!temp.path().join("turn-1-3.json").exists());
+}
+
+#[test]
+fn shape_does_not_treat_preexisting_unchanged_plan_as_completion_without_marker() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    fs::write(
+        repo.join("PLAN.md"),
+        "# Plan\n\n## Phase 1 - Existing\n\nGoal:\nOld.\n\nSteps:\n- Old.\n\nValidation:\n- Old.\n",
+    )
+    .expect("plan");
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .output()
+        .expect("run lgtm");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
+    assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+    let question_prompt =
+        fs::read_to_string(temp.path().join("turn-2-2.json")).expect("question prompt");
+    assert!(question_prompt.contains("A SPARRING QUESTION"));
 }
 
 #[test]
@@ -321,8 +465,47 @@ fn shape_sends_finalization_once_after_max_rounds() {
     assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "1"]);
     let finalization_prompt =
         fs::read_to_string(temp.path().join("turn-1-2.json")).expect("finalization prompt");
-    assert!(finalization_prompt.contains("The host reached --max-rounds=1"));
+    assert!(finalization_prompt.contains("safety ceiling --max-rounds=1"));
     assert!(!temp.path().join("turn-1-3.json").exists());
+}
+
+#[test]
+fn shape_finalizes_once_after_multi_round_max_without_extra_evidence() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .arg("--max-rounds")
+        .arg("2")
+        .env("LGTM_TEST_FINALIZE_AFTER_MAX", "1")
+        .env("LGTM_TEST_FINAL_PLAN_ONLY_ON_FINALIZATION", "1")
+        .output()
+        .expect("run lgtm");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(repo.join("PLAN.md").is_file());
+    let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
+    assert_eq!(
+        turn_order.lines().collect::<Vec<_>>(),
+        ["2", "1", "2", "1", "1"]
+    );
+    let finalization_prompt =
+        fs::read_to_string(temp.path().join("turn-1-3.json")).expect("finalization prompt");
+    assert!(finalization_prompt.contains("safety ceiling --max-rounds=2"));
+    assert!(!temp.path().join("turn-2-3.json").exists());
+    assert!(!temp.path().join("turn-1-4.json").exists());
 }
 
 #[test]
@@ -546,9 +729,9 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	turn_n=0
 	write_plan() {
 	  if [ "${LGTM_TEST_INVALID_FINAL_PLAN_CONTRACT:-}" = 1 ]; then
-	    printf '# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nValidation:\n- Check it.\n' > PLAN.md
+	    printf '# Plan\n\n## Decisions\n\n- Ship the test plan.\n\n## Non-Goals\n\n- Do not broaden scope.\n\n## Open Risks\n\n- Keep validation explicit.\n\n## Loopholes To Close\n\n- Confirm runtime behavior.\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nValidation:\n- Check it.\n' > PLAN.md
 	  else
-	    printf '# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n' > PLAN.md
+	    printf '# Plan\n\n## Decisions\n\n- Ship the test plan.\n\n## Non-Goals\n\n- Do not broaden scope.\n\n## Open Risks\n\n- Keep validation explicit.\n\n## Loopholes To Close\n\n- Confirm runtime behavior.\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n' > PLAN.md
 	  fi
 	}
 	emit_plan_update() {
@@ -558,6 +741,10 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	  turn_n=$((turn_n + 1))
 	  printf '%s\n' "$session_n" >>"$dir/turn-order"
 	  printf '%s\n' "$turn_start" >"$dir/turn-$session_n-$turn_n.json"
+	  is_finalization=0
+	  case "$turn_start" in
+	    *"--max-rounds"*) is_finalization=1 ;;
+	  esac
 	  id=$(printf '%s\n' "$turn_start" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
 	  turn_id="turn-$session_n-$turn_n"
 	  printf '{"id":%s,"result":{"turn":{"id":"%s","status":"inProgress","items":[]}}}\n' "$id" "$turn_id"
@@ -568,17 +755,25 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	    elif [ "${LGTM_TEST_FINALIZATION_NO_MARKER:-}" = 1 ]; then
 	      text='BLOCKER: no plan could be produced'
 	    elif [ "${LGTM_TEST_FINALIZE_AFTER_MAX:-}" = 1 ]; then
-	      write_plan
-	      text='PLAN_PATH: PLAN.md'
+	      if [ "${LGTM_TEST_FINAL_PLAN_ONLY_ON_FINALIZATION:-}" != 1 ] || [ "$is_finalization" = 1 ]; then
+	        write_plan
+	        text='PLAN_PATH: PLAN.md'
+	      else
+	        text='A SPARRING QUESTION: 1. Keep current shape 2. Split shape workflow'
+	      fi
 	    else
 	      if [ "${LGTM_TEST_MISSING_FINAL_PLAN:-}" != 1 ]; then
 	        write_plan
 	      fi
-	      text='PLAN_PATH: PLAN.md'
+	      if [ "${LGTM_TEST_PLAN_WITHOUT_MARKER:-}" = 1 ]; then
+	        text='PLAN.md written.'
+	      else
+	        text='PLAN_PATH: PLAN.md'
+	      fi
 	    fi
 	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12},"items":[{"type":"commandExecution","id":"cmd-%s-%s","command":"cargo test","status":"completed","exitCode":0},{"type":"fileChange","id":"file-%s-%s","status":"completed","changes":[{"kind":"update","path":"src/lib.rs"}]},{"type":"webSearch","id":"web-%s-%s","query":"rust shape output","status":"completed"},{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$text"
 	  elif [ "$turn_n" = 1 ]; then
-	    text='B HIDDEN DISCOVERY'
+	    text='B EVIDENCE DISCOVERY'
 	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12},"items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
 	  else
 	    if [ "${LGTM_TEST_LARGE_EVIDENCE:-}" = 1 ]; then
@@ -637,7 +832,7 @@ fn failing_sparring_turn_codex(dir: &Path) -> std::path::PathBuf {
 	  if [ "$session_n" = 1 ]; then
 	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"failed","error":{"message":"sparring boom"},"items":[]}}}\n' "$session_n" "$turn_id"
 	  else
-	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"B HIDDEN DISCOVERY","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n"
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"B EVIDENCE DISCOVERY","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n"
 	  fi
 	done
 	: >"$dir/stopped-$session_n"

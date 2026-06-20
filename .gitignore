@@ -1,3 +1,5 @@
 /target/
 .lgtm/
 .agents/skills/lgtm-*
+__pycache__/
+*.py[cod]

@@ -78,10 +78,12 @@ exist before planning starts.
 lgtm plan "split the migration into small reviewable phases"
 ```
 
-Plan mode asks one question at a time. The inline composer supports normal
-editing keys, cursor movement, paste, and multiline answers with `Ctrl+J`,
-`Shift+Enter`, or `Alt+Enter`. Press `Ctrl+C` once to clear the current input;
-press it twice quickly to quit.
+Plan mode asks one question at a time and writes a detailed implementation plan
+with reviewable, implementation-sized phases. Broad migrations or architecture
+work may become many phases rather than a short roadmap summary. The inline
+composer supports normal editing keys, cursor movement, paste, and multiline
+answers with `Ctrl+J`, `Shift+Enter`, or `Alt+Enter`. Press `Ctrl+C` once to
+clear the current input; press it twice quickly to quit.
 
 Enter `/finish` to ask Codex to write the final `PLAN.md` from the current
 session context, or `/quit` to exit without another Codex turn. If `AGENTS.md`
@@ -313,7 +315,7 @@ Shape options:
 | `--stream-mode`       | `STREAM_MODE`            | `pretty`                            | `pretty` or `raw`                   |
 | `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                        | Log directory                       |
 | `--run-stamp`         | `RUN_STAMP`              | timestamp                           | Log filename prefix                 |
-| `--max-rounds`        |                          | `12`                                | Maximum sparring rounds             |
+| `--max-rounds`        |                          | `200`                               | Maximum sparring rounds             |
 
 Provide exactly one brief source: `[BRIEF]` or `--brief-file`.
 

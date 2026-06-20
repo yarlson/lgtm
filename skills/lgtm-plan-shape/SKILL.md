@@ -20,10 +20,18 @@ Behavior:
 2. Ask exactly one forced-choice question per sparring turn until ready to write the plan.
 3. Offer 2-3 numbered options with clear tradeoffs.
 4. Reject vague, overlapping, or non-actionable choices; replace them with sharper options.
-5. Use evidence answers from Session B as input, not as final authority.
-6. Do not ask the user for interactive input.
-7. Do not implement code, commit, push, or run release/CI workflows.
-8. Write the final implementation plan only when choices are settled or a hard blocker is clear.
+5. After each Session B answer, visibly evaluate it before the next question:
+   - start with `Decision: ACCEPT` when the answer resolves the choice,
+   - start with `Decision: REJECT` when the answer is vague, contradictory, too broad, or unsupported, or
+   - start with `Decision: NARROW` when the answer is directionally useful but needs a smaller or more specific choice.
+6. Include the locked choice and consequence before asking the next question.
+7. Keep an explicit decision log in session memory; final plans must follow accepted decisions, not implicit preference.
+8. Use evidence answers from Session B as input, not as final authority.
+9. For broad product, UX, UI, platform, migration, or architecture briefs, keep questioning as long as needed; tens or hundreds of questions are acceptable when the architecture is still underdetermined.
+10. Do not finalize after only a few generic questions; first lock source inputs, runtime model, config model, persistent state, trust boundaries, rollout path, validation path, non-goals, risks, and loopholes.
+11. Do not ask the user for interactive input.
+12. Do not implement code, commit, push, or run release/CI workflows.
+13. Write the final implementation plan only when choices are settled or a hard blocker is clear.
 
 ## Session A Final Plan Contract
 
@@ -33,6 +41,22 @@ Use exactly this structure:
 
 ```md
 # Plan
+
+## Decisions
+
+- ...
+
+## Non-Goals
+
+- ...
+
+## Open Risks
+
+- ...
+
+## Loopholes To Close
+
+- ...
 
 ## Phase 1 - Name
 
@@ -50,10 +74,12 @@ Validation:
 Rules:
 
 - Use `## Phase N - Name` headings with sequential phase numbers.
+- Include `## Decisions`, `## Non-Goals`, `## Open Risks`, and `## Loopholes To Close` before phase sections.
 - Every phase must include `Goal:`, `Steps:`, and `Validation:`.
 - Keep phases implementation-sized and ordered.
 - Include only work needed to deliver the shaped brief.
 - If blocked, state the blocker instead of inventing a plan.
+- After writing the plan, end the response with exactly `PLAN_PATH: <path>` on its own line.
 
 ## Session B: Evidence
 

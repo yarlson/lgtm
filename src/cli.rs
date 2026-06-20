@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ghcr.io/yarlson/lgtm-codex:latest";
+pub const DEFAULT_SHAPE_MAX_ROUNDS: u32 = 200;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -114,7 +115,7 @@ pub struct ShapeArgs {
     #[arg(long, env = "RUN_STAMP")]
     pub run_stamp: Option<String>,
 
-    #[arg(long, default_value_t = 12)]
+    #[arg(long, default_value_t = DEFAULT_SHAPE_MAX_ROUNDS)]
     pub max_rounds: u32,
 }
 
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(args.brief.as_deref(), Some("brief idea"));
         assert_eq!(args.brief_file, None);
         assert_eq!(args.plan_path, PathBuf::from("PLAN.md"));
-        assert_eq!(args.max_rounds, 12);
+        assert_eq!(args.max_rounds, DEFAULT_SHAPE_MAX_ROUNDS);
     }
 
     #[test]
@@ -292,7 +293,7 @@ mod tests {
         assert_eq!(args.brief, None);
         assert_eq!(args.brief_file.unwrap(), PathBuf::from("docs/brief.md"));
         assert_eq!(args.plan_path, PathBuf::from("PLAN.md"));
-        assert_eq!(args.max_rounds, 12);
+        assert_eq!(args.max_rounds, DEFAULT_SHAPE_MAX_ROUNDS);
     }
 
     #[test]
@@ -423,6 +424,6 @@ mod tests {
         assert!(shape_help.contains("--log-dir"));
         assert!(shape_help.contains("--run-stamp"));
         assert!(shape_help.contains("--max-rounds"));
-        assert!(shape_help.contains("[default: 12]"));
+        assert!(shape_help.contains("[default: 200]"));
     }
 }
