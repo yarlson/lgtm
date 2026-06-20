@@ -12,6 +12,12 @@ fn run_reloads_plan_index_and_runs_four_passes_through_app_server() {
     )
     .expect("plan");
     fs::write(repo.join("AGENTS.md"), "# Agents\n").expect("agents");
+    let codex_source_home = temp.path().join("codex-source");
+    fs::create_dir(&codex_source_home).expect("codex source home");
+    fs::write(codex_source_home.join("auth.json"), "auth").expect("auth");
+    fs::write(codex_source_home.join("config.toml"), "config").expect("config");
+    fs::create_dir(codex_source_home.join("skills")).expect("skills dir");
+    fs::write(codex_source_home.join("skills").join("stale"), "stale").expect("stale");
 
     let repo_sh = shell_quote(&repo);
     let fake_codex = executable(
@@ -28,6 +34,7 @@ fn run_reloads_plan_index_and_runs_four_passes_through_app_server() {
 	fi
 	session_n=$((session_n + 1))
 	printf '%s\n' "$session_n" >"$session_counter"
+	printf '%s\n' "${CODEX_HOME:-}" >"$dir/codex-home-$session_n"
 
 	read initialize
 	printf '%s\n' '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp/codex"}}'
@@ -92,6 +99,7 @@ Goal: updated.
         .arg(&fake_codex)
         .arg("--run-stamp")
         .arg("test")
+        .env("CODEX_HOME", &codex_source_home)
         .env("PATH", path_with_rtk)
         .output()
         .expect("run lgtm");
@@ -172,6 +180,11 @@ Goal: updated.
     let commit_turn = fs::read_to_string(temp.path().join("turn-5.json")).expect("commit prompt");
     let session_count = fs::read_to_string(temp.path().join("session-counter")).expect("sessions");
     assert_eq!(session_count.trim(), "4");
+    let child_codex_home =
+        fs::read_to_string(temp.path().join("codex-home-1")).expect("child codex home");
+    let child_codex_home = child_codex_home.trim();
+    assert_ne!(child_codex_home, codex_source_home.display().to_string());
+    assert!(child_codex_home.contains("lgtm-codex-home-"));
     assert!(index_turn.contains("gpt-5.4-mini") || index_turn.contains("PLAN.md content"));
     assert!(index_turn.contains(r#""effort":"low""#));
     assert!(index_turn.contains("## Phase 2 - Follow Up"));

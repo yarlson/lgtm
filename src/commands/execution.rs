@@ -1,6 +1,8 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -140,12 +142,17 @@ impl ExecutionTarget {
 
     pub(super) fn prepare(&self, root: &Path) -> Result<PreparedAppServer> {
         match self {
-            Self::Host { codex_bin } => Ok(PreparedAppServer {
-                launch: AppServerLaunch::host(codex_bin),
-                cwd: root.display().to_string(),
-                developer_instructions_suffix: None,
-                resources: ExecutionResources::default(),
-            }),
+            Self::Host { codex_bin } => {
+                let mut resources = ExecutionResources::default();
+                let codex_home = resources.track_cleanup_path(prepare_host_codex_home()?);
+                Ok(PreparedAppServer {
+                    launch: AppServerLaunch::host(codex_bin)
+                        .with_env("CODEX_HOME", codex_home.display().to_string()),
+                    cwd: root.display().to_string(),
+                    developer_instructions_suffix: None,
+                    resources,
+                })
+            }
             Self::AppleContainer {
                 container_bin,
                 image,
@@ -171,9 +178,83 @@ fn absolutize(path: PathBuf) -> Result<PathBuf> {
         .join(path))
 }
 
+fn prepare_host_codex_home() -> Result<PathBuf> {
+    prepare_host_codex_home_from(source_codex_home().as_deref())
+}
+
+fn prepare_host_codex_home_from(source: Option<&Path>) -> Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!(
+        "lgtm-codex-home-{}-{}",
+        process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before Unix epoch")?
+            .as_nanos()
+    ));
+    fs::create_dir(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    if let Err(error) = copy_codex_startup_files(source, &dir) {
+        let _ = fs::remove_dir_all(&dir);
+        return Err(error);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("failed to set permissions on {}", dir.display()))?;
+    }
+    Ok(dir)
+}
+
+fn source_codex_home() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+}
+
+fn copy_codex_startup_files(source: Option<&Path>, destination: &Path) -> Result<()> {
+    let Some(source) = source else {
+        return Ok(());
+    };
+    copy_optional_codex_file(source, destination, "auth.json")?;
+    copy_optional_codex_file(source, destination, "config.toml")?;
+    Ok(())
+}
+
+fn copy_optional_codex_file(source: &Path, destination: &Path, name: &str) -> Result<()> {
+    let source_path = source.join(name);
+    if !source_path.exists() {
+        return Ok(());
+    }
+
+    let destination_path = destination.join(name);
+    fs::copy(&source_path, &destination_path).with_context(|| {
+        format!(
+            "failed to copy Codex startup file {} to {}",
+            source_path.display(),
+            destination_path.display()
+        )
+    })?;
+    #[cfg(unix)]
+    if name == "auth.json" {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&destination_path, fs::Permissions::from_mode(0o600)).with_context(
+            || {
+                format!(
+                    "failed to set permissions on {}",
+                    destination_path.display()
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn host_target_prepares_host_app_server() {
@@ -193,8 +274,14 @@ mod tests {
         assert_eq!(prepared.cwd, "/repo");
         assert_eq!(prepared.launch.program(), "codex-test");
         assert_eq!(prepared.launch.args(), ["app-server"]);
+        assert_eq!(prepared.launch.envs().len(), 1);
+        assert_eq!(prepared.launch.envs()[0].0, "CODEX_HOME");
         assert!(prepared.developer_instructions_suffix.is_none());
-        assert!(prepared.resources.is_empty());
+        assert!(!prepared.resources.is_empty());
+        let codex_home = PathBuf::from(&prepared.launch.envs()[0].1);
+        assert!(codex_home.is_dir());
+        drop(prepared.resources);
+        assert!(!codex_home.exists());
     }
 
     #[test]
@@ -208,5 +295,29 @@ mod tests {
         drop(resources);
 
         assert!(!cleanup_dir.exists());
+    }
+
+    #[test]
+    fn host_codex_home_copies_only_startup_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        fs::create_dir(&source).expect("source dir");
+        fs::write(source.join("auth.json"), "auth").expect("auth");
+        fs::write(source.join("config.toml"), "config").expect("config");
+        fs::create_dir(source.join("skills")).expect("skills dir");
+        fs::write(source.join("skills").join("stale"), "stale").expect("stale");
+
+        let codex_home = prepare_host_codex_home_from(Some(&source)).expect("codex home");
+
+        assert_eq!(
+            fs::read_to_string(codex_home.join("auth.json")).expect("copied auth"),
+            "auth"
+        );
+        assert_eq!(
+            fs::read_to_string(codex_home.join("config.toml")).expect("copied config"),
+            "config"
+        );
+        assert!(!codex_home.join("skills").exists());
+        fs::remove_dir_all(codex_home).expect("cleanup");
     }
 }

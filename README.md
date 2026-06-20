@@ -326,6 +326,10 @@ ensures the target root is a Git root, and installs bundled managed skills. If
 Git is not initialized, it asks before running `git init` and `git branch -M
 main`.
 
+Host execution starts `codex app-server` with a temporary `CODEX_HOME`. `lgtm`
+copies `auth.json` and `config.toml` from the current Codex home when present,
+but does not reuse mutable Codex runtime state such as installed system skills.
+
 Logs are written as JSONL:
 
 ```text

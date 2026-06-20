@@ -2,6 +2,7 @@
 pub struct AppServerLaunch {
     program: String,
     args: Vec<String>,
+    envs: Vec<(String, String)>,
 }
 
 impl AppServerLaunch {
@@ -9,11 +10,17 @@ impl AppServerLaunch {
         Self {
             program: program.into(),
             args: args.into_iter().collect(),
+            envs: Vec::new(),
         }
     }
 
     pub fn host(codex_bin: impl Into<String>) -> Self {
         Self::new(codex_bin, ["app-server".to_string()])
+    }
+
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.envs.push((key.into(), value.into()));
+        self
     }
 
     pub fn program(&self) -> &str {
@@ -22,6 +29,10 @@ impl AppServerLaunch {
 
     pub fn args(&self) -> &[String] {
         &self.args
+    }
+
+    pub fn envs(&self) -> &[(String, String)] {
+        &self.envs
     }
 
     pub fn display_command(&self) -> String {
@@ -42,5 +53,16 @@ mod tests {
 
         assert_eq!(launch.program(), "codex-test");
         assert_eq!(launch.args(), ["app-server"]);
+        assert!(launch.envs().is_empty());
+    }
+
+    #[test]
+    fn launch_can_set_child_environment() {
+        let launch = AppServerLaunch::host("codex-test").with_env("CODEX_HOME", "/tmp/codex");
+
+        assert_eq!(
+            launch.envs(),
+            &[("CODEX_HOME".to_string(), "/tmp/codex".to_string())]
+        );
     }
 }
