@@ -38,6 +38,7 @@ skill_registry! {
     SPEC_UPDATE => "lgtm-spec-update", "../skills/lgtm-spec-update/SKILL.md";
     SECURITY_REVIEW => "lgtm-security-review", "../skills/lgtm-security-review/SKILL.md";
     PLAN_CREATE => "lgtm-plan-create", "../skills/lgtm-plan-create/SKILL.md";
+    PLAN_SHAPE => "lgtm-plan-shape", "../skills/lgtm-plan-shape/SKILL.md";
     TEST_GAP_REVIEW => "lgtm-test-gap-review", "../skills/lgtm-test-gap-review/SKILL.md";
     DOCS_DRIFT_REVIEW => "lgtm-docs-drift-review", "../skills/lgtm-docs-drift-review/SKILL.md";
     ROLLOUT_REVIEW => "lgtm-rollout-review", "../skills/lgtm-rollout-review/SKILL.md";
@@ -207,11 +208,7 @@ mod tests {
 
     #[test]
     fn phase_review_skill_requires_strict_fixing_review() {
-        let body = SKILLS
-            .iter()
-            .find(|skill| skill.name == PHASE_REVIEW)
-            .expect("phase review skill")
-            .body;
+        let body = bundled_skill(PHASE_REVIEW);
 
         assert!(body.contains("code-judo"));
         assert!(body.contains("Fix every safe, phase-scoped finding"));
@@ -227,16 +224,50 @@ mod tests {
 
     #[test]
     fn phase_commit_skill_rejects_commit_message_inventories() {
-        let body = SKILLS
-            .iter()
-            .find(|skill| skill.name == PHASE_COMMIT)
-            .expect("phase commit skill")
-            .body;
+        let body = bundled_skill(PHASE_COMMIT);
 
         assert!(body.contains("Prefer subject-only"));
         assert!(body.contains("Never: changed-file list"));
         assert!(body.contains("verification section"));
         assert!(!body.contains("Key changes"));
+    }
+
+    #[test]
+    fn plan_shape_skill_defines_session_contracts() {
+        let body = bundled_skill(PLAN_SHAPE);
+
+        assert!(body.contains("architecture sparring session"));
+        assert!(body.contains("Ask exactly one forced-choice question per sparring turn"));
+        assert!(body.contains("Reject vague, overlapping, or non-actionable choices"));
+        assert!(body.contains("Session A Final Plan Contract"));
+        assert!(body.contains("# Plan"));
+        assert!(body.contains("## Phase N - Name"));
+        assert!(body.contains("Goal:"));
+        assert!(body.contains("Steps:"));
+        assert!(body.contains("Validation:"));
+        assert!(body.contains("evidence session"));
+        assert!(body.contains("current codebase first"));
+        assert!(body.contains("current-year web search"));
+        assert!(body.contains("industry best practice"));
+        assert!(body.contains("<number>, but <correction>"));
+        assert!(body.contains("Answer with exactly one line and no extra prose"));
+    }
+
+    #[test]
+    fn install_writes_plan_shape_skill() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        install(temp.path()).expect("install");
+
+        let skill_path = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("lgtm-plan-shape")
+            .join("SKILL.md");
+        let body = fs::read_to_string(skill_path).expect("plan shape skill");
+        assert!(is_managed_skill(PLAN_SHAPE, &body));
+        assert!(body.contains("Session B Answer Format"));
     }
 
     #[test]
@@ -293,5 +324,13 @@ managed-by: lgtm
             fs::read_to_string(skill_path).expect("skill body"),
             "user owned"
         );
+    }
+
+    fn bundled_skill(name: &str) -> &'static str {
+        SKILLS
+            .iter()
+            .find(|skill| skill.name == name)
+            .unwrap_or_else(|| panic!("bundled skill {name}"))
+            .body
     }
 }

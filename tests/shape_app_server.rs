@@ -108,6 +108,10 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
         repo.join(".agents/skills/lgtm-security-review/SKILL.md")
             .is_file()
     );
+    assert!(
+        repo.join(".agents/skills/lgtm-plan-shape/SKILL.md")
+            .is_file()
+    );
     assert!(repo.join(".lgtm/logs/test-shape-a-001.jsonl").is_file());
     assert!(repo.join(".lgtm/logs/test-shape-b-001.jsonl").is_file());
     let log_a =
