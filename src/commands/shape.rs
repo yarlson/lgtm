@@ -1,12 +1,13 @@
 use std::{
     fs,
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
 
 use crate::{
+    app_server::{AppServerClient, CompletedTurn, TurnControl, TurnStreamEvent},
     cli::{ShapeArgs, StreamMode},
     commands::execution::ExecutionConfig,
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, RuntimeAppServerClient},
@@ -15,6 +16,7 @@ use crate::{
         RenderOptions, Renderer,
         banner::{self, Banner, BannerMode},
     },
+    prompt::{self, ShapePromptContext},
     skills,
 };
 
@@ -23,6 +25,8 @@ const STARTUP_STATUS: &str = "Started 2 Codex sessions; gathering context";
 #[derive(Debug, Clone)]
 struct ShapeConfig {
     runtime: CommandRuntime,
+    brief: String,
+    plan_path: PathBuf,
     stream_mode: StreamMode,
 }
 
@@ -32,7 +36,7 @@ impl ShapeConfig {
             brief,
             brief_file,
             root,
-            plan_path: _,
+            plan_path,
             codex_bin,
             execution,
             stream_mode,
@@ -46,10 +50,12 @@ impl ShapeConfig {
             run_stamp,
             execution: ExecutionConfig::from_args(codex_bin, execution),
         })?;
-        read_brief_source(brief, brief_file.as_deref(), runtime.root())?;
+        let brief = read_brief_source(brief, brief_file.as_deref(), runtime.root())?;
 
         Ok(Self {
             runtime,
+            brief,
+            plan_path,
             stream_mode,
         })
     }
@@ -78,31 +84,37 @@ fn run_config(config: ShapeConfig) -> Result<()> {
     git::ensure_initialized(config.runtime.root())?;
     skills::install(config.runtime.root())?;
 
-    let sessions = start_shape_sessions(&config)?;
-    let status_result = output.start_status_line(STARTUP_STATUS);
+    let mut sessions = start_shape_sessions(&config)?;
+    let orchestration_result = run_shape_orchestration(&config, &mut sessions, &mut output);
+    let finish_result = output.finish();
     let stop_result = stop_shape_sessions(sessions);
-    status_result?;
-    stop_result?;
-    output.finish()?;
 
-    bail!("lgtm shape orchestration is not implemented yet")
+    orchestration_result?;
+    finish_result?;
+    stop_result?;
+    Ok(())
 }
 
 struct ShapeSessions {
     session_a: RuntimeAppServerClient,
+    thread_a: String,
     session_b: RuntimeAppServerClient,
+    thread_b: String,
 }
 
 fn start_shape_sessions(config: &ShapeConfig) -> Result<ShapeSessions> {
     let mut session_a =
         connect_shape_session(config, "a").context("failed to start shape session A")?;
-    if let Err(error) = session_a
+    let thread_a = match session_a
         .start_thread()
         .context("failed to start shape session A thread")
     {
-        let _ = session_a.stop();
-        return Err(error);
-    }
+        Ok(thread_a) => thread_a,
+        Err(error) => {
+            let _ = session_a.stop();
+            return Err(error);
+        }
+    };
 
     let mut session_b =
         match connect_shape_session(config, "b").context("failed to start shape session B") {
@@ -112,18 +124,23 @@ fn start_shape_sessions(config: &ShapeConfig) -> Result<ShapeSessions> {
                 return Err(error);
             }
         };
-    if let Err(error) = session_b
+    let thread_b = match session_b
         .start_thread()
         .context("failed to start shape session B thread")
     {
-        let _ = session_b.stop();
-        let _ = session_a.stop();
-        return Err(error);
-    }
+        Ok(thread_b) => thread_b,
+        Err(error) => {
+            let _ = session_b.stop();
+            let _ = session_a.stop();
+            return Err(error);
+        }
+    };
 
     Ok(ShapeSessions {
         session_a,
+        thread_a,
         session_b,
+        thread_b,
     })
 }
 
@@ -145,6 +162,76 @@ fn connect_shape_session(config: &ShapeConfig, role: &str) -> Result<RuntimeAppS
     config
         .runtime
         .connect_logged_app_server(None, &log_name, config.stream_mode == StreamMode::Raw)
+}
+
+fn run_shape_orchestration(
+    config: &ShapeConfig,
+    sessions: &mut ShapeSessions,
+    output: &mut ShapeOutput<impl Write>,
+) -> Result<()> {
+    output.start_status_line(STARTUP_STATUS)?;
+    let context = ShapePromptContext {
+        brief: &config.brief,
+        root: config.runtime.root(),
+        plan_path: &config.runtime.resolve_root_path(&config.plan_path),
+    };
+
+    run_shape_hidden_turn(
+        &mut sessions.session_b,
+        &sessions.thread_b,
+        &prompt::shape_session_b_initial_prompt(&context),
+        output,
+    )
+    .context("shape session B round 0 initial discovery failed")?;
+
+    run_shape_streaming_turn(
+        &mut sessions.session_a,
+        &sessions.thread_a,
+        &prompt::shape_session_a_initial_prompt(&context),
+        output,
+    )
+    .context("shape session A round 1 sparring turn failed")?;
+
+    bail!("lgtm shape loop completion is not implemented yet")
+}
+
+fn run_shape_hidden_turn(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    prompt: &str,
+    output: &mut ShapeOutput<impl Write>,
+) -> Result<CompletedTurn> {
+    run_shape_turn(client, thread_id, prompt, |event| {
+        output.tick_on_idle(event)
+    })
+}
+
+fn run_shape_streaming_turn(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    prompt: &str,
+    output: &mut ShapeOutput<impl Write>,
+) -> Result<CompletedTurn> {
+    run_shape_turn(client, thread_id, prompt, |event| {
+        output.render_event(event)
+    })
+}
+
+fn run_shape_turn(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    prompt: &str,
+    mut render_event: impl FnMut(&TurnStreamEvent) -> Result<()>,
+) -> Result<CompletedTurn> {
+    let mut output_result = Ok(());
+    let turn = client.run_turn_streaming(thread_id, prompt, |event| {
+        if output_result.is_ok() {
+            output_result = render_event(&event);
+        }
+        TurnControl::Continue
+    })?;
+    output_result?;
+    Ok(turn)
 }
 
 struct ShapeOutput<W> {
@@ -186,6 +273,22 @@ impl<W: Write> ShapeOutput<W> {
         } else {
             rendered
         };
+        self.write(rendered)
+    }
+
+    fn render_event(&mut self, event: &TurnStreamEvent) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty {
+            return Ok(());
+        }
+        let rendered = self.renderer.render_event(event);
+        self.write(rendered)
+    }
+
+    fn tick_on_idle(&mut self, event: &TurnStreamEvent) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty || event != &TurnStreamEvent::Idle {
+            return Ok(());
+        }
+        let rendered = self.renderer.tick();
         self.write(rendered)
     }
 
