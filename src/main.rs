@@ -21,5 +21,6 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Plan(args) => commands::plan::run(args),
         Command::Run(args) => commands::run::run(args),
+        Command::Shape(args) => commands::shape::run(args),
     }
 }
