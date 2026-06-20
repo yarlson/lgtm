@@ -6,6 +6,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
+mod completion;
+
 use crate::{
     app_server::{AppServerClient, CompletedTurn, TurnControl, TurnStreamEvent},
     cli::{ShapeArgs, StreamMode},
@@ -17,6 +19,8 @@ use crate::{
     skills,
 };
 
+use completion::{parse_final_plan_marker, validate_reported_plan_path};
+
 const STARTUP_STATUS: &str = "Started 2 Codex sessions; gathering context";
 const HANDOFF_CHAR_BUDGET: usize = 4_000;
 
@@ -26,6 +30,7 @@ struct ShapeConfig {
     brief: String,
     plan_path: PathBuf,
     stream_mode: StreamMode,
+    max_rounds: u32,
 }
 
 impl ShapeConfig {
@@ -40,8 +45,11 @@ impl ShapeConfig {
             stream_mode,
             log_dir,
             run_stamp,
-            max_rounds: _,
+            max_rounds,
         } = args;
+        if max_rounds == 0 {
+            bail!("lgtm shape --max-rounds must be at least 1")
+        }
         let runtime = CommandRuntime::new(CommandRuntimeConfig {
             root,
             log_dir,
@@ -55,6 +63,7 @@ impl ShapeConfig {
             brief,
             plan_path,
             stream_mode,
+            max_rounds,
         })
     }
 
@@ -182,44 +191,77 @@ fn run_shape_orchestration(
     )
     .context("shape session B round 0 initial discovery failed")?;
 
-    let question_turn = run_shape_streaming_turn(
+    let mut sparring_prompt = prompt::shape_session_a_initial_prompt(&context);
+    for round in 1..=config.max_rounds {
+        let sparring_turn = run_shape_streaming_turn(
+            &mut sessions.session_a,
+            &sessions.thread_a,
+            &sparring_prompt,
+            output,
+        )
+        .with_context(|| format!("shape session A round {round} sparring turn failed"))?;
+
+        if let Some(marker) = parse_final_plan_marker(&sparring_turn.transcript.response_text())? {
+            validate_reported_plan_path(
+                config.runtime.root(),
+                &config.plan_path,
+                &config.runtime.resolve_root_path(&config.plan_path),
+                &marker,
+            )?;
+            return Ok(());
+        }
+
+        if round == config.max_rounds {
+            break;
+        }
+
+        let question = handoff_excerpt("Session A", &sparring_turn, HANDOFF_CHAR_BUDGET)?;
+        let answer_turn = run_shape_hidden_turn(
+            &mut sessions.session_b,
+            &sessions.thread_b,
+            &prompt::shape_session_b_question_prompt(&question),
+            output,
+        )
+        .with_context(|| format!("shape session B round {round} evidence answer failed"))?;
+        let answer = validate_or_repair_evidence_answer(
+            &mut sessions.session_b,
+            &sessions.thread_b,
+            round,
+            &question,
+            &answer_turn,
+            output,
+        )?;
+        sparring_prompt = prompt::shape_session_a_answer_prompt(&question, &answer);
+    }
+
+    let final_turn = run_shape_streaming_turn(
         &mut sessions.session_a,
         &sessions.thread_a,
-        &prompt::shape_session_a_initial_prompt(&context),
+        &prompt::shape_session_a_finalization_prompt(&context, config.max_rounds),
         output,
     )
-    .context("shape session A round 1 sparring turn failed")?;
-    let question = handoff_excerpt("Session A", &question_turn, HANDOFF_CHAR_BUDGET)?;
+    .context("shape session A finalization turn failed")?;
 
-    let answer_turn = run_shape_hidden_turn(
-        &mut sessions.session_b,
-        &sessions.thread_b,
-        &prompt::shape_session_b_question_prompt(&question),
-        output,
+    if let Some(marker) = parse_final_plan_marker(&final_turn.transcript.response_text())? {
+        validate_reported_plan_path(
+            config.runtime.root(),
+            &config.plan_path,
+            &config.runtime.resolve_root_path(&config.plan_path),
+            &marker,
+        )?;
+        return Ok(());
+    }
+
+    bail!(
+        "shape session A finalization did not report a final plan; expected PLAN_PATH: <path> after --max-rounds={}",
+        config.max_rounds
     )
-    .context("shape session B round 1 evidence answer failed")?;
-    let answer = validate_or_repair_evidence_answer(
-        &mut sessions.session_b,
-        &sessions.thread_b,
-        &question,
-        &answer_turn,
-        output,
-    )?;
-
-    run_shape_streaming_turn(
-        &mut sessions.session_a,
-        &sessions.thread_a,
-        &prompt::shape_session_a_answer_prompt(&question, &answer),
-        output,
-    )
-    .context("shape session A round 2 sparring turn failed")?;
-
-    bail!("lgtm shape loop completion is not implemented yet")
 }
 
 fn validate_or_repair_evidence_answer(
     client: &mut AppServerClient,
     thread_id: &str,
+    round: u32,
     question: &str,
     answer_turn: &CompletedTurn,
     output: &mut CommandOutput<impl Write>,
@@ -238,7 +280,7 @@ fn validate_or_repair_evidence_answer(
         ),
         output,
     )
-    .context("shape session B round 1 evidence answer repair failed")?;
+    .with_context(|| format!("shape session B round {round} evidence answer repair failed"))?;
 
     parse_evidence_answer(&repair_turn.transcript.response_text()).map_err(|invalid_answer| {
         let invalid_answer = truncate_handoff_text(&invalid_answer, HANDOFF_CHAR_BUDGET);
@@ -576,6 +618,21 @@ mod tests {
                 "example.com/lgtm-codex:test",
                 auth_path.as_path()
             )
+        );
+    }
+
+    #[test]
+    fn rejects_zero_max_rounds() {
+        let mut args = shape_args();
+        args.brief = Some("brief".to_string());
+        args.max_rounds = 0;
+
+        let error = ShapeConfig::from_args(args).expect_err("zero rounds");
+
+        assert!(
+            error
+                .to_string()
+                .contains("--max-rounds must be at least 1")
         );
     }
 
