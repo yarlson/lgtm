@@ -133,7 +133,17 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
     assert!(log_a.contains("Session role: A"));
     assert!(log_b.contains("Session role: B"));
     let turn_order = fs::read_to_string(temp.path().join("turn-order")).expect("turn order");
-    assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1"]);
+    assert_eq!(turn_order.lines().collect::<Vec<_>>(), ["2", "1", "2", "1"]);
+    let question_prompt =
+        fs::read_to_string(temp.path().join("turn-2-2.json")).expect("question prompt");
+    assert!(question_prompt.contains("Session A asked this forced-choice question"));
+    assert!(question_prompt.contains("Session A assistant excerpt"));
+    assert!(question_prompt.contains("A SPARRING QUESTION"));
+    let answer_prompt =
+        fs::read_to_string(temp.path().join("turn-1-2.json")).expect("answer prompt");
+    assert!(answer_prompt.contains("Session B answered the previous forced-choice question"));
+    assert!(answer_prompt.contains("Session B assistant excerpt"));
+    assert!(answer_prompt.contains("2, but keep local UX"));
 
     let session_count = fs::read_to_string(temp.path().join("session-counter")).expect("sessions");
     assert_eq!(session_count.trim(), "2");
@@ -141,6 +151,35 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
         fs::read_to_string(temp.path().join("thread-starts.jsonl")).expect("thread starts");
     assert_eq!(thread_starts.lines().count(), 2);
     assert!(thread_starts.contains("RTK - Rust Token Killer"));
+}
+
+#[test]
+fn shape_bounds_large_evidence_answer_before_returning_it_to_sparring_session() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).expect("repo");
+    init_git_repo(&repo);
+    let fake_codex = fake_codex_app_server(temp.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lgtm"))
+        .arg("shape")
+        .arg("brief idea")
+        .arg("--root")
+        .arg(&repo)
+        .arg("--codex-bin")
+        .arg(&fake_codex)
+        .arg("--run-stamp")
+        .arg("test")
+        .env("LGTM_TEST_LARGE_EVIDENCE", "1")
+        .output()
+        .expect("run lgtm");
+
+    assert!(!output.status.success());
+    let answer_prompt =
+        fs::read_to_string(temp.path().join("turn-1-2.json")).expect("answer prompt");
+    assert!(answer_prompt.contains("Session B assistant excerpt"));
+    assert!(answer_prompt.contains("[truncated to 4000 chars]"));
+    assert!(!answer_prompt.contains("TAIL_SHOULD_NOT_REACH_SESSION_A"));
 }
 
 #[test]
@@ -273,8 +312,16 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	  if [ "$session_n" = 1 ]; then
 	    text='A SPARRING QUESTION: 1. Keep current shape 2. Split shape workflow'
 	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"commandExecution","id":"cmd-%s-%s","command":"cargo test","status":"completed","exitCode":0},{"type":"fileChange","id":"file-%s-%s","status":"completed","changes":[{"kind":"update","path":"src/lib.rs"}]},{"type":"webSearch","id":"web-%s-%s","query":"rust shape output","status":"completed"},{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$text"
-	  else
+	  elif [ "$turn_n" = 1 ]; then
 	    text='B HIDDEN DISCOVERY'
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
+	  else
+	    if [ "${LGTM_TEST_LARGE_EVIDENCE:-}" = 1 ]; then
+	      text=$(printf 'x%.0s' $(seq 1 4500))
+	      text="${text}TAIL_SHOULD_NOT_REACH_SESSION_A"
+	    else
+	      text='2, but keep local UX'
+	    fi
 	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
 	  fi
 	done

@@ -18,6 +18,7 @@ use crate::{
 };
 
 const STARTUP_STATUS: &str = "Started 2 Codex sessions; gathering context";
+const HANDOFF_CHAR_BUDGET: usize = 4_000;
 
 #[derive(Debug, Clone)]
 struct ShapeConfig {
@@ -181,15 +182,63 @@ fn run_shape_orchestration(
     )
     .context("shape session B round 0 initial discovery failed")?;
 
-    run_shape_streaming_turn(
+    let question_turn = run_shape_streaming_turn(
         &mut sessions.session_a,
         &sessions.thread_a,
         &prompt::shape_session_a_initial_prompt(&context),
         output,
     )
     .context("shape session A round 1 sparring turn failed")?;
+    let question = handoff_excerpt("Session A", &question_turn, HANDOFF_CHAR_BUDGET)?;
+
+    let answer_turn = run_shape_hidden_turn(
+        &mut sessions.session_b,
+        &sessions.thread_b,
+        &prompt::shape_session_b_question_prompt(&question),
+        output,
+    )
+    .context("shape session B round 1 evidence answer failed")?;
+    let answer = handoff_excerpt("Session B", &answer_turn, HANDOFF_CHAR_BUDGET)?;
+
+    run_shape_streaming_turn(
+        &mut sessions.session_a,
+        &sessions.thread_a,
+        &prompt::shape_session_a_answer_prompt(&question, &answer),
+        output,
+    )
+    .context("shape session A round 2 sparring turn failed")?;
 
     bail!("lgtm shape loop completion is not implemented yet")
+}
+
+fn handoff_excerpt(role: &str, turn: &CompletedTurn, char_budget: usize) -> Result<String> {
+    let response = turn.transcript.response_text();
+    let response = response.trim();
+    if response.is_empty() {
+        bail!("{role} produced empty assistant response for shape handoff")
+    }
+
+    Ok(format!(
+        "{role} assistant excerpt:\n{}",
+        truncate_handoff_text(response, char_budget)
+    ))
+}
+
+fn truncate_handoff_text(text: &str, char_budget: usize) -> String {
+    if text.chars().count() <= char_budget {
+        return text.to_string();
+    }
+
+    let marker = format!("\n[truncated to {char_budget} chars]");
+    let marker_len = marker.chars().count();
+    if char_budget <= marker_len {
+        return marker.chars().take(char_budget).collect();
+    }
+
+    let keep_chars = char_budget - marker_len;
+    let mut truncated = text.chars().take(keep_chars).collect::<String>();
+    truncated.push_str(&marker);
+    truncated
 }
 
 fn run_shape_hidden_turn(
@@ -288,7 +337,9 @@ fn target_root(root: Option<&Path>) -> Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_server::{TranscriptItem, TurnTranscript};
     use crate::cli::{ExecutionArgs, ExecutionSandbox, ShapeArgs, StreamMode};
+    use serde_json::json;
 
     fn shape_args() -> ShapeArgs {
         ShapeArgs {
@@ -497,5 +548,101 @@ mod tests {
 
         let rendered = String::from_utf8(output.into_inner()).expect("utf8");
         assert_eq!(rendered, "Started 2 Codex sessions; gathering context\n");
+    }
+
+    #[test]
+    fn handoff_excerpt_formats_role_labeled_response_text() {
+        let turn = completed_turn("Keep the Rust CLI small.");
+
+        let excerpt = handoff_excerpt("Session A", &turn, 200).expect("excerpt");
+
+        assert_eq!(
+            excerpt,
+            "Session A assistant excerpt:\nKeep the Rust CLI small."
+        );
+    }
+
+    #[test]
+    fn handoff_excerpt_rejects_empty_response_text() {
+        let turn = completed_turn(" \n\t ");
+
+        let error = handoff_excerpt("Session B", &turn, 200).expect_err("empty response");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Session B produced empty assistant response for shape handoff")
+        );
+    }
+
+    #[test]
+    fn handoff_excerpt_truncates_response_text_by_character_budget() {
+        let turn = completed_turn("abcdeЖЗИЙ12345678901234567890tail");
+
+        let excerpt = handoff_excerpt("Session B", &turn, 30).expect("excerpt");
+        let body = excerpt
+            .strip_prefix("Session B assistant excerpt:\n")
+            .expect("role label");
+
+        assert_eq!(body.chars().count(), 30);
+        assert!(body.starts_with("abcdeЖ"));
+        assert!(body.ends_with("[truncated to 30 chars]"));
+        assert!(!body.contains("tail"));
+    }
+
+    #[test]
+    fn handoff_excerpt_uses_assistant_response_without_activity_output() {
+        let items = vec![
+            TranscriptItem::from_app_server_item(&json!({
+                "type": "commandExecution",
+                "id": "cmd",
+                "command": "cat secret.txt",
+                "status": "completed",
+                "exitCode": 0,
+                "aggregatedOutput": "SECRET_OUTPUT",
+            }))
+            .expect("command item"),
+            TranscriptItem::from_app_server_item(&json!({
+                "type": "fileChange",
+                "id": "file",
+                "status": "completed",
+                "changes": [{"kind": "update", "path": "secret.patch"}],
+            }))
+            .expect("file change item"),
+            TranscriptItem::from_app_server_item(&json!({
+                "type": "agentMessage",
+                "id": "msg",
+                "text": "Use option 2.",
+                "status": "completed",
+            }))
+            .expect("agent message item"),
+        ];
+        let turn = completed_turn_with_items(items);
+
+        let excerpt = handoff_excerpt("Session A", &turn, 200).expect("excerpt");
+
+        assert_eq!(excerpt, "Session A assistant excerpt:\nUse option 2.");
+        assert!(!excerpt.contains("SECRET_OUTPUT"));
+        assert!(!excerpt.contains("secret.patch"));
+    }
+
+    fn completed_turn(text: &str) -> CompletedTurn {
+        let item = TranscriptItem::from_app_server_item(&json!({
+            "type": "agentMessage",
+            "id": "msg",
+            "text": text,
+            "status": "completed",
+        }))
+        .expect("agent message item");
+        completed_turn_with_items(vec![item])
+    }
+
+    fn completed_turn_with_items(items: Vec<TranscriptItem>) -> CompletedTurn {
+        CompletedTurn {
+            turn_id: "turn".to_string(),
+            status: "completed".to_string(),
+            transcript: TurnTranscript::from_items(Vec::new(), items),
+            usage: None,
+        }
     }
 }
