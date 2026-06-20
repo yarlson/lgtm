@@ -69,6 +69,23 @@ impl Renderer {
         ])
     }
 
+    pub fn shape_round_header(&mut self, round: u32, label: &str) -> String {
+        let activity_prefix = format!("working on shape round {round} {label}");
+        self.activity_status = Some(ActivityStatus {
+            idle_label: activity_prefix.clone(),
+            activity_prefix,
+            started_at: Instant::now(),
+        });
+        ItemRenderer::new(&self.options).render_lines(vec![
+            ItemRenderer::new(&self.options).header(
+                "Shape",
+                Color::Blue,
+                format!("{round:02} {label}"),
+            ),
+            Line::blank(),
+        ])
+    }
+
     pub fn planning_header(&mut self) -> String {
         self.activity_status = Some(ActivityStatus {
             idle_label: "working on planning".to_string(),

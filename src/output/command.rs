@@ -72,6 +72,14 @@ impl<W: Write> CommandOutput<W> {
         self.write(rendered)
     }
 
+    pub(crate) fn shape_round_header(&mut self, round: u32, label: &str) -> Result<()> {
+        if self.stream_mode != StreamMode::Pretty {
+            return Ok(());
+        }
+        let rendered = self.renderer.shape_round_header(round, label);
+        self.write(rendered)
+    }
+
     pub(crate) fn start_status_line(&mut self, label: impl Into<String>) -> Result<()> {
         if self.stream_mode != StreamMode::Pretty {
             return Ok(());

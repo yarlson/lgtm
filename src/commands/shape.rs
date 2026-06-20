@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 mod completion;
 
 use crate::{
-    app_server::{AppServerClient, CompletedTurn, TurnControl, TurnStreamEvent},
+    app_server::{AppServerClient, CompletedTurn, TokenUsage, TurnControl, TurnStreamEvent},
     cli::{ShapeArgs, StreamMode},
     commands::execution::ExecutionConfig,
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, RuntimeAppServerClient},
@@ -24,6 +24,7 @@ use completion::{
 };
 
 const STARTUP_STATUS: &str = "Started 2 Codex sessions; gathering context";
+const EVIDENCE_DISCOVERY_STATUS: &str = "gathering evidence";
 const HANDOFF_CHAR_BUDGET: usize = 4_000;
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,7 @@ pub fn run(args: ShapeArgs) -> Result<()> {
 
 fn run_config(config: ShapeConfig) -> Result<()> {
     let mut output = CommandOutput::stdout(config.stream_mode);
+    let mut usage = TokenUsage::default();
     output.banner(Banner {
         mode: BannerMode::Shape,
         root: config.runtime.root(),
@@ -94,13 +96,15 @@ fn run_config(config: ShapeConfig) -> Result<()> {
     skills::install(config.runtime.root())?;
 
     let mut sessions = start_shape_sessions(&config)?;
-    let orchestration_result = run_shape_orchestration(&config, &mut sessions, &mut output);
+    let orchestration_result =
+        run_shape_orchestration(&config, &mut sessions, &mut output, &mut usage);
     let finish_result = output.finish();
     let stop_result = stop_shape_sessions(sessions);
 
     let final_plan_path = orchestration_result?;
     finish_result?;
     output.message_line(format!("Final plan: {}", final_plan_path.display()))?;
+    output.token_summary(usage)?;
     stop_result?;
     Ok(())
 }
@@ -178,6 +182,7 @@ fn run_shape_orchestration(
     config: &ShapeConfig,
     sessions: &mut ShapeSessions,
     output: &mut CommandOutput<impl Write>,
+    usage: &mut TokenUsage,
 ) -> Result<PathBuf> {
     output.start_visible_status_line(STARTUP_STATUS)?;
     let context = ShapePromptContext {
@@ -186,21 +191,26 @@ fn run_shape_orchestration(
         plan_path: &config.runtime.resolve_root_path(&config.plan_path),
     };
 
-    run_shape_hidden_turn(
+    run_shape_status_turn(
         &mut sessions.session_b,
         &sessions.thread_b,
         &prompt::shape_session_b_initial_prompt(&context),
+        EVIDENCE_DISCOVERY_STATUS,
         output,
+        usage,
     )
     .context("shape session B round 0 initial discovery failed")?;
 
     let mut sparring_prompt = prompt::shape_session_a_initial_prompt(&context);
     for round in 1..=config.max_rounds {
-        let sparring_turn = run_shape_streaming_turn(
+        let sparring_turn = run_shape_streaming_round(
             &mut sessions.session_a,
             &sessions.thread_a,
+            round,
+            "sparring",
             &sparring_prompt,
             output,
+            usage,
         )
         .with_context(|| format!("shape session A round {round} sparring turn failed"))?;
 
@@ -213,11 +223,13 @@ fn run_shape_orchestration(
         }
 
         let question = handoff_excerpt("Session A", &sparring_turn, HANDOFF_CHAR_BUDGET)?;
-        let answer_turn = run_shape_hidden_turn(
+        let answer_turn = run_shape_status_turn(
             &mut sessions.session_b,
             &sessions.thread_b,
             &prompt::shape_session_b_question_prompt(&question),
+            evidence_answer_status(round),
             output,
+            usage,
         )
         .with_context(|| format!("shape session B round {round} evidence answer failed"))?;
         let answer = validate_or_repair_evidence_answer(
@@ -227,15 +239,19 @@ fn run_shape_orchestration(
             &question,
             &answer_turn,
             output,
+            usage,
         )?;
         sparring_prompt = prompt::shape_session_a_answer_prompt(&question, &answer);
     }
 
-    let final_turn = run_shape_streaming_turn(
+    let final_turn = run_shape_streaming_round(
         &mut sessions.session_a,
         &sessions.thread_a,
+        config.max_rounds.saturating_add(1),
+        "finalization",
         &prompt::shape_session_a_finalization_prompt(&context, config.max_rounds),
         output,
+        usage,
     )
     .context("shape session A finalization turn failed")?;
 
@@ -247,6 +263,14 @@ fn run_shape_orchestration(
         "shape session A finalization did not report a final plan; expected PLAN_PATH: <path> after --max-rounds={}",
         config.max_rounds
     )
+}
+
+fn evidence_answer_status(round: u32) -> String {
+    format!("answering shape round {round} from evidence")
+}
+
+fn evidence_repair_status(round: u32) -> String {
+    format!("repairing shape round {round} evidence answer")
 }
 
 fn complete_shape_plan(config: &ShapeConfig, marker: &Path) -> Result<PathBuf> {
@@ -268,20 +292,24 @@ fn validate_or_repair_evidence_answer(
     question: &str,
     answer_turn: &CompletedTurn,
     output: &mut CommandOutput<impl Write>,
+    usage: &mut TokenUsage,
 ) -> Result<String> {
     let invalid_answer = match parse_evidence_answer(&answer_turn.transcript.response_text()) {
         Ok(answer) => return Ok(answer),
         Err(invalid_answer) => invalid_answer,
     };
 
-    let repair_turn = run_shape_hidden_turn(
+    let repair_prompt = prompt::shape_session_b_answer_repair_prompt(
+        question,
+        &truncate_handoff_text(&invalid_answer, HANDOFF_CHAR_BUDGET),
+    );
+    let repair_turn = run_shape_status_turn(
         client,
         thread_id,
-        &prompt::shape_session_b_answer_repair_prompt(
-            question,
-            &truncate_handoff_text(&invalid_answer, HANDOFF_CHAR_BUDGET),
-        ),
+        &repair_prompt,
+        evidence_repair_status(round),
         output,
+        usage,
     )
     .with_context(|| format!("shape session B round {round} evidence answer repair failed"))?;
 
@@ -368,6 +396,36 @@ fn run_shape_streaming_turn(
     })
 }
 
+fn run_shape_status_turn(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    prompt: &str,
+    status: impl Into<String>,
+    output: &mut CommandOutput<impl Write>,
+    usage: &mut TokenUsage,
+) -> Result<CompletedTurn> {
+    let turn = output.with_status_line(status, |output| {
+        run_shape_hidden_turn(client, thread_id, prompt, output)
+    })?;
+    add_usage(usage, &turn);
+    Ok(turn)
+}
+
+fn run_shape_streaming_round(
+    client: &mut AppServerClient,
+    thread_id: &str,
+    round: u32,
+    label: &str,
+    prompt: &str,
+    output: &mut CommandOutput<impl Write>,
+    usage: &mut TokenUsage,
+) -> Result<CompletedTurn> {
+    output.shape_round_header(round, label)?;
+    let turn = run_shape_streaming_turn(client, thread_id, prompt, output)?;
+    add_usage(usage, &turn);
+    Ok(turn)
+}
+
 fn run_shape_turn(
     client: &mut AppServerClient,
     thread_id: &str,
@@ -383,6 +441,12 @@ fn run_shape_turn(
     })?;
     output_result?;
     Ok(turn)
+}
+
+fn add_usage(total: &mut TokenUsage, turn: &CompletedTurn) {
+    if let Some(usage) = turn.usage {
+        *total = total.add(usage);
+    }
 }
 
 fn read_brief_source(
@@ -668,6 +732,19 @@ mod tests {
 
         let rendered = String::from_utf8(output.into_inner()).expect("utf8");
         assert_eq!(rendered, "Started 2 Codex sessions; gathering context\n");
+    }
+
+    #[test]
+    fn evidence_status_labels_stay_compact_and_round_specific() {
+        assert_eq!(EVIDENCE_DISCOVERY_STATUS, "gathering evidence");
+        assert_eq!(
+            evidence_answer_status(7),
+            "answering shape round 7 from evidence"
+        );
+        assert_eq!(
+            evidence_repair_status(7),
+            "repairing shape round 7 evidence answer"
+        );
     }
 
     #[test]

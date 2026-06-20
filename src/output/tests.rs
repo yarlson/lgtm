@@ -233,6 +233,20 @@ fn idle_tick_renders_phase_spinner_when_interactive() {
 }
 
 #[test]
+fn idle_tick_renders_shape_round_spinner_when_interactive() {
+    let mut renderer = interactive_renderer();
+    let header = renderer.shape_round_header(1, "sparring");
+
+    let tick = renderer.render_event(&TurnStreamEvent::Idle);
+    let finish = renderer.finish();
+
+    assert!(header.contains("• Shape 01 sparring"));
+    assert!(tick.contains("\r\x1b[2K"));
+    assert!(tick.contains("working on shape round 1 sparring"));
+    assert!(finish.contains("\x1b[?25h"));
+}
+
+#[test]
 fn idle_tick_renders_planning_spinner_when_interactive() {
     let mut renderer = interactive_renderer();
     let header = renderer.planning_header();

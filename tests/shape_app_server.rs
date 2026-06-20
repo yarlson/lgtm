@@ -94,12 +94,16 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
     assert!(stdout.contains("• Ran cargo test"), "{stdout}");
     assert!(stdout.contains("• Edited src/lib.rs"), "{stdout}");
     assert!(stdout.contains("• Searched rust shape output"), "{stdout}");
+    assert!(stdout.contains("• Shape 01 sparring"), "{stdout}");
+    assert!(stdout.contains("• Shape 02 sparring"), "{stdout}");
     assert!(stdout.contains("• Codex"), "{stdout}");
     assert!(stdout.contains("A SPARRING QUESTION"), "{stdout}");
     assert!(stdout.contains("PLAN_PATH: PLAN.md"), "{stdout}");
     assert!(stdout.contains("Final plan: "), "{stdout}");
     assert!(stdout.contains("PLAN.md"), "{stdout}");
+    assert!(stdout.contains("• Tokens: input 40 (cached 32), output 8, reasoning 4, total 48"));
     assert!(!stdout.contains("B HIDDEN DISCOVERY"), "{stdout}");
+    assert!(!stdout.contains("2, but keep local UX"), "{stdout}");
     assert!(repo.join("PLAN.md").is_file());
 
     assert!(repo.join(".git").is_dir());
@@ -566,10 +570,10 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	      fi
 	      text='PLAN_PATH: PLAN.md'
 	    fi
-	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"commandExecution","id":"cmd-%s-%s","command":"cargo test","status":"completed","exitCode":0},{"type":"fileChange","id":"file-%s-%s","status":"completed","changes":[{"kind":"update","path":"src/lib.rs"}]},{"type":"webSearch","id":"web-%s-%s","query":"rust shape output","status":"completed"},{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$text"
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12},"items":[{"type":"commandExecution","id":"cmd-%s-%s","command":"cargo test","status":"completed","exitCode":0},{"type":"fileChange","id":"file-%s-%s","status":"completed","changes":[{"kind":"update","path":"src/lib.rs"}]},{"type":"webSearch","id":"web-%s-%s","query":"rust shape output","status":"completed"},{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$session_n" "$turn_n" "$text"
 	  elif [ "$turn_n" = 1 ]; then
 	    text='B HIDDEN DISCOVERY'
-	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12},"items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
 	  else
 	    if [ "${LGTM_TEST_LARGE_EVIDENCE:-}" = 1 ]; then
 	      text=$(printf 'x%.0s' $(seq 1 4500))
@@ -589,7 +593,7 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	    else
 	      text='2, but keep local UX'
 	    fi
-	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
+	    printf '{"method":"turn/completed","params":{"threadId":"thr-%s","turn":{"id":"%s","status":"completed","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12},"items":[{"type":"agentMessage","id":"msg-%s-%s","text":"%s","status":"completed"}]}}}\n' "$session_n" "$turn_id" "$session_n" "$turn_n" "$text"
 	  fi
 	done
 	: >"$dir/stopped-$session_n"
