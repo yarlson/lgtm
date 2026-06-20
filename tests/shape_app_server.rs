@@ -92,6 +92,8 @@ fn shape_runtime_preflight_starts_two_sessions_installs_skills_and_logs() {
         "{stdout}"
     );
     assert!(stdout.contains("• Ran cargo test"), "{stdout}");
+    assert!(stdout.contains("• Updated Plan"), "{stdout}");
+    assert!(stdout.contains("Inspect shape workflow"), "{stdout}");
     assert!(stdout.contains("• Edited src/lib.rs"), "{stdout}");
     assert!(stdout.contains("• Searched rust shape output"), "{stdout}");
     assert!(stdout.contains("• Shape 01 sparring"), "{stdout}");
@@ -549,6 +551,9 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	    printf '# Plan\n\n## Phase 1 - Test\n\nGoal:\nShip.\n\nSteps:\n- Do it.\n\nValidation:\n- Check it.\n' > PLAN.md
 	  fi
 	}
+	emit_plan_update() {
+	  printf '{"method":"turn/plan/updated","params":{"threadId":"thr-%s","turnId":"%s","plan":[{"step":"Inspect shape workflow","status":"completed"},{"step":"Write final PLAN.md","status":"inProgress"}]}}\n' "$session_n" "$turn_id"
+	}
 	while IFS= read -r turn_start; do
 	  turn_n=$((turn_n + 1))
 	  printf '%s\n' "$session_n" >>"$dir/turn-order"
@@ -557,6 +562,7 @@ fn fake_codex_app_server(dir: &Path) -> std::path::PathBuf {
 	  turn_id="turn-$session_n-$turn_n"
 	  printf '{"id":%s,"result":{"turn":{"id":"%s","status":"inProgress","items":[]}}}\n' "$id" "$turn_id"
 	  if [ "$session_n" = 1 ]; then
+	    emit_plan_update
 	    if [ "$turn_n" = 1 ]; then
 	      text='A SPARRING QUESTION: 1. Keep current shape 2. Split shape workflow'
 	    elif [ "${LGTM_TEST_FINALIZATION_NO_MARKER:-}" = 1 ]; then
