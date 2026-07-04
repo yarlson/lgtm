@@ -60,18 +60,19 @@ impl AppServerClient {
     }
 
     fn spawn(launch: AppServerLaunch, config: AppServerConfig) -> Result<Self> {
-        let mut child = Command::new(launch.program())
+        let mut command = Command::new(launch.program());
+        command
             .args(launch.args())
+            .envs(launch.envs().iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to start app-server command: {}",
-                    launch.display_command()
-                )
-            })?;
+            .stderr(Stdio::inherit());
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "failed to start app-server command: {}",
+                launch.display_command()
+            )
+        })?;
 
         let stdin = child
             .stdin

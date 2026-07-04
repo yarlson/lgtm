@@ -9,6 +9,7 @@ use crate::output::{
 pub(crate) enum BannerMode {
     Plan,
     Run,
+    Shape,
 }
 
 impl BannerMode {
@@ -16,6 +17,7 @@ impl BannerMode {
         match self {
             Self::Plan => "plan",
             Self::Run => "run",
+            Self::Shape => "shape",
         }
     }
 }

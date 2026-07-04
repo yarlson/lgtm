@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`lgtm` is Rust 2024 CLI crate. Drives Codex via repo-local planning and phase execution loops. Uses `codex app-server`, installs bundled `lgtm-*` skills into target repos, writes app-server protocol logs under `.codex-log/`, renders compact terminal transcript with spinner rows for long turns.
+`lgtm` is Rust 2024 CLI crate. Drives Codex via repo-local planning and phase execution loops. Uses `codex app-server`, installs bundled `lgtm-*` skills into target repos, writes app-server protocol logs under `.lgtm/logs/`, renders compact terminal transcript with spinner rows for long turns.
 
 Single-crate repo, not monorepo.
 
@@ -69,12 +69,27 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo test --test run_app_server
 cargo test --test plan_app_server
+cargo test --test shape_app_server
 cargo test <test_name>
 ```
 
-Tests split: inline module tests under `src/`, integration tests under `tests/`. Integration tests use temp Git repos + fake `codex` executables; preserve pattern for orchestration behavior so tests exercise real binary without real Codex CLI.
+Tests split: inline module tests under `src/`, integration tests under `tests/`.
+Integration tests use temp Git repos + fake `codex` executables; preserve
+pattern for orchestration behavior so tests exercise real binary without real
+Codex CLI.
 
-When changing prompt text, managed skills, or rendered output, update tests only to match intended user-visible behavior.
+When changing prompt text, managed skills, or rendered output, update tests only
+to match intended user-visible behavior.
+
+Do not add tests that merely assert prompt or skill text contains fixed strings.
+Those are brittle wiring checks, not quality proof. For prompt changes, verify
+observable behavior, structured parser/validator contracts, or generated
+artifacts scored by an eval with negative controls.
+
+Default to deterministic evals unless live evals are explicitly requested.
+Live evals spend tokens and require local Codex auth, model access, and network
+availability. For prompt, skill, plan-shape, or scorer changes, run score-only
+controls before any live plan or shape eval.
 
 ## Code Style
 
@@ -97,7 +112,7 @@ When changing prompt text, managed skills, or rendered output, update tests only
 
 `lgtm` starts `codex app-server`, creates turns with `danger-full-access` and approval policy `never` inside target repo. Treat as fully autonomous local filesystem + command execution. Preserve existing safety messaging in README/help when changing invocation behavior.
 
-No logging secrets, tokens, or env dumps. App-server protocol logs go in `.codex-log/`, ignored by this repo, added to target repos by preflight.
+No logging secrets, tokens, or env dumps. App-server protocol logs go in `.lgtm/logs/`, ignored by this repo, added to target repos by preflight.
 
 ## Build and Release
 

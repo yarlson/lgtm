@@ -1,12 +1,7 @@
-use std::{
-    fs,
-    io::{self, Write},
-    path::PathBuf,
-    thread,
-    time::Duration,
-};
+use std::{fs, io::Write, path::PathBuf, process::Command, thread, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use serde_json::json;
 
 use crate::{
     app_server::{AppServerClient, CompletedTurn, TokenUsage, TurnControl, TurnStreamEvent},
@@ -14,11 +9,11 @@ use crate::{
     commands::execution::ExecutionConfig,
     commands::runtime::{CommandRuntime, CommandRuntimeConfig, require_file},
     git,
-    output::{
-        RenderOptions, Renderer,
-        banner::{self, Banner, BannerMode},
-    },
+    output::{CommandOutput, banner::Banner, banner::BannerMode},
+    pass_verdict::{self, PassVerdict, PassVerdictStatus},
+    paths,
     phase_index::{self, Phase},
+    plan_contract,
     prompt::{self, PhasePass},
     skills,
 };
@@ -121,7 +116,7 @@ pub fn run(args: RunArgs) -> Result<()> {
 }
 
 pub(super) fn run_config(config: RunConfig) -> Result<()> {
-    let mut output = RunOutput::stdout(config.stream_mode);
+    let mut output = CommandOutput::stdout(config.stream_mode);
     let mut usage = TokenUsage::default();
     output.banner(Banner {
         mode: BannerMode::Run,
@@ -132,6 +127,7 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
 
     require_file(&config.plan_abs(), &config.plan_path)?;
     require_file(&config.agents_abs(), &config.agents_path)?;
+    plan_contract::validate_plan_file(&config.plan_abs())?;
     skills::preflight(config.runtime.root())?;
     git::ensure_initialized(config.runtime.root())?;
     skills::install(config.runtime.root())?;
@@ -180,111 +176,15 @@ pub(super) fn run_config(config: RunConfig) -> Result<()> {
     output.token_summary(usage)
 }
 
-struct RunOutput<W> {
-    stream_mode: StreamMode,
-    renderer: Renderer,
-    output: W,
-}
-
-impl RunOutput<io::Stdout> {
-    fn stdout(stream_mode: StreamMode) -> Self {
-        Self::new(stream_mode, io::stdout())
-    }
-}
-
-impl<W: Write> RunOutput<W> {
-    fn new(stream_mode: StreamMode, output: W) -> Self {
-        Self {
-            stream_mode,
-            renderer: Renderer::new(RenderOptions::default()),
-            output,
-        }
-    }
-
-    fn with_status_line<T>(
-        &mut self,
-        label: impl Into<String>,
-        action: impl FnOnce(&mut Self) -> Result<T>,
-    ) -> Result<T> {
-        self.start_status_line(label)?;
-        let result = action(self);
-        let finish_result = self.finish();
-        if result.is_ok() {
-            finish_result?;
-        }
-        result
-    }
-
-    fn start_status_line(&mut self, label: impl Into<String>) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let rendered = self.renderer.start_status_line(label);
-        self.write(rendered)
-    }
-
-    fn banner(&mut self, banner: Banner<'_>) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        self.write(banner::render(banner, &RenderOptions::default()))
-    }
-
-    fn phase_header(&mut self, phase: &Phase, pass: PhasePass) -> Result<()> {
-        let rendered = self
-            .renderer
-            .phase_header(phase.id, &phase.title, pass.label());
-        self.write(rendered)
-    }
-
-    fn render_event(&mut self, event: &TurnStreamEvent) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty {
-            return Ok(());
-        }
-        let rendered = self.renderer.render_event(event);
-        self.write(rendered)
-    }
-
-    fn tick_on_idle(&mut self, event: &TurnStreamEvent) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || event != &TurnStreamEvent::Idle {
-            return Ok(());
-        }
-        let rendered = self.renderer.tick();
-        self.write(rendered)
-    }
-
-    fn finish(&mut self) -> Result<()> {
-        let rendered = self.renderer.finish();
-        self.write(rendered)
-    }
-
-    fn token_summary(&mut self, usage: TokenUsage) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || usage.is_zero() {
-            return Ok(());
-        }
-        self.write(token_summary_line(usage))
-    }
-
-    fn phase_token_summary(&mut self, phase_id: u32, usage: TokenUsage) -> Result<()> {
-        if self.stream_mode != StreamMode::Pretty || usage.is_zero() {
-            return Ok(());
-        }
-        self.write(phase_token_summary_line(phase_id, usage))
-    }
-
-    fn write(&mut self, rendered: String) -> Result<()> {
-        write_run_output(&mut self.output, rendered)
-    }
-}
-
 fn load_phase_index(
     config: &RunConfig,
     phase_id: u32,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
     usage: &mut TokenUsage,
 ) -> Result<Vec<Phase>> {
     let plan_text = fs::read_to_string(config.plan_abs())
         .with_context(|| format!("failed to read {}", config.plan_path.display()))?;
+    plan_contract::validate_plan_contract(&config.plan_path, &plan_text)?;
     let log_name = format!(
         "{}-phase-{phase_id:02}-index.jsonl",
         config.runtime.run_stamp()
@@ -331,7 +231,7 @@ fn run_phase_index_turn(
     client: &mut AppServerClient,
     thread_id: &str,
     prompt: &str,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
 ) -> Result<CompletedTurn> {
     run_streaming_turn(
         client,
@@ -345,7 +245,7 @@ fn run_phase_index_turn(
 fn run_phase(
     config: &RunConfig,
     phase: &Phase,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
     usage: &mut TokenUsage,
 ) -> Result<()> {
     let first_pass = PhasePass::Implement;
@@ -357,26 +257,30 @@ fn run_phase(
     )?;
     let thread_id = client.start_thread()?;
 
-    run_phase_pass(
-        config,
-        phase,
-        first_pass,
-        &mut client,
-        &thread_id,
-        output,
-        usage,
-    )?;
-    for pass in PhasePass::ALL.into_iter().skip(1) {
-        let log_name = phase_pass_log_name(config, phase, pass);
-        config.runtime.set_log_sink(
+    let phase_result: Result<()> = (|| {
+        run_phase_pass(
+            config,
+            phase,
+            first_pass,
             &mut client,
-            &log_name,
-            config.stream_mode == StreamMode::Raw,
+            &thread_id,
+            output,
+            usage,
         )?;
-        run_phase_pass(config, phase, pass, &mut client, &thread_id, output, usage)?;
-    }
-
-    client.stop()?;
+        for pass in PhasePass::ALL.into_iter().skip(1) {
+            let log_name = phase_pass_log_name(config, phase, pass);
+            config.runtime.set_log_sink(
+                &mut client,
+                &log_name,
+                config.stream_mode == StreamMode::Raw,
+            )?;
+            run_phase_pass(config, phase, pass, &mut client, &thread_id, output, usage)?;
+        }
+        Ok(())
+    })();
+    let stop_result = client.stop();
+    phase_result?;
+    stop_result?;
     output.phase_token_summary(phase.id, *usage)
 }
 
@@ -395,10 +299,15 @@ fn run_phase_pass(
     pass: PhasePass,
     client: &mut AppServerClient,
     thread_id: &str,
-    output: &mut RunOutput<impl Write>,
+    output: &mut CommandOutput<impl Write>,
     usage: &mut TokenUsage,
 ) -> Result<()> {
-    output.phase_header(phase, pass)?;
+    output.phase_header(phase.id, &phase.title, pass.label())?;
+    let commit_before = if pass == PhasePass::Commit {
+        Some(GitCommitState::capture(config.runtime.root())?)
+    } else {
+        None
+    };
     let turn = run_streaming_turn(
         client,
         thread_id,
@@ -407,7 +316,298 @@ fn run_phase_pass(
         pass.reasoning_effort(),
     )?;
     add_usage(usage, &turn);
-    output.finish()
+    output.finish()?;
+    enforce_phase_pass_verdict(config, phase, pass, &turn)?;
+    if let Some(commit_before) = commit_before {
+        verify_commit_pass(config, phase, &commit_before)?;
+    }
+    Ok(())
+}
+
+fn enforce_phase_pass_verdict(
+    config: &RunConfig,
+    phase: &Phase,
+    pass: PhasePass,
+    turn: &CompletedTurn,
+) -> Result<()> {
+    if !pass.requires_verdict() {
+        return Ok(());
+    }
+
+    let response = turn.transcript.response_text();
+    let verdict = match pass_verdict::parse_pass_verdict(&response) {
+        Ok(verdict) => verdict,
+        Err(error) => {
+            write_gate_error(config, phase, pass, &error.to_string(), &response)?;
+            return Err(error).with_context(|| {
+                format!("Phase {} {} verdict is invalid", phase.id, pass.label())
+            });
+        }
+    };
+    write_gate_artifact(config, phase, pass, &verdict)?;
+    if verdict.status == PassVerdictStatus::Block {
+        bail!(
+            "Phase {} {} blocked: {}",
+            phase.id,
+            pass.label(),
+            verdict.blockers.join("; ")
+        )
+    }
+
+    Ok(())
+}
+
+fn write_gate_artifact(
+    config: &RunConfig,
+    phase: &Phase,
+    pass: PhasePass,
+    verdict: &PassVerdict,
+) -> Result<()> {
+    let path = gate_artifact_path(config, phase, pass);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let status = match verdict.status {
+        PassVerdictStatus::Pass => "pass",
+        PassVerdictStatus::Block => "block",
+    };
+    let content = json!({
+        "run_stamp": config.runtime.run_stamp(),
+        "phase": {
+            "id": phase.id,
+            "title": phase.title,
+            "heading": phase.heading,
+        },
+        "pass": pass.action(),
+        "status": status,
+        "summary": verdict.summary,
+        "checks": verdict.checks,
+        "fixes": verdict.fixes,
+        "blockers": verdict.blockers,
+        "out_of_scope": verdict.out_of_scope,
+        "raw_marker": verdict.raw_marker,
+    });
+    write_json_file(&path, &content)
+}
+
+fn write_gate_error(
+    config: &RunConfig,
+    phase: &Phase,
+    pass: PhasePass,
+    error: &str,
+    response: &str,
+) -> Result<()> {
+    let path = gate_artifact_path(config, phase, pass);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let content = json!({
+        "run_stamp": config.runtime.run_stamp(),
+        "phase": {
+            "id": phase.id,
+            "title": phase.title,
+            "heading": phase.heading,
+        },
+        "pass": pass.action(),
+        "status": "invalid",
+        "error": error,
+        "response": response,
+    });
+    write_json_file(&path, &content)
+}
+
+fn gate_artifact_path(config: &RunConfig, phase: &Phase, pass: PhasePass) -> PathBuf {
+    paths::default_gate_dir(config.runtime.root()).join(format!(
+        "{}-phase-{phase:02}-{action}.json",
+        config.runtime.run_stamp(),
+        phase = phase.id,
+        action = pass.action()
+    ))
+}
+
+fn write_json_file(path: &std::path::Path, value: &serde_json::Value) -> Result<()> {
+    let content =
+        serde_json::to_string_pretty(value).context("failed to serialize gate artifact")?;
+    fs::write(path, format!("{content}\n"))
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+#[derive(Debug)]
+struct GitCommitState {
+    head: Option<String>,
+    status_before_commit: String,
+}
+
+impl GitCommitState {
+    fn capture(root: &std::path::Path) -> Result<Self> {
+        Ok(Self {
+            head: git_head(root)?,
+            status_before_commit: git_status_porcelain(root)?,
+        })
+    }
+
+    fn dirty(&self) -> bool {
+        !self.status_before_commit.trim().is_empty()
+    }
+}
+
+fn verify_commit_pass(config: &RunConfig, phase: &Phase, before: &GitCommitState) -> Result<()> {
+    let after_head = git_head(config.runtime.root())?;
+    let after_status = git_status_porcelain(config.runtime.root())?;
+    let ignored_after_path = commit_log_status_path(config, phase);
+    let after_paths = status_paths(&after_status)
+        .into_iter()
+        .filter(|path| Some(path.as_str()) != ignored_after_path.as_deref())
+        .collect::<Vec<_>>();
+    let dirty_after = !after_paths.is_empty();
+
+    if !before.dirty() {
+        if after_head != before.head {
+            bail!(
+                "Phase {} commit created a git commit despite a clean worktree before commit pass",
+                phase.id
+            )
+        }
+        if dirty_after {
+            bail!(
+                "Phase {} commit left pending changes despite a clean worktree before commit pass: {}",
+                phase.id,
+                summarize_paths(&after_paths)
+            )
+        }
+        return Ok(());
+    }
+
+    if after_head == before.head {
+        bail!(
+            "Phase {} commit did not create a new git commit despite pending changes before commit pass: {}",
+            phase.id,
+            summarize_paths(&after_paths)
+        )
+    }
+    if dirty_after {
+        bail!(
+            "Phase {} commit left pending changes after creating a commit: {}",
+            phase.id,
+            summarize_paths(&after_paths)
+        )
+    }
+
+    let Some(head) = after_head else {
+        bail!(
+            "Phase {} commit did not leave a readable git HEAD after pending changes before commit pass",
+            phase.id
+        )
+    };
+    let committed_paths = git_committed_paths(config.runtime.root(), &head)?;
+    let generated_paths = committed_paths
+        .iter()
+        .filter(|path| path.starts_with(".lgtm/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !generated_paths.is_empty() {
+        bail!(
+            "Phase {} commit included generated lgtm state: {}",
+            phase.id,
+            generated_paths.join(", ")
+        )
+    }
+
+    Ok(())
+}
+
+fn status_paths(status: &str) -> Vec<String> {
+    status
+        .lines()
+        .filter_map(|line| line.get(3..))
+        .filter(|path| !path.trim().is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn summarize_paths(paths: &[String]) -> String {
+    if paths.is_empty() {
+        "none".to_string()
+    } else {
+        paths.join(", ")
+    }
+}
+
+fn commit_log_status_path(config: &RunConfig, phase: &Phase) -> Option<String> {
+    config
+        .runtime
+        .log_dir()
+        .join(phase_pass_log_name(config, phase, PhasePass::Commit))
+        .strip_prefix(config.runtime.root())
+        .ok()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+}
+
+fn git_head(root: &std::path::Path) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .context("failed to run git rev-parse HEAD")?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("ambiguous argument 'HEAD'") || stderr.contains("unknown revision") {
+        return Ok(None);
+    }
+
+    bail!("git rev-parse HEAD failed: {}", stderr.trim())
+}
+
+fn git_status_porcelain(root: &std::path::Path) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .context("failed to run git status --porcelain")?;
+    if !output.status.success() {
+        bail!(
+            "git status --porcelain failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn git_committed_paths(root: &std::path::Path, head: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "--root",
+            head,
+        ])
+        .output()
+        .context("failed to run git diff-tree")?;
+    if !output.status.success() {
+        bail!(
+            "git diff-tree failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(ToString::to_string)
+        .collect())
 }
 
 fn run_streaming_turn(
@@ -432,36 +632,6 @@ fn add_usage(total: &mut TokenUsage, turn: &CompletedTurn) {
     if let Some(usage) = turn.usage {
         *total = total.add(usage);
     }
-}
-
-fn token_summary_line(usage: TokenUsage) -> String {
-    token_summary_line_with_label("Tokens", usage)
-}
-
-fn phase_token_summary_line(phase_id: u32, usage: TokenUsage) -> String {
-    token_summary_line_with_label(&format!("Phase {phase_id} tokens"), usage)
-}
-
-fn token_summary_line_with_label(label: &str, usage: TokenUsage) -> String {
-    format!(
-        "• {label}: input {} (cached {}), output {}, reasoning {}, total {}\n",
-        usage.input_tokens,
-        usage.cached_input_tokens,
-        usage.output_tokens,
-        usage.reasoning_tokens,
-        usage.total_tokens
-    )
-}
-
-fn write_run_output(output: &mut impl Write, rendered: String) -> Result<()> {
-    if rendered.is_empty() {
-        return Ok(());
-    }
-
-    output
-        .write_all(rendered.as_bytes())
-        .context("failed to write run output")?;
-    output.flush().context("failed to flush run output")
 }
 
 #[cfg(test)]
@@ -526,18 +696,8 @@ mod tests {
     }
 
     #[test]
-    fn run_output_is_flushed_after_each_render() {
-        let mut output = FlushCountingWriter::default();
-
-        write_run_output(&mut output, "status line".to_string()).expect("write output");
-
-        assert_eq!(output.content, b"status line");
-        assert_eq!(output.flushes, 1);
-    }
-
-    #[test]
     fn raw_mode_suppresses_banner() {
-        let mut output = RunOutput::new(StreamMode::Raw, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Raw, FlushCountingWriter::default());
         let root = PathBuf::from("/repo");
 
         output
@@ -549,13 +709,14 @@ mod tests {
             })
             .expect("banner");
 
-        assert!(output.output.content.is_empty());
-        assert_eq!(output.output.flushes, 0);
+        let output = output.into_inner();
+        assert!(output.content.is_empty());
+        assert_eq!(output.flushes, 0);
     }
 
     #[test]
     fn pretty_mode_prints_token_summary() {
-        let mut output = RunOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
 
         output
             .token_summary(TokenUsage {
@@ -567,7 +728,8 @@ mod tests {
             })
             .expect("summary");
 
-        let rendered = String::from_utf8(output.output.content).expect("utf8");
+        let output = output.into_inner();
+        let rendered = String::from_utf8(output.content).expect("utf8");
         assert_eq!(
             rendered,
             "• Tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
@@ -576,7 +738,7 @@ mod tests {
 
     #[test]
     fn pretty_mode_prints_phase_token_summary() {
-        let mut output = RunOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Pretty, FlushCountingWriter::default());
 
         output
             .phase_token_summary(
@@ -591,7 +753,8 @@ mod tests {
             )
             .expect("summary");
 
-        let rendered = String::from_utf8(output.output.content).expect("utf8");
+        let output = output.into_inner();
+        let rendered = String::from_utf8(output.content).expect("utf8");
         assert_eq!(
             rendered,
             "• Phase 2 tokens: input 100 (cached 80), output 20, reasoning 5, total 120\n"
@@ -600,7 +763,7 @@ mod tests {
 
     #[test]
     fn raw_mode_suppresses_token_summary() {
-        let mut output = RunOutput::new(StreamMode::Raw, FlushCountingWriter::default());
+        let mut output = CommandOutput::new(StreamMode::Raw, FlushCountingWriter::default());
 
         output
             .token_summary(TokenUsage {
@@ -612,6 +775,6 @@ mod tests {
             })
             .expect("summary");
 
-        assert!(output.output.content.is_empty());
+        assert!(output.into_inner().content.is_empty());
     }
 }

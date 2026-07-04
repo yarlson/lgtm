@@ -4,8 +4,10 @@ mod commands;
 mod composer;
 mod git;
 mod output;
+mod pass_verdict;
 mod paths;
 mod phase_index;
+mod plan_contract;
 mod prompt;
 mod rtk;
 mod skills;
@@ -21,5 +23,6 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Plan(args) => commands::plan::run(args),
         Command::Run(args) => commands::run::run(args),
+        Command::Shape(args) => commands::shape::run(args),
     }
 }

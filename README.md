@@ -1,3 +1,6 @@
+<!-- markdownlint-disable MD041 -->
+<!-- markdownlint-disable MD033 -->
+
 <div align="center">
 
 <img src="assets/banner.png" alt="lgtm workflow banner" width="100%">
@@ -8,8 +11,10 @@ Plan the work. Execute one phase. Verify. Review. Commit. Repeat.
 
 </div>
 
+<!-- markdownlint-enable MD033 -->
+
 `lgtm` is a local Codex harness for repo-sized work that should not be done
-as one giant prompt. It creates or refines a `PLAN.md`, then runs selected plan
+as one giant prompt. It shapes or refines a `PLAN.md`, then runs selected plan
 phases through implementation, validation, review, and commit passes.
 
 Use it for migrations, cleanup, feature slices, test hardening, and docs drift
@@ -22,6 +27,8 @@ where Codex needs a repeatable local loop.
 
 ## Overview
 
+- `lgtm shape "BRIEF"` autonomously shapes a brief into a multi-phase
+  `PLAN.md`.
 - `lgtm plan [BRIEF]` starts an interactive planning session.
 - After planning produces final artifacts, choose whether to implement the
   completed plan now or exit.
@@ -71,10 +78,12 @@ exist before planning starts.
 lgtm plan "split the migration into small reviewable phases"
 ```
 
-Plan mode asks one question at a time. The inline composer supports normal
-editing keys, cursor movement, paste, and multiline answers with `Ctrl+J`,
-`Shift+Enter`, or `Alt+Enter`. Press `Ctrl+C` once to clear the current input;
-press it twice quickly to quit.
+Plan mode asks one question at a time and writes a detailed implementation plan
+with reviewable, implementation-sized phases. Broad migrations or architecture
+work may become many phases rather than a short roadmap summary. The inline
+composer supports normal editing keys, cursor movement, paste, and multiline
+answers with `Ctrl+J`, `Shift+Enter`, or `Alt+Enter`. Press `Ctrl+C` once to
+clear the current input; press it twice quickly to quit.
 
 Enter `/finish` to ask Codex to write the final `PLAN.md` from the current
 session context, or `/quit` to exit without another Codex turn. If `AGENTS.md`
@@ -88,6 +97,45 @@ normal run-mode pipeline for all detected phases from Phase 1, using the current
 plan command's root, plan path, Codex binary, execution sandbox settings, log
 directory, and run stamp.
 
+## Shape
+
+Shape mode takes a brief, starts two Codex sessions, and writes a `PLAN.md`.
+It does not implement the plan; implementation remains a separate `lgtm run`
+step.
+
+Use a string brief:
+
+```bash
+lgtm shape "turn this migration idea into reviewable implementation phases"
+```
+
+Or use a markdown brief file:
+
+```bash
+lgtm shape --brief-file docs/brief.md
+```
+
+Then run the produced plan:
+
+```bash
+lgtm run --plan-path PLAN.md
+```
+
+`shape` starts one sparring session and one evidence session. The evidence
+session answers from repo-local evidence, and may use Codex web search when
+current-year or stack guidance is needed. Pretty output prints `mode: shape`,
+then exactly one startup status line after both sessions are ready:
+
+```text
+Started 2 Codex sessions; gathering context
+```
+
+During initial evidence work, stdout stays compact with status labels such as
+`gathering evidence` or `answering shape round 1 from evidence`. Sparring output
+streams through the same transcript UI used by implementation phases, including
+Codex message blocks, command rows, web-search rows, file-change rows, spinner
+updates, and shape round headers. On success, `shape` prints the final plan path.
+
 ## Run
 
 For run mode, the target repository must contain:
@@ -96,7 +144,15 @@ For run mode, the target repository must contain:
 - `AGENTS.md`
 - a Git repository at the target root, or permission to initialize one
 
-<img src="assets/lgtm-run.gif" alt="Terminal recording of lgtm run showing the startup banner and active phase status line" width="100%">
+<!-- markdownlint-disable MD033 -->
+
+<img
+  src="assets/lgtm-run.gif"
+  alt="lgtm run terminal recording"
+  width="100%"
+>
+
+<!-- markdownlint-enable MD033 -->
 
 Run one phase:
 
@@ -207,6 +263,8 @@ run through fresh login shells.
 
 ## Options
 
+<!-- markdownlint-disable MD013 -->
+
 Run options:
 
 | Option                | Environment              | Default                             | Description                         |
@@ -241,12 +299,38 @@ Plan options:
 | `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                        | Log directory                       |
 | `--run-stamp`         | `RUN_STAMP`              | timestamp                           | Log filename prefix                 |
 
+Shape options:
+
+| Option                | Environment              | Default                             | Description                         |
+| --------------------- | ------------------------ | ----------------------------------- | ----------------------------------- |
+| `[BRIEF]`             |                          |                                     | Brief text                          |
+| `--brief-file`        |                          |                                     | UTF-8 markdown or text brief file   |
+| `--root`              | `ROOT_DIR`               | current directory                   | Target repository root              |
+| `--plan-path`         | `PLAN_PATH`              | `PLAN.md`                           | Plan file path under the root       |
+| `--codex-bin`         | `CODEX_BIN`              | `codex`                             | Host Codex executable               |
+| `--execution-sandbox` | `LGTM_EXECUTION_SANDBOX` | `host`                              | `host` or `apple-container`         |
+| `--sandbox-image`     | `LGTM_SANDBOX_IMAGE`     | `ghcr.io/yarlson/lgtm-codex:latest` | Apple Container image               |
+| `--container-bin`     | `CONTAINER_BIN`          | `container`                         | Apple Container executable          |
+| `--codex-auth-path`   | `CODEX_AUTH_PATH`        | `~/.codex/auth.json`                | Codex auth file for Apple Container |
+| `--stream-mode`       | `STREAM_MODE`            | `pretty`                            | `pretty` or `raw`                   |
+| `--log-dir`           | `LOG_DIR`                | `.lgtm/logs`                        | Log directory                       |
+| `--run-stamp`         | `RUN_STAMP`              | timestamp                           | Log filename prefix                 |
+| `--max-rounds`        |                          | `200`                               | Maximum sparring rounds             |
+
+Provide exactly one brief source: `[BRIEF]` or `--brief-file`.
+
+<!-- markdownlint-enable MD013 -->
+
 ## Safety And Logs
 
-Before planning or running, `lgtm` checks for unmanaged `lgtm-*` skills,
+Before planning, shaping, or running, `lgtm` checks for unmanaged `lgtm-*` skills,
 ensures the target root is a Git root, and installs bundled managed skills. If
 Git is not initialized, it asks before running `git init` and `git branch -M
 main`.
+
+Host execution starts `codex app-server` with a temporary `CODEX_HOME`. `lgtm`
+copies `auth.json` and `config.toml` from the current Codex home when present,
+but does not reuse mutable Codex runtime state such as installed system skills.
 
 Logs are written as JSONL:
 
@@ -257,17 +341,60 @@ Logs are written as JSONL:
 .lgtm/logs/<run-stamp>-phase-01-validate.jsonl
 .lgtm/logs/<run-stamp>-phase-01-review.jsonl
 .lgtm/logs/<run-stamp>-phase-01-commit.jsonl
+.lgtm/logs/<run-stamp>-shape-a-001.jsonl
+.lgtm/logs/<run-stamp>-shape-b-001.jsonl
 ```
 
+Validate and review passes must end with exactly one machine-readable verdict
+marker as the final non-empty line. `lgtm` parses that marker, blocks later
+passes on `block` or invalid verdicts, and writes gate artifacts:
+
+```text
+.lgtm/gates/<run-stamp>-phase-01-validate.json
+.lgtm/gates/<run-stamp>-phase-01-review.json
+```
+
+The verdict marker schema is:
+
+```text
+LGTM_VERDICT: {"schema_version":1,"status":"pass","summary":"Validated phase.","checks":["cargo test"],"fixes":[],"blockers":[],"out_of_scope":[]}
+```
+
+Use `"status":"block"` with a non-empty `blockers` array when the pass cannot
+approve the phase. A `pass` verdict must include at least one concrete check and
+no blockers.
+
+Shape session `a` is the sparring session. Shape session `b` is the evidence
+session.
+
 Each log line records app-server protocol direction and payload. When Codex
-reports token usage, pretty output also prints per-phase and aggregate token
-summaries.
+reports token usage, pretty output prints per-phase summaries in run mode and
+aggregate summaries when a command reports total usage.
+
 Managed skills and logs are ignored in target repositories through:
 
 ```gitignore
 .agents/skills/lgtm-*
 .lgtm/
 ```
+
+## Evals
+
+Eval docs live in [`evals/README.md`](evals/README.md). The default lane is
+deterministic: fake Codex app-server runs and score-only artifact controls do
+not require Codex auth, network access, or model tokens.
+
+```bash
+make eval-check
+```
+
+Live plan and shape evals require `LGTM_LIVE_EVAL=1` and are for manual or
+release checks only. Optional judge prompts require `LGTM_LIVE_EVAL_JUDGE=1`
+and are secondary semantic review inputs, not pass authorities.
+
+Token metrics come from `.lgtm/logs`. Validate and review gate decisions are
+recorded under `.lgtm/gates`. The token usage sentinel is a live-token eval and
+requires `LGTM_TOKEN_EVAL=1`.
 
 ## Development
 
@@ -285,17 +412,17 @@ cargo build --all-targets --all-features
 ```
 
 Release packaging is defined in `.github/workflows/release.yml`. After merging
-the release changes, create the `v0.14.0` tag. The workflow validates that the
-tag matches `Cargo.toml`, builds platform archives, publishes the GitHub
-Release, pushes the arm64 Apple Container sandbox image as
-`ghcr.io/yarlson/lgtm-codex:0.14.0` and
+the release changes, create the version tag that matches `Cargo.toml`, for
+example `vX.Y.Z`. The workflow validates that the tag matches `Cargo.toml`,
+builds platform archives, publishes the GitHub Release, pushes the arm64 Apple
+Container sandbox image as `ghcr.io/yarlson/lgtm-codex:X.Y.Z` and
 `ghcr.io/yarlson/lgtm-codex:latest`, and can update the Homebrew formula
 through `scripts/update-homebrew-formula.sh`.
 
-Release notes for v0.14.0 should announce macOS Apple Container sandboxing
-support, not generic Docker sandboxing. After the release workflow is green,
-verify the GitHub Release assets, Homebrew formula update, and GHCR image tags,
-then smoke the published image:
+Release notes for sandbox releases should announce macOS Apple Container
+sandboxing support, not generic Docker sandboxing. After the release workflow
+is green, verify the GitHub Release assets, Homebrew formula update, and GHCR
+image tags, then smoke the published image:
 
 ```bash
 container run --rm ghcr.io/yarlson/lgtm-codex:latest codex --version

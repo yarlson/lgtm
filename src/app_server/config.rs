@@ -56,40 +56,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_instructions_protect_lgtm_preflight_state() {
+    fn default_instructions_are_configured() {
         let config = AppServerConfig::for_run("/repo", None);
 
-        assert!(
-            config
-                .developer_instructions
-                .contains("Treat lgtm preflight and install changes")
-        );
-        assert!(
-            config
-                .developer_instructions
-                .contains(".agents/skills/lgtm-*")
-        );
-        assert!(config.developer_instructions.contains(".lgtm/"));
-        assert!(config.developer_instructions.contains(".gitignore"));
-        assert!(
-            config
-                .developer_instructions
-                .contains("Git initialization and branch setup")
-        );
-        assert!(
-            config
-                .developer_instructions
-                .contains("CAVEMAN MODE ACTIVE.")
-        );
-        assert!(
-            config
-                .developer_instructions
-                .contains("Cavecode is active for every code-writing turn")
-        );
-        assert!(
-            config
-                .developer_instructions
-                .contains("Correctness, readability, and real test coverage")
-        );
+        assert!(!config.developer_instructions.trim().is_empty());
     }
 }

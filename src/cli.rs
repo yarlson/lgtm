@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ghcr.io/yarlson/lgtm-codex:latest";
+pub const DEFAULT_SHAPE_MAX_ROUNDS: u32 = 200;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,6 +24,8 @@ pub enum Command {
     Run(RunArgs),
     /// Create or refine a PLAN.md through an interactive Codex planning session.
     Plan(PlanArgs),
+    /// Shape a brief into a multi-phase PLAN.md through autonomous Codex sessions.
+    Shape(ShapeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -82,6 +85,38 @@ pub struct PlanArgs {
 
     #[arg(long, env = "RUN_STAMP")]
     pub run_stamp: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ShapeArgs {
+    pub brief: Option<String>,
+
+    #[arg(long)]
+    pub brief_file: Option<PathBuf>,
+
+    #[arg(long, env = "ROOT_DIR")]
+    pub root: Option<PathBuf>,
+
+    #[arg(long, env = "PLAN_PATH", default_value = "PLAN.md")]
+    pub plan_path: PathBuf,
+
+    #[arg(long, env = "CODEX_BIN", default_value = "codex")]
+    pub codex_bin: String,
+
+    #[clap(flatten)]
+    pub execution: ExecutionArgs,
+
+    #[arg(long, env = "STREAM_MODE", default_value = "pretty")]
+    pub stream_mode: StreamMode,
+
+    #[arg(long, env = "LOG_DIR")]
+    pub log_dir: Option<PathBuf>,
+
+    #[arg(long, env = "RUN_STAMP")]
+    pub run_stamp: Option<String>,
+
+    #[arg(long, default_value_t = DEFAULT_SHAPE_MAX_ROUNDS)]
+    pub max_rounds: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -236,6 +271,83 @@ mod tests {
     }
 
     #[test]
+    fn parses_shape_command_with_brief() {
+        let cli = Cli::try_parse_from(["lgtm", "shape", "brief idea"]).unwrap();
+
+        let Command::Shape(args) = cli.command else {
+            panic!("expected shape command");
+        };
+        assert_eq!(args.brief.as_deref(), Some("brief idea"));
+        assert_eq!(args.brief_file, None);
+        assert_eq!(args.plan_path, PathBuf::from("PLAN.md"));
+        assert_eq!(args.max_rounds, DEFAULT_SHAPE_MAX_ROUNDS);
+    }
+
+    #[test]
+    fn parses_shape_command_with_brief_file() {
+        let cli = Cli::try_parse_from(["lgtm", "shape", "--brief-file", "docs/brief.md"]).unwrap();
+
+        let Command::Shape(args) = cli.command else {
+            panic!("expected shape command");
+        };
+        assert_eq!(args.brief, None);
+        assert_eq!(args.brief_file.unwrap(), PathBuf::from("docs/brief.md"));
+        assert_eq!(args.plan_path, PathBuf::from("PLAN.md"));
+        assert_eq!(args.max_rounds, DEFAULT_SHAPE_MAX_ROUNDS);
+    }
+
+    #[test]
+    fn parses_shape_command_shared_args() {
+        let cli = Cli::try_parse_from([
+            "lgtm",
+            "shape",
+            "brief idea",
+            "--root",
+            "/repo",
+            "--plan-path",
+            "CUSTOM_PLAN.md",
+            "--codex-bin",
+            "codex-test",
+            "--execution-sandbox",
+            "apple-container",
+            "--sandbox-image",
+            "example.com/lgtm-codex:test",
+            "--container-bin",
+            "container-test",
+            "--codex-auth-path",
+            "/tmp/auth.json",
+            "--stream-mode",
+            "raw",
+            "--log-dir",
+            ".lgtm/logs",
+            "--run-stamp",
+            "test",
+            "--max-rounds",
+            "8",
+        ])
+        .unwrap();
+
+        let Command::Shape(args) = cli.command else {
+            panic!("expected shape command");
+        };
+        assert_eq!(args.brief.as_deref(), Some("brief idea"));
+        assert_eq!(args.root.unwrap(), PathBuf::from("/repo"));
+        assert_eq!(args.plan_path, PathBuf::from("CUSTOM_PLAN.md"));
+        assert_eq!(args.codex_bin, "codex-test");
+        assert_eq!(args.execution.sandbox, ExecutionSandbox::AppleContainer);
+        assert_eq!(args.execution.sandbox_image, "example.com/lgtm-codex:test");
+        assert_eq!(args.execution.container_bin, "container-test");
+        assert_eq!(
+            args.execution.codex_auth_path.unwrap(),
+            PathBuf::from("/tmp/auth.json")
+        );
+        assert_eq!(args.stream_mode, StreamMode::Raw);
+        assert_eq!(args.log_dir.unwrap(), PathBuf::from(".lgtm/logs"));
+        assert_eq!(args.run_stamp.as_deref(), Some("test"));
+        assert_eq!(args.max_rounds, 8);
+    }
+
+    #[test]
     fn run_command_defaults_sleep_seconds_to_ten() {
         let cli = Cli::try_parse_from(["lgtm", "run"]).unwrap();
 
@@ -253,6 +365,7 @@ mod tests {
         assert!(help.contains("Usage:"));
         assert!(help.contains("run"));
         assert!(help.contains("plan"));
+        assert!(help.contains("shape"));
         assert!(help.contains("Execution policy:"));
 
         let run_help = Cli::command()
@@ -291,5 +404,26 @@ mod tests {
         assert!(plan_help.contains("--codex-auth-path"));
         assert!(plan_help.contains("--log-dir"));
         assert!(plan_help.contains("--run-stamp"));
+
+        let shape_help = Cli::command()
+            .find_subcommand_mut("shape")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(shape_help.contains("[BRIEF]"));
+        assert!(shape_help.contains("--brief-file"));
+        assert!(shape_help.contains("--root"));
+        assert!(shape_help.contains("--plan-path"));
+        assert!(shape_help.contains("[default: PLAN.md]"));
+        assert!(shape_help.contains("--codex-bin"));
+        assert!(shape_help.contains("--execution-sandbox"));
+        assert!(shape_help.contains("--sandbox-image"));
+        assert!(shape_help.contains("--container-bin"));
+        assert!(shape_help.contains("--codex-auth-path"));
+        assert!(shape_help.contains("--stream-mode"));
+        assert!(shape_help.contains("--log-dir"));
+        assert!(shape_help.contains("--run-stamp"));
+        assert!(shape_help.contains("--max-rounds"));
+        assert!(shape_help.contains("[default: 200]"));
     }
 }
