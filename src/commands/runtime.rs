@@ -71,7 +71,6 @@ impl CommandRuntime {
         self.execution.label()
     }
 
-    #[cfg(test)]
     pub(super) fn log_dir(&self) -> &Path {
         &self.log_dir
     }

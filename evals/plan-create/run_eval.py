@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate lgtm-plan-create prompt output quality.
+"""Evaluate lgtm planning prompt output quality.
 
 The eval generates a real PLAN.md with Codex, scores the artifact, and stores
 all run data outside the repo by default. It is intentionally about output
@@ -11,7 +11,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pty
 import re
+import select
+import signal
 import shutil
 import subprocess
 import sys
@@ -23,8 +26,118 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from evals.common.lgtm_logs import parse_log_payloads
+
 EVAL_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA_ROOT = Path.home() / "lgtm-plan-create-eval-data"
+DEFAULT_LGTM_BIN = REPO_ROOT / "target/debug/lgtm"
+CASE_WORKSTREAMS = {
+    "kargo-job-system": {
+        "manifest_schema": (
+            ".kargo.yml",
+            "manifest",
+            "schema",
+            "parser",
+            "diagnostic",
+        ),
+        "legacy_compatibility": (
+            "jenkins",
+            "legacy",
+            "unsupported",
+            "compatibility",
+            "migration diagnostic",
+        ),
+        "policy_security": (
+            "policy",
+            "authorization",
+            "allowlist",
+            "trust",
+            "secret",
+        ),
+        "persistence_model": (
+            "mongo",
+            "collection",
+            "index",
+            "persistence",
+            "retention",
+        ),
+        "scheduler_state_machine": (
+            "scheduler",
+            "state machine",
+            "lease",
+            "ready",
+            "retry",
+            "cancel",
+        ),
+        "agent_protocol": (
+            "protocol",
+            "websocket",
+            "rpc",
+            "dispatch",
+            "heartbeat",
+            "ack",
+        ),
+        "agent_runtime": (
+            "agent",
+            "runner",
+            "runtime",
+            "workspace",
+            "sandbox",
+            "execution",
+        ),
+        "logs_artifacts_checks": (
+            "log",
+            "artifact",
+            "check",
+            "blob",
+            "status",
+        ),
+        "dashboard_api": (
+            "dashboard",
+            "api",
+            "operator",
+            "rerun",
+            "cancel",
+            "diagnostic",
+        ),
+        "shadow_rollout": (
+            "shadow",
+            "fallback",
+            "rollout",
+            "feature flag",
+            "enable",
+        ),
+        "jenkins_removal": (
+            "jenkins removal",
+            "remove jenkins",
+            "cutover",
+            "migration",
+            "cleanup",
+        ),
+        "end_to_end_readiness": (
+            "end-to-end",
+            "e2e",
+            "smoke",
+            "readiness",
+            "gate",
+        ),
+    }
+}
+GENERIC_PHASE_TITLES = (
+    "backend",
+    "frontend",
+    "ui",
+    "tests",
+    "testing",
+    "rollout",
+    "cleanup",
+    "docs",
+    "documentation",
+    "observability",
+    "integration",
+)
 REQUIRED_TOP_LEVEL = (
     "## Decisions",
     "## Non-Goals",
@@ -51,93 +164,40 @@ WEAK_PHRASES = (
     "verify it works",
     "manual qa",
 )
-FAMILY_PATTERNS = {
-    "schema_parser_diagnostics": (
-        "schema",
-        "parser",
-        "diagnostic",
-        ".kargo.yml",
-        "manifest",
-    ),
-    "policy_security_trust": (
-        "policy",
-        "authorization",
-        "trust",
-        "security",
-        "allowlist",
-    ),
-    "persistence_indexes_migrations": (
-        "mongo",
-        "persistence",
-        "index",
-        "migration",
-        "collection",
-    ),
-    "scheduler_state_machine": (
-        "scheduler",
-        "state machine",
-        "dag state",
-        "ready queue",
-        "lease",
-    ),
-    "protocol_api_contracts": (
-        "protocol",
-        "api",
-        "websocket",
-        "rpc",
-        "contract",
-    ),
-    "agent_runtime": (
-        "agent",
-        "worker",
-        "runtime",
-        "runner",
-        "execution",
-    ),
-    "secrets_isolation_resources": (
-        "secret",
-        "isolation",
-        "sandbox",
-        "resource",
-        "cap",
-    ),
-    "logs_artifacts_checks_audit_observability": (
-        "log",
-        "artifact",
-        "check",
-        "audit",
-        "metric",
-        "observability",
-    ),
-    "dashboard_operator_actions": (
-        "dashboard",
-        "operator",
-        "cancel",
-        "rerun",
-        "retry",
-    ),
-    "shadow_fallback_rollout": (
-        "shadow",
-        "fallback",
-        "rollout",
-        "feature flag",
-        "enable",
-    ),
-    "migration_cleanup_removal": (
-        "jenkins removal",
-        "remove jenkins",
-        "cleanup",
-        "legacy path",
-        "migration",
-    ),
-    "end_to_end_readiness": (
-        "end-to-end",
-        "e2e",
-        "smoke",
-        "readiness",
-        "gate",
-    ),
-}
+DEFERRED_DETAIL_PHRASES = (
+    "details can be handled during implementation",
+    "details later",
+    "tbd",
+    "to be determined",
+    "figure out later",
+)
+VALIDATION_EVIDENCE_WORDS = (
+    "unit",
+    "integration",
+    "fixture",
+    "golden",
+    "parser",
+    "schema",
+    "repository",
+    "migration",
+    "api",
+    "contract",
+    "websocket",
+    "protocol",
+    "dashboard",
+    "component",
+    "mock",
+    "smoke",
+    "e2e",
+    "end-to-end",
+    "lint",
+    "build",
+    "command",
+    "metric",
+    "log",
+    "assert",
+    "check",
+)
 
 
 @dataclass(frozen=True)
@@ -146,8 +206,32 @@ class EvalCase:
     brief_path: Path
 
 
+@dataclass(frozen=True)
+class Phase:
+    number: int
+    title: str
+    heading: str
+    body: str
+    goal: str
+    deliverables: list[str]
+    dependencies: list[str]
+    unresolved_decisions: list[str]
+    steps: list[str]
+    validation: list[str]
+
+
+@dataclass(frozen=True)
+class PlanRunResult:
+    completed: subprocess.CompletedProcess[str]
+    pty_state: dict[str, Any]
+
+
 def main() -> int:
     args = parse_args()
+    if args.expect_fail and args.score_only is None:
+        raise SystemExit("--expect-fail is only supported with --score-only")
+    if args.score_only is None:
+        require_live_eval()
     cases = resolve_cases(args.case)
     eval_id = args.eval_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     data_dir = args.data_root.expanduser().resolve() / eval_id
@@ -161,10 +245,14 @@ def main() -> int:
                 iteration=iteration,
                 data_dir=data_dir,
                 codex_bin=args.codex_bin,
-                model=args.model,
+                lgtm_bin=args.lgtm_bin,
                 timeout=args.timeout,
                 score_only=args.score_only,
                 min_score=args.min_score,
+            )
+            result["expected_failure"] = args.expect_fail
+            result["expectation_passed"] = (
+                not result["score"]["passed"] if args.expect_fail else result["score"]["passed"]
             )
             results.append(result)
             append_jsonl(data_dir / "results.jsonl", result)
@@ -173,6 +261,8 @@ def main() -> int:
     write_summary(data_dir / "summary.md", results, args.min_score)
     print(f"summary={data_dir / 'summary.md'}", flush=True)
     passed = all(result["score"]["passed"] for result in results)
+    if args.expect_fail:
+        passed = all(not result["score"]["passed"] for result in results)
     return 0 if passed else 1
 
 
@@ -188,7 +278,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-score", type=int, default=85)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--codex-bin", default="codex")
-    parser.add_argument("--model")
+    parser.add_argument(
+        "--lgtm-bin",
+        type=Path,
+        default=DEFAULT_LGTM_BIN,
+        help="built lgtm binary used for generated eval runs",
+    )
     parser.add_argument("--eval-id")
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument(
@@ -196,7 +291,21 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="score an existing PLAN.md instead of generating with Codex",
     )
+    parser.add_argument(
+        "--expect-fail",
+        action="store_true",
+        help="invert success for weak score-only controls that should fail",
+    )
     return parser.parse_args()
+
+
+def require_live_eval() -> None:
+    if os.environ.get("LGTM_LIVE_EVAL") == "1":
+        return
+    raise SystemExit(
+        "live plan-create eval requires LGTM_LIVE_EVAL=1; "
+        "use --score-only for deterministic controls"
+    )
 
 
 def resolve_cases(names: list[str]) -> list[EvalCase]:
@@ -219,7 +328,7 @@ def run_case(
     iteration: int,
     data_dir: Path,
     codex_bin: str,
-    model: str | None,
+    lgtm_bin: Path,
     timeout: int,
     score_only: Path | None,
     min_score: int,
@@ -237,27 +346,33 @@ def run_case(
         wall_seconds = 0.0
     else:
         prepare_repo(repo_dir)
-        prompt = build_generation_prompt(case.brief_path.read_text(encoding="utf-8"))
-        (run_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
+        brief = case.brief_path.read_text(encoding="utf-8")
+        (run_dir / "brief.md").write_text(brief, encoding="utf-8")
         start = time.monotonic()
-        completed = run_codex(
+        plan_run = run_lgtm_plan_pty(
             repo_dir=repo_dir,
-            prompt=prompt,
             codex_bin=codex_bin,
-            model=model,
+            lgtm_bin=lgtm_bin,
+            brief=brief,
+            run_id=run_id,
             timeout=timeout,
         )
         wall_seconds = time.monotonic() - start
+        completed = plan_run.completed
         stdout = completed.stdout
         stderr = completed.stderr
         exit_code = completed.returncode
         plan_path = repo_dir / "PLAN.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.is_file() else ""
-        (run_dir / "stdout.txt").write_text(stdout, encoding="utf-8", errors="replace")
-        (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8", errors="replace")
+        logs_dir = repo_dir / ".lgtm/logs"
+        if logs_dir.is_dir():
+            shutil.copytree(logs_dir, run_dir / "logs")
+        pty_state = plan_run.pty_state
 
+    (run_dir / "stdout.txt").write_text(stdout, encoding="utf-8", errors="replace")
+    (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8", errors="replace")
     (run_dir / "PLAN.md").write_text(plan_text, encoding="utf-8")
-    score = score_plan(plan_text, min_score=min_score)
+    score = score_plan(plan_text, case_name=case.name, min_score=min_score)
     result = {
         "run_id": run_id,
         "case": case.name,
@@ -270,6 +385,11 @@ def run_case(
         "stdout_path": str(run_dir / "stdout.txt"),
         "stderr_path": str(run_dir / "stderr.txt"),
     }
+    logs_copy = run_dir / "logs"
+    if logs_copy.is_dir():
+        result["logs_path"] = str(logs_copy)
+    if not score_only:
+        result["pty_state"] = pty_state
     write_json(run_dir / "metrics.json", result)
     return result
 
@@ -287,109 +407,272 @@ def prepare_repo(repo_dir: Path) -> None:
     subprocess.run(["git", "init", "-b", "main"], cwd=repo_dir, check=True)
 
 
-def build_generation_prompt(brief: str) -> str:
-    skill = (REPO_ROOT / "skills/lgtm-plan-create/SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    return f"""Use the following managed lgtm planning skill exactly.
-
-<lgtm-plan-create-skill>
-{skill}
-</lgtm-plan-create-skill>
-
-Target PLAN.md path: PLAN.md
-Target AGENTS.md path: AGENTS.md
-
-This is an eval of final plan quality. The user has already answered `/finish`.
-Do not ask another question. Write the final PLAN.md now.
-
-Important eval constraint:
-- Treat this brief as broad platform/migration/architecture work.
-- A plan with fewer than 12 phases is under-split unless the brief is explicitly narrow.
-- Split broad phase families instead of merging schema, policy, persistence,
-  scheduler, protocol, agent runtime, secrets/isolation, logs/artifacts/checks,
-  dashboard, shadow rollout, migration cleanup, and readiness gates.
-
-User brief:
-{brief.strip()}
-"""
-
-
-def run_codex(
+def run_lgtm_plan_pty(
     *,
     repo_dir: Path,
-    prompt: str,
     codex_bin: str,
-    model: str | None,
+    lgtm_bin: Path,
+    brief: str,
+    run_id: str,
     timeout: int,
-) -> subprocess.CompletedProcess[str]:
+) -> PlanRunResult:
+    if not lgtm_bin.is_file():
+        raise SystemExit(
+            f"lgtm binary not found at {lgtm_bin}; run `cargo build` or pass --lgtm-bin"
+        )
+
     cmd = [
-        codex_bin,
-        "--sandbox",
-        "danger-full-access",
-        "-a",
-        "never",
-        "exec",
-        "--cd",
+        str(lgtm_bin),
+        "plan",
+        brief.strip(),
+        "--root",
         str(repo_dir),
-        "--skip-git-repo-check",
-        "--output-last-message",
-        str(repo_dir / "last-message.txt"),
+        "--codex-bin",
+        codex_bin,
+        "--log-dir",
+        ".lgtm/logs",
+        "--run-stamp",
+        run_id,
     ]
-    if model:
-        cmd.extend(["--model", model])
-    cmd.append("-")
-    return subprocess.run(
+
+    master_fd, slave_fd = pty.openpty()
+    started_at = time.monotonic()
+    process = subprocess.Popen(
         cmd,
-        input=prompt,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        start_new_session=True,
+    )
+    os.close(slave_fd)
+
+    transcript = bytearray()
+    timed_out = False
+    pty_state: dict[str, Any] = {
+        "first_turn_completed": False,
+        "sent_finish": False,
+        "second_turn_completed": False,
+        "saw_exit_prompt": False,
+        "sent_exit": False,
+        "timed_out": False,
+        "timeout_reason": "",
+    }
+
+    try:
+        while True:
+            if time.monotonic() - started_at > timeout:
+                timed_out = True
+                pty_state["timed_out"] = True
+                pty_state["timeout_reason"] = "wall_timeout"
+                terminate_process_group(process)
+                break
+
+            ready, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in ready:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError:
+                    chunk = b""
+                if chunk:
+                    transcript.extend(chunk)
+
+            plain = strip_ansi(transcript.decode("utf-8", errors="replace"))
+            pty_state["first_turn_completed"] = bool(
+                pty_state["first_turn_completed"]
+                or plan_turn_completed(repo_dir, run_id, 1)
+            )
+            pty_state["second_turn_completed"] = bool(
+                pty_state["second_turn_completed"]
+                or plan_turn_completed(repo_dir, run_id, 2)
+            )
+            pty_state["saw_exit_prompt"] = bool(
+                pty_state["saw_exit_prompt"] or "Implement now or exit? [i/e]" in plain
+            )
+            if not pty_state["sent_exit"] and (
+                pty_state["saw_exit_prompt"] or pty_state["second_turn_completed"]
+            ):
+                os.write(master_fd, b"e\r")
+                pty_state["sent_exit"] = True
+            elif not pty_state["sent_finish"] and pty_state["first_turn_completed"]:
+                os.write(master_fd, b"/finish\r")
+                pty_state["sent_finish"] = True
+
+            if process.poll() is not None:
+                while True:
+                    ready, _, _ = select.select([master_fd], [], [], 0)
+                    if master_fd not in ready:
+                        break
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    transcript.extend(chunk)
+                break
+    finally:
+        os.close(master_fd)
+
+    return_code = 124 if timed_out else process.wait()
+    stdout = transcript.decode("utf-8", errors="replace")
+    stderr = "timed out waiting for lgtm plan\n" if timed_out else ""
+    return PlanRunResult(
+        completed=subprocess.CompletedProcess(cmd, return_code, stdout, stderr),
+        pty_state=pty_state,
     )
 
 
-def score_plan(plan: str, *, min_score: int) -> dict[str, Any]:
+def terminate_process_group(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    process.wait(timeout=5)
+
+
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)
+
+
+def plan_turn_completed(repo_dir: Path, run_id: str, turn_number: int) -> bool:
+    log_path = repo_dir / ".lgtm" / "logs" / f"{run_id}-plan-{turn_number:03}.jsonl"
+    if not log_path.is_file():
+        return False
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        for payload in parse_log_payloads(line):
+            if payload.get("method") == "turn/completed":
+                return True
+    return False
+
+
+def score_plan(plan: str, *, case_name: str, min_score: int) -> dict[str, Any]:
     phases = parse_phases(plan)
+    required_workstreams = CASE_WORKSTREAMS.get(case_name, {})
+    phase_quality = [score_phase(phase) for phase in phases]
+    domain_matches = match_domains(phases, phase_quality, required_workstreams)
+    whole_plan_domains = {
+        domain
+        for domain, mentioned in whole_plan_domain_mentions(plan, required_workstreams).items()
+        if mentioned
+    }
+    missing_domains = sorted(set(required_workstreams) - set(domain_matches))
+    keyword_only_domains = sorted(set(whole_plan_domains) - set(domain_matches))
+    generic_phase_titles = [
+        phase.heading
+        for phase in phases
+        if normalized_title(phase.title) in GENERIC_PHASE_TITLES
+    ]
+    generic_validation_phases = [
+        phase.heading
+        for phase, quality in zip(phases, phase_quality)
+        if not quality["validation_specific"]
+    ]
+    weak_phrases = weak_phrase_hits(phases)
+    overloaded_phases = overloaded_phase_headings(phases, required_workstreams)
+    fake_dependencies = fake_dependency_ratio(phases)
+    top_section_issues = top_section_issues_for(plan)
+
     checks: dict[str, Any] = {}
     checks["has_plan_heading"] = plan.lstrip().startswith("# Plan")
     checks["required_top_level"] = [
         heading for heading in REQUIRED_TOP_LEVEL if heading in plan
     ]
     checks["phase_count"] = len(phases)
-    checks["all_phase_labels"] = all(
-        all(label in phase["body"] for label in REQUIRED_PHASE_LABELS)
-        for phase in phases
+    checks["sequential_phase_numbers"] = [phase.number for phase in phases] == list(
+        range(1, len(phases) + 1)
     )
-    checks["family_coverage"] = covered_families(plan)
-    checks["weak_phrases"] = weak_phrase_hits(phases)
-    checks["generic_validation_count"] = generic_validation_count(phases)
+    checks["all_phase_labels"] = all(quality["has_required_labels"] for quality in phase_quality)
+    checks["domain_coverage"] = sorted(domain_matches)
+    checks["missing_domains"] = missing_domains
+    checks["keyword_only_domains"] = keyword_only_domains
+    checks["generic_phase_titles"] = generic_phase_titles
+    checks["weak_phrases"] = weak_phrases
+    checks["generic_validation_phases"] = generic_validation_phases
+    checks["overloaded_phases"] = overloaded_phases
+    checks["fake_dependency_ratio"] = fake_dependencies
+    checks["top_section_issues"] = top_section_issues
 
-    score = 0
-    score += 10 if checks["has_plan_heading"] else 0
-    score += len(checks["required_top_level"]) * 4
-    score += min(checks["phase_count"], 14) * 2
-    score += 16 if checks["phase_count"] >= 12 else 0
-    score += 14 if checks["all_phase_labels"] else 0
-    score += min(len(checks["family_coverage"]), 12) * 2
-    score -= len(checks["weak_phrases"]) * 4
-    score -= checks["generic_validation_count"] * 3
+    structure_score = 0
+    structure_score += 4 if checks["has_plan_heading"] else 0
+    structure_score += len(checks["required_top_level"])
+    structure_score += 4 if checks["all_phase_labels"] else 0
+    structure_score += 3 if checks["sequential_phase_numbers"] else 0
+
+    top_score = max(0, 10 - len(top_section_issues) * 3)
+    coverage_score = (
+        25
+        if not required_workstreams
+        else round((len(domain_matches) / len(required_workstreams)) * 25)
+    )
+    specific_ratio = ratio(
+        sum(1 for quality in phase_quality if quality["specific_contract"]),
+        len(phase_quality),
+    )
+    specificity_score = round(specific_ratio * 20)
+    validation_ratio = ratio(
+        sum(1 for quality in phase_quality if quality["validation_specific"]),
+        len(phase_quality),
+    )
+    validation_score = round(validation_ratio * 15)
+    decomposition_score = max(
+        0,
+        15
+        - len(generic_phase_titles) * 3
+        - len(overloaded_phases) * 4
+        - (6 if fake_dependencies >= 0.75 and len(phases) >= 4 else 0),
+    )
+
+    score = (
+        structure_score
+        + top_score
+        + coverage_score
+        + specificity_score
+        + validation_score
+        + decomposition_score
+    )
+    score -= len(weak_phrases) * 2
     score = max(0, min(100, score))
 
     blockers = []
-    if checks["phase_count"] < 12:
-        blockers.append("broad plan has fewer than 12 phases")
     missing_top = sorted(set(REQUIRED_TOP_LEVEL) - set(checks["required_top_level"]))
     if missing_top:
         blockers.append(f"missing top-level sections: {', '.join(missing_top)}")
     if not checks["all_phase_labels"]:
         blockers.append("one or more phases miss required phase labels")
-    if len(checks["family_coverage"]) < 10:
-        blockers.append("covers fewer than 10 broad-work phase families")
-    if checks["weak_phrases"]:
-        blockers.append(f"contains weak phrases: {', '.join(checks['weak_phrases'])}")
-    if checks["generic_validation_count"] > 0:
-        blockers.append("contains generic validation blocks")
+    if missing_domains:
+        blockers.append(f"missing concrete workstreams: {', '.join(missing_domains)}")
+    if keyword_only_domains:
+        blockers.append(f"keyword-only workstreams: {', '.join(keyword_only_domains)}")
+    if generic_phase_titles:
+        blockers.append(f"generic umbrella phase titles: {len(generic_phase_titles)}")
+    if len(generic_phase_titles) > max(1, len(phases) // 4):
+        blockers.append("more than 25% of phases are generic umbrella phases")
+    if generic_validation_phases:
+        blockers.append(f"generic validation phases: {len(generic_validation_phases)}")
+    if top_section_issues:
+        blockers.append(f"weak top-level sections: {', '.join(top_section_issues)}")
+    if overloaded_phases:
+        blockers.append(f"overloaded phases: {len(overloaded_phases)}")
+    if fake_dependencies >= 0.75 and len(phases) >= 4:
+        blockers.append("dependencies do not show a real implementation order")
+    if weak_phrases:
+        blockers.append(f"contains weak phrases: {', '.join(weak_phrases)}")
 
     return {
         "value": score,
@@ -400,61 +683,247 @@ def score_plan(plan: str, *, min_score: int) -> dict[str, Any]:
     }
 
 
-def parse_phases(plan: str) -> list[dict[str, str]]:
+def parse_phases(plan: str) -> list[Phase]:
     matches = list(re.finditer(r"^## Phase \d+ - .+$", plan, re.MULTILINE))
     phases = []
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(plan)
-        phases.append({"heading": match.group(0), "body": plan[match.end() : end]})
+        heading = match.group(0)
+        number_text, title = heading.removeprefix("## Phase ").split(" - ", 1)
+        body = plan[match.end() : end]
+        phases.append(
+            Phase(
+                number=int(number_text),
+                title=title.strip(),
+                heading=heading,
+                body=body,
+                goal=extract_labeled_text(body, "Goal:"),
+                deliverables=extract_labeled_list(body, "Deliverables:"),
+                dependencies=extract_labeled_list(body, "Dependencies:"),
+                unresolved_decisions=extract_labeled_list(body, "Unresolved decisions:"),
+                steps=extract_labeled_list(body, "Steps:"),
+                validation=extract_labeled_list(body, "Validation:"),
+            )
+        )
     return phases
 
 
-def covered_families(plan: str) -> list[str]:
-    lower = plan.lower()
-    covered = []
-    for family, patterns in FAMILY_PATTERNS.items():
-        if any(pattern in lower for pattern in patterns):
-            covered.append(family)
-    return covered
+def score_phase(phase: Phase) -> dict[str, bool]:
+    has_required_labels = all(label in phase.body for label in REQUIRED_PHASE_LABELS)
+    has_contract_items = bool(phase.goal.strip()) and bool(phase.deliverables) and bool(phase.steps)
+    concrete_items = [
+        item
+        for item in [phase.goal, *phase.deliverables, *phase.steps]
+        if item_is_concrete(item)
+    ]
+    validation_specific = validation_is_specific(phase.validation)
+    return {
+        "has_required_labels": has_required_labels,
+        "specific_contract": has_contract_items
+        and len(concrete_items) >= 2
+        and normalized_title(phase.title) not in GENERIC_PHASE_TITLES,
+        "validation_specific": validation_specific,
+    }
 
 
-def generic_validation_count(phases: list[dict[str, str]]) -> int:
-    proof_words = (
-        "test",
-        "check",
-        "smoke",
-        "command",
-        "assert",
-        "confirm",
-        "verify",
-        "validate",
-        "lint",
-        "build",
-        "migration",
-        "fixture",
+def extract_labeled_text(body: str, label: str) -> str:
+    block = labeled_block(body, label)
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    if lines[0].startswith(("-", "*")):
+        return normalize_item(lines[0])
+    return lines[0]
+
+
+def extract_labeled_list(body: str, label: str) -> list[str]:
+    block = labeled_block(body, label)
+    items = []
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("-", "*")):
+            items.append(normalize_item(stripped))
+    if items:
+        return items
+    return [line.strip() for line in block.splitlines() if line.strip()]
+
+
+def labeled_block(body: str, start_label: str) -> str:
+    if start_label not in body:
+        return ""
+    tail = body.split(start_label, 1)[1]
+    next_positions = [
+        position
+        for label in REQUIRED_PHASE_LABELS
+        if label != start_label and (position := tail.find(label)) >= 0
+    ]
+    if not next_positions:
+        return tail
+    return tail[: min(next_positions)]
+
+
+def normalize_item(line: str) -> str:
+    return re.sub(r"^[-*\s]+", "", line).strip().rstrip(".")
+
+
+def normalized_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title.strip().lower())
+
+
+def item_is_concrete(item: str) -> bool:
+    normalized = normalize_item(item).lower()
+    if not normalized or any(weak_phrase_line_match(normalized, phrase) for phrase in WEAK_PHRASES):
+        return False
+    return len(re.findall(r"[a-z0-9_.-]+", normalized)) >= 4
+
+
+def validation_is_specific(items: list[str]) -> bool:
+    if not items:
+        return False
+    for item in items:
+        normalized = normalize_item(item).lower()
+        if weak_phrase_line_match(normalized, "verify it works"):
+            return False
+        if normalized in {"run tests", "add tests", "manual qa"}:
+            return False
+    return any(
+        any(word in normalize_item(item).lower() for word in VALIDATION_EVIDENCE_WORDS)
+        for item in items
     )
-    count = 0
-    for phase in phases:
-        validation = phase["body"].split("Validation:", 1)
-        if len(validation) != 2:
-            count += 1
+
+
+def match_domains(
+    phases: list[Phase],
+    phase_quality: list[dict[str, bool]],
+    required_workstreams: dict[str, tuple[str, ...]],
+) -> dict[str, list[str]]:
+    matches: dict[str, list[str]] = {}
+    for phase, quality in zip(phases, phase_quality):
+        if not quality["specific_contract"] or not quality["validation_specific"]:
             continue
-        block = validation[1].strip().lower()
-        if re.fullmatch(r"[-*\s]*(run tests|add tests|manual qa|verify it works)\.?", block):
-            count += 1
-        if not any(word in block for word in proof_words):
-            count += 1
-    return count
+        text = phase_semantic_text(phase)
+        for domain, patterns in required_workstreams.items():
+            if any(pattern in text for pattern in patterns):
+                matches.setdefault(domain, []).append(phase.heading)
+    return matches
 
 
-def weak_phrase_hits(phases: list[dict[str, str]]) -> list[str]:
+def whole_plan_domain_mentions(
+    plan: str, required_workstreams: dict[str, tuple[str, ...]]
+) -> dict[str, bool]:
+    lower = plan.lower()
+    return {
+        domain: any(pattern in lower for pattern in patterns)
+        for domain, patterns in required_workstreams.items()
+    }
+
+
+def phase_semantic_text(phase: Phase) -> str:
+    return "\n".join(
+        [
+            phase.title,
+            phase.goal,
+            *phase.deliverables,
+            *phase.steps,
+            *phase.validation,
+        ]
+    ).lower()
+
+
+def overloaded_phase_headings(
+    phases: list[Phase], required_workstreams: dict[str, tuple[str, ...]]
+) -> list[str]:
+    overloaded = []
+    for phase in phases:
+        title = normalized_title(phase.title)
+        if title not in GENERIC_PHASE_TITLES and "integration" not in title:
+            continue
+        text = phase_semantic_text(phase)
+        domains = [
+            domain
+            for domain, patterns in required_workstreams.items()
+            if any(pattern in text for pattern in patterns)
+        ]
+        if len(domains) >= 4 and "readiness" not in title:
+            overloaded.append(phase.heading)
+    return overloaded
+
+
+def fake_dependency_ratio(phases: list[Phase]) -> float:
+    if not phases:
+        return 1.0
+    fake = 0
+    for phase in phases:
+        deps = [normalize_item(dep).lower() for dep in phase.dependencies]
+        if not deps or all(dep in {"none", "phase 1", "phase 1."} for dep in deps):
+            fake += 1
+    return fake / len(phases)
+
+
+def top_section_issues_for(plan: str) -> list[str]:
+    issues = []
+    decisions = top_section(plan, "## Decisions")
+    non_goals = top_section(plan, "## Non-Goals")
+    risks = top_section(plan, "## Open Risks")
+    loopholes = top_section(plan, "## Loopholes To Close")
+    if len(bullet_items(decisions)) < 3:
+        issues.append("thin decisions")
+    if "jenkins" not in non_goals.lower() and "compatibility" not in non_goals.lower():
+        issues.append("missing Jenkins compatibility non-goal")
+    risk_words = [
+        "migration",
+        "compatibility",
+        "runtime",
+        "rollout",
+        "agent",
+        "jenkins",
+        "scheduler",
+        "dashboard",
+        "secret",
+        "side effect",
+    ]
+    if not any(word in risks.lower() for word in risk_words):
+        issues.append("thin risks")
+    if any(phrase in loopholes.lower() for phrase in DEFERRED_DETAIL_PHRASES):
+        issues.append("loopholes defer details")
+    return issues
+
+
+def top_section(plan: str, heading: str) -> str:
+    marker = plan.find(heading)
+    if marker < 0:
+        return ""
+    next_heading = re.search(r"^## ", plan[marker + len(heading) :], re.MULTILINE)
+    if not next_heading:
+        return plan[marker + len(heading) :]
+    end = marker + len(heading) + next_heading.start()
+    return plan[marker + len(heading) : end]
+
+
+def bullet_items(text: str) -> list[str]:
+    return [
+        normalize_item(line)
+        for line in text.splitlines()
+        if line.strip().startswith(("-", "*"))
+    ]
+
+
+def ratio(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return numerator / denominator
+
+
+def weak_phrase_hits(phases: list[Phase]) -> list[str]:
     hits = []
     for phase in phases:
         text = "\n".join(
             [
-                phase["heading"],
-                labeled_block(phase["body"], "Goal:", "Deliverables:"),
-                labeled_block(phase["body"], "Steps:", "Validation:"),
+                phase.heading,
+                phase.goal,
+                *phase.deliverables,
+                *phase.steps,
+                *phase.validation,
             ]
         ).lower()
         for line in text.splitlines():
@@ -474,22 +943,16 @@ def weak_phrase_line_match(line: str, phrase: str) -> bool:
     return False
 
 
-def labeled_block(body: str, start_label: str, end_label: str) -> str:
-    if start_label not in body:
-        return ""
-    tail = body.split(start_label, 1)[1]
-    if end_label not in tail:
-        return tail
-    return tail.split(end_label, 1)[0]
-
-
 def print_result(result: dict[str, Any], *, min_score: int) -> None:
     score = result["score"]
-    status = "pass" if score["passed"] else "fail"
+    status = "pass" if result.get("expectation_passed", score["passed"]) else "fail"
+    score_status = "scorer-pass" if score["passed"] else "scorer-fail"
+    expectation = " expected-fail" if result.get("expected_failure") else ""
     print(
-        f"{result['run_id']} {status} score={score['value']}/{min_score} "
+        f"{result['run_id']} {status}{expectation} {score_status} "
+        f"score={score['value']}/{min_score} "
         f"phases={score['checks']['phase_count']} "
-        f"families={len(score['checks']['family_coverage'])}",
+        f"domains={len(score['checks']['domain_coverage'])}",
         flush=True,
     )
     for blocker in score["blockers"]:
@@ -505,9 +968,10 @@ def write_summary(path: Path, results: list[dict[str, Any]], min_score: int) -> 
                 f"## {result['run_id']}",
                 "",
                 f"- Status: {'pass' if score['passed'] else 'fail'}",
+                f"- Expectation status: {'pass' if result.get('expectation_passed', score['passed']) else 'fail'}",
                 f"- Score: {score['value']}/{min_score}",
                 f"- Phases: {score['checks']['phase_count']}",
-                f"- Families: {len(score['checks']['family_coverage'])}",
+                f"- Domains: {len(score['checks']['domain_coverage'])}",
                 f"- Plan: `{result['plan_path']}`",
                 "",
             ]

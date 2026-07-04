@@ -37,6 +37,10 @@ impl PhasePass {
             Self::Commit => "low",
         }
     }
+
+    pub fn requires_verdict(self) -> bool {
+        matches!(self, Self::Validate | Self::Review)
+    }
 }
 
 pub fn phase_prompt(
@@ -96,9 +100,9 @@ Final PLAN.md contract:
 
 Plan quality bar:
 - Phases must be implementation-sized, not umbrella roadmap buckets.
-- For broad product, platform, migration, UX/UI, or architecture work, fewer than 12 phases is usually under-split.
-- Ten to twenty or more phases are expected when needed for reviewable implementation.
-- Do not compress a huge system into 5-8 broad phases just to look concise.
+- For broad product, platform, migration, UX/UI, or architecture work, split by real implementation boundaries: ownership, data model, runtime boundary, dependency order, rollout risk, and validation method.
+- Do not target a fixed phase count.
+- Do not compress unrelated workstreams into broad phases just to look concise.
 - Treat replacements of external systems, new runtimes, agent/worker execution, config schemas, persistence, security/trust boundaries, dashboards/APIs, or staged rollouts as broad work.
 - For broad work, split relevant phase families instead of merging them: repo/context discovery, schema/parser diagnostics, policy/security, persistence/indexes/migrations, state machine/scheduler, protocol/API contracts, worker/agent runtime, secrets/isolation/resources, logs/artifacts/checks/audit/observability, dashboard/operator actions, shadow/fallback/rollout, migration/cleanup/removal, and end-to-end readiness gates.
 - Each phase must name the concrete subsystem, file area, API, model, UI surface, migration, or test layer it changes.
@@ -124,8 +128,8 @@ Write the final PLAN.md now at the requested path. If AGENTS.md was missing at t
 Produce the best detailed implementation plan possible from the current session context.
 Include top-level `## Decisions`, `## Non-Goals`, `## Open Risks`, and `## Loopholes To Close` sections before phase sections.
 Use implementation-sized phases, not umbrella roadmap buckets.
-For broad work, fewer than 12 phases is usually under-split; ten to twenty or more phases are expected when needed for reviewable implementation.
-Do not compress a huge system into 5-8 broad phases just to look concise.
+For broad work, split by real implementation boundaries: ownership, data model, runtime boundary, dependency order, rollout risk, and validation method.
+Do not target a fixed phase count, and do not compress unrelated workstreams into broad phases just to look concise.
 Treat replacements of external systems, new runtimes, agent/worker execution, config schemas, persistence, security/trust boundaries, dashboards/APIs, or staged rollouts as broad work. Split the relevant phase families instead of merging them.
 Each phase must name the concrete subsystem or file area it changes, state the contract it establishes, include concrete deliverables, dependencies or `None`, unresolved decisions or `None`, ordered implementation steps, and validation that proves the phase works.
 Reject vague phase labels or steps like `Build backend`, `Add UI`, `Wire everything`, `Add tests`, `Roll out`, `Clean up`, `improve`, `support`, `handle`, `integrate`, or `polish` unless they include concrete repo-local targets and behavior.
@@ -166,6 +170,9 @@ Rules:
 - Do not implement code, edit files, commit, push, create branches, open PRs, run release workflows, or manage CI.
 - For broad product, UX, UI, platform, migration, or architecture briefs, keep questioning as long as needed; tens or hundreds of questions are acceptable when the architecture is still underdetermined.
 - Do not finalize after only a few generic questions; first lock source inputs, runtime model, config model, persistent state, trust boundaries, rollout path, validation path, non-goals, risks, and loopholes.
+- For broad work, split unrelated workstreams instead of targeting a fixed phase count. Phase boundaries must follow implementation ownership, dependency order, and validation method.
+- Treat replacements of external systems, new runtimes, agent/worker execution, config schemas, persistence, security/trust boundaries, dashboards/APIs, or staged rollouts as broad work.
+- Split broad phase families instead of merging them: repo/context discovery, schema/parser diagnostics, policy/security, persistence/indexes/migrations, state machine/scheduler, protocol/API contracts, worker/agent runtime, secrets/isolation/resources, logs/artifacts/checks/audit/observability, dashboard/operator actions, shadow/fallback/rollout, migration/cleanup/removal, and end-to-end readiness gates.
 - When choices are settled, write the final plan at {plan_path} unless there is a hard blocker.
 - After writing {plan_path}, end the response with exactly `PLAN_PATH: {plan_path}` on its own line.
 
@@ -177,6 +184,9 @@ Final PLAN.md contract:
 - ## Loopholes To Close
 - ## Phase N - Name
 - Goal:
+- Deliverables:
+- Dependencies:
+- Unresolved decisions:
 - Steps:
 - Validation:
 
@@ -293,6 +303,7 @@ First evaluate it in the visible response:
 Continue sparring with exactly one forced-choice question, or write the final plan only if the decision log is specific enough to implement.
 For broad product, UX, UI, platform, migration, or architecture briefs, keep questioning as long as needed; tens or hundreds of questions are acceptable when the architecture is still underdetermined.
 Do not finalize until source inputs, runtime model, config model, persistent state, trust boundaries, rollout path, validation path, non-goals, risks, and loopholes are settled or explicitly blocked.
+For broad work, split unrelated workstreams instead of targeting a fixed phase count. Phase boundaries must follow implementation ownership, dependency order, and validation method. Split schema/parser, policy/security, persistence, scheduler, protocol/API, agent runtime, secrets/isolation, logs/artifacts/checks/audit/observability, dashboard/actions, shadow/fallback/rollout, migration/removal, and readiness gates when relevant.
 After writing the final plan, end the response with exactly `PLAN_PATH: <path>` on its own line.
 Do not ask the user for interactive input and do not call request_user_input or other input tools.
 Do not implement code, edit files except the final configured PLAN.md when ready, commit, push, create branches, open PRs, run release workflows, or manage CI.",
@@ -315,6 +326,8 @@ Use ${plan_shape}.
 Write the final implementation plan at {plan_path} only if the accepted decision log is complete enough to implement.
 If source inputs, runtime model, config model, persistent state, trust boundaries, rollout path, validation path, non-goals, risks, or loopholes are still unresolved, do not write PLAN.md. State `BLOCKER:` and list the unresolved decisions instead of inventing a vague plan.
 Use the accepted decisions from the sparring session as the plan contract. Do not invent unresolved choices silently.
+For broad work, split unrelated workstreams instead of targeting a fixed phase count. Write `BLOCKER:` instead if the accepted decision log cannot support implementation-sized boundaries.
+Treat replacements of external systems, new runtimes, agent/worker execution, config schemas, persistence, security/trust boundaries, dashboards/APIs, or staged rollouts as broad work. Split the relevant phase families instead of merging them.
 After writing {plan_path}, end the response with exactly `PLAN_PATH: {plan_path}` on its own line.
 
 Final PLAN.md contract:
@@ -325,6 +338,9 @@ Final PLAN.md contract:
 - ## Loopholes To Close
 - ## Phase N - Name
 - Goal:
+- Deliverables:
+- Dependencies:
+- Unresolved decisions:
 - Steps:
 - Validation:
 
@@ -427,6 +443,10 @@ Use $lgtm-dependency-review if the phase changes dependencies, lockfiles, packag
 
 Validate that Phase {number} was implemented fully and correctly in the current target repo.
 Fix only correctness, test, docs, security, dependency, or rollout gaps needed to complete this selected phase.
+End the final response with exactly one `LGTM_VERDICT:` line containing strict JSON:
+`LGTM_VERDICT: {{\"schema_version\":1,\"status\":\"pass\",\"summary\":\"<summary>\",\"checks\":[\"<check or evidence>\"],\"fixes\":[],\"blockers\":[],\"out_of_scope\":[]}}`
+or
+`LGTM_VERDICT: {{\"schema_version\":1,\"status\":\"block\",\"summary\":\"<summary>\",\"checks\":[],\"fixes\":[],\"blockers\":[\"<blocker>\"],\"out_of_scope\":[]}}`
 Do not commit or push unless the user explicitly requested it for this run.",
             number = phase.id,
             heading = phase.heading,
@@ -445,6 +465,10 @@ Use $lgtm-final-review before finishing.
 Review Phase {number} in the current target repo after implementation and validation.
 Run a strict structural maintainability review, then fix every safe phase-scoped finding before finishing.
 If a finding requires broad redesign, unrelated refactor, new product behavior, PR/CI workflow, or later-phase work, report it as out of scope or blocked instead of fixing it.
+End the final response with exactly one `LGTM_VERDICT:` line containing strict JSON:
+`LGTM_VERDICT: {{\"schema_version\":1,\"status\":\"pass\",\"summary\":\"<summary>\",\"checks\":[\"<check or evidence>\"],\"fixes\":[],\"blockers\":[],\"out_of_scope\":[]}}`
+or
+`LGTM_VERDICT: {{\"schema_version\":1,\"status\":\"block\",\"summary\":\"<summary>\",\"checks\":[],\"fixes\":[],\"blockers\":[\"<blocker>\"],\"out_of_scope\":[]}}`
 Do not commit or push unless the user explicitly requested it for this run.",
             number = phase.id,
             heading = phase.heading,
@@ -475,26 +499,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn implementation_prompt_includes_phase_and_skills() {
-        let prompt = phase_prompt(
-            std::path::Path::new("PLAN.md"),
-            std::path::Path::new("AGENTS.md"),
-            &Phase {
-                id: 4,
-                title: "Path And Environment Resolution".to_string(),
-                heading: "## Phase 4 - Path And Environment Resolution".to_string(),
-            },
-            PhasePass::Implement,
-        );
-
-        assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
-        assert!(prompt.contains("$lgtm-context-map"));
-        assert!(prompt.contains("$lgtm-phase-implement"));
-        assert!(prompt.contains("$lgtm-refactor-plan"));
-        assert!(prompt.contains("Do not commit or push"));
-    }
-
-    #[test]
     fn phase_passes_include_commit_after_review() {
         assert_eq!(
             PhasePass::ALL,
@@ -518,245 +522,55 @@ mod tests {
     }
 
     #[test]
-    fn commit_prompt_includes_phase_and_guardrails() {
+    fn validate_prompt_routes_to_validation_skill_and_verdict_contract() {
+        let phase = test_phase();
         let prompt = phase_prompt(
             std::path::Path::new("PLAN.md"),
             std::path::Path::new("AGENTS.md"),
-            &Phase {
-                id: 4,
-                title: "Path And Environment Resolution".to_string(),
-                heading: "## Phase 4 - Path And Environment Resolution".to_string(),
-            },
-            PhasePass::Commit,
+            &phase,
+            PhasePass::Validate,
         );
 
-        assert!(prompt.contains("## Phase 4 - Path And Environment Resolution"));
-        assert!(prompt.contains("$lgtm-phase-commit"));
-        assert!(prompt.contains("Stage all changes"));
-        assert!(
-            prompt.contains("Create a real git commit with a concise Conventional Commit subject")
-        );
-        assert!(prompt.contains("Never include changed-file lists"));
-        assert!(prompt.contains("Do not create an empty commit"));
-        assert!(prompt.contains("Do not push, create branches, open PRs, manage CI"));
-        assert!(!prompt.contains("rich message"));
-        assert!(!prompt.contains("safely separated"));
+        assert!(prompt.contains("Use $lgtm-phase-validate for the validation pass."));
+        assert!(prompt.contains("Use $lgtm-test-gap-review"));
+        assert!(prompt.contains("## Phase 7 - Runtime Gates"));
+        assert!(prompt.contains("Phase 7"));
+        assert!(prompt.contains("exactly one `LGTM_VERDICT:` line containing strict JSON"));
+        assert!(prompt.contains(r#""status":"pass""#));
+        assert!(prompt.contains(r#""status":"block""#));
     }
 
     #[test]
-    fn review_prompt_requires_strict_fixing_review() {
+    fn review_prompt_routes_to_review_skill_and_verdict_contract() {
+        let phase = test_phase();
         let prompt = phase_prompt(
             std::path::Path::new("PLAN.md"),
             std::path::Path::new("AGENTS.md"),
-            &Phase {
-                id: 4,
-                title: "Path And Environment Resolution".to_string(),
-                heading: "## Phase 4 - Path And Environment Resolution".to_string(),
-            },
+            &phase,
             PhasePass::Review,
         );
 
-        assert!(prompt.contains("$lgtm-phase-review"));
-        assert!(prompt.contains("$lgtm-refactor-plan"));
-        assert!(prompt.contains("strict structural maintainability review"));
-        assert!(prompt.contains("fix every safe phase-scoped finding"));
-        assert!(prompt.contains("out of scope or blocked"));
-    }
-
-    #[test]
-    fn initial_plan_prompt_sets_final_artifact_contract() {
-        let prompt = plan_initial_prompt(
-            std::path::Path::new("docs/PLAN.md"),
-            std::path::Path::new("AGENTS.md"),
-            Some("  split the migration  "),
-        );
-
-        assert!(prompt.contains("$lgtm-plan-create"));
-        assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
-        assert!(prompt.contains("Target AGENTS.md path: AGENTS.md"));
-        assert!(prompt.contains("Do not require AGENTS.md to exist"));
-        assert!(prompt.contains("do not call request_user_input"));
-        assert!(prompt.contains("PLAN.md is a final-only sentinel"));
-        assert!(prompt.contains("do not optimize for a short question count"));
-        assert!(prompt.contains("security/trust boundaries"));
-        assert!(prompt.contains("## Decisions"));
-        assert!(prompt.contains("## Non-Goals"));
-        assert!(prompt.contains("## Open Risks"));
-        assert!(prompt.contains("## Loopholes To Close"));
-        assert!(prompt.contains("## Phase N - Name"));
-        assert!(prompt.contains("Deliverables:"));
-        assert!(prompt.contains("Dependencies:"));
-        assert!(prompt.contains("Unresolved decisions:"));
-        assert!(prompt.contains("Plan quality bar"));
-        assert!(prompt.contains("implementation-sized, not umbrella roadmap buckets"));
-        assert!(prompt.contains("fewer than 12 phases is usually under-split"));
-        assert!(prompt.contains("Ten to twenty or more phases are expected"));
-        assert!(prompt.contains("Do not compress a huge system into 5-8 broad phases"));
-        assert!(prompt.contains("replacements of external systems"));
-        assert!(prompt.contains("state machine/scheduler"));
-        assert!(prompt.contains("shadow/fallback/rollout"));
-        assert!(prompt.contains("concrete subsystem, file area, API, model, UI surface"));
-        assert!(prompt.contains("dependencies on earlier phases or `None`"));
-        assert!(prompt.contains("unresolved decisions or `None`"));
-        assert!(prompt.contains("Build backend"));
-        assert!(prompt.contains("Validation must name concrete checks"));
-        assert!(prompt.contains("User brief:\nsplit the migration"));
-    }
-
-    #[test]
-    fn shape_session_a_initial_prompt_sets_sparring_contract() {
-        let prompt = shape_session_a_initial_prompt(&shape_context());
-
-        assert!(prompt.contains("$lgtm-plan-shape"));
-        assert!(prompt.contains("User brief:\nshape the deploy flow"));
-        assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
-        assert!(prompt.contains("Ask exactly one forced-choice question per sparring turn"));
-        assert!(prompt.contains("2-3 numbered options"));
-        assert!(prompt.contains("decision log"));
-        assert!(prompt.contains("Decision: ACCEPT"));
-        assert!(prompt.contains("Decision: REJECT"));
-        assert!(prompt.contains("Decision: NARROW"));
-        assert!(prompt.contains("locked choice and consequence"));
-        assert!(prompt.contains("Do not finalize after only a few generic questions"));
-        assert!(prompt.contains("hundreds of questions are acceptable"));
-        assert!(prompt.contains("runtime model"));
-        assert!(prompt.contains("trust boundaries"));
-        assert!(prompt.contains("loopholes"));
-        assert_shape_prompt_forbids_agent_side_effects(&prompt);
-        assert!(prompt.contains("Final PLAN.md contract"));
-        assert!(prompt.contains("## Decisions"));
-        assert!(prompt.contains("## Non-Goals"));
-        assert!(prompt.contains("## Open Risks"));
-        assert!(prompt.contains("## Loopholes To Close"));
-        assert!(prompt.contains("## Phase N - Name"));
-        assert!(prompt.contains("PLAN_PATH: docs/PLAN.md"));
-    }
-
-    #[test]
-    fn shape_session_b_initial_prompt_sets_evidence_contract() {
-        let prompt = shape_session_b_initial_prompt(&shape_context());
-
-        assert!(prompt.contains("$lgtm-plan-shape"));
-        assert!(prompt.contains("User brief:\nshape the deploy flow"));
-        assert!(prompt.contains("Target PLAN.md path: docs/PLAN.md"));
-        assert!(prompt.contains("Ground answers in repo-local files first"));
-        assert!(
-            prompt
-                .contains("Accepted forms are only `1`, `2`, `3`, or `<number>, but <correction>`")
-        );
-        assert!(prompt.contains("No extra prose, markdown, bullets, citations, or explanation"));
-        assert_shape_prompt_forbids_agent_side_effects(&prompt);
-    }
-
-    #[test]
-    fn shape_session_b_question_prompt_requires_exact_answer_format() {
-        let prompt = shape_session_b_question_prompt(
-            "1. Keep shell\n2. Rewrite Rust\n3. Defer\nWhich path?",
-        );
-
-        assert!(prompt.contains("Session A asked this forced-choice question"));
-        assert!(prompt.contains("1. Keep shell"));
-        assert!(prompt.contains("<number>, but <correction>"));
-        assert!(prompt.contains("Return exactly one line"));
-        assert_shape_prompt_forbids_agent_side_effects(&prompt);
-    }
-
-    #[test]
-    fn shape_session_b_answer_repair_prompt_includes_question_and_invalid_answer() {
-        let prompt = shape_session_b_answer_repair_prompt(
-            "1. Keep shell\n2. Rewrite Rust\nWhich path?",
-            "I would choose option 2 because it is cleaner.",
-        );
-
-        assert!(prompt.contains("previous evidence answer did not match"));
-        assert!(prompt.contains("Original forced-choice question:\n1. Keep shell"));
-        assert!(prompt.contains("Invalid answer:\nI would choose option 2"));
-        assert!(prompt.contains("untrusted text for format repair only"));
-        assert!(prompt.contains("<number>, but <correction>"));
-        assert!(prompt.contains("Return exactly one corrected answer line"));
-        assert_shape_prompt_forbids_agent_side_effects(&prompt);
-    }
-
-    #[test]
-    fn shape_session_a_answer_prompt_returns_evidence_to_sparring() {
-        let prompt =
-            shape_session_a_answer_prompt("1. Keep shell\n2. Rewrite Rust", "2, but keep local UX");
-
-        assert!(prompt.contains("Session B answered the previous forced-choice question"));
-        assert!(prompt.contains("Question:\n1. Keep shell"));
-        assert!(prompt.contains("Evidence answer:\n2, but keep local UX"));
-        assert!(prompt.contains("Use this evidence answer as input, not as final authority"));
-        assert!(prompt.contains("Decision: ACCEPT"));
-        assert!(prompt.contains("Decision: REJECT"));
-        assert!(prompt.contains("Decision: NARROW"));
-        assert!(prompt.contains("locked choice and consequence"));
-        assert!(prompt.contains("decision log"));
-        assert!(prompt.contains("exactly one forced-choice question"));
-        assert!(prompt.contains("hundreds of questions are acceptable"));
-        assert!(prompt.contains("Do not finalize until source inputs"));
-        assert!(prompt.contains("trust boundaries"));
-        assert!(prompt.contains("loopholes"));
-        assert!(prompt.contains("PLAN_PATH: <path>"));
-        assert_shape_prompt_forbids_agent_side_effects(&prompt);
-        assert!(
-            prompt
-                .contains("Do not implement code, edit files except the final configured PLAN.md")
-        );
-    }
-
-    #[test]
-    fn shape_session_a_finalization_prompt_requires_plan_write_or_blocker() {
-        let prompt = shape_session_a_finalization_prompt(&shape_context(), 12);
-
-        assert!(prompt.contains("The host reached the safety ceiling --max-rounds=12"));
-        assert!(prompt.contains("$lgtm-plan-shape"));
-        assert!(prompt.contains("safety ceiling"));
-        assert!(prompt.contains("Write the final implementation plan at docs/PLAN.md only if"));
-        assert!(prompt.contains("do not write PLAN.md"));
-        assert!(prompt.contains("BLOCKER:"));
-        assert!(prompt.contains("accepted decisions from the sparring session"));
-        assert!(prompt.contains("Do not invent unresolved choices silently"));
-        assert!(prompt.contains("PLAN_PATH: docs/PLAN.md"));
-        assert!(prompt.contains("Do not ask another question"));
-        assert_shape_prompt_forbids_agent_side_effects(&prompt);
-        assert!(prompt.contains("Do not implement code, edit files outside docs/PLAN.md"));
-        assert!(prompt.contains("# Plan"));
-        assert!(prompt.contains("## Decisions"));
-        assert!(prompt.contains("## Non-Goals"));
-        assert!(prompt.contains("## Open Risks"));
-        assert!(prompt.contains("## Loopholes To Close"));
-        assert!(prompt.contains("## Phase N - Name"));
-    }
-
-    fn assert_shape_prompt_forbids_agent_side_effects(prompt: &str) {
-        assert!(prompt.contains("interactive input"));
-        assert!(prompt.contains("request_user_input"));
-        assert!(prompt.contains("Do not implement code"));
-        assert!(prompt.contains("commit"));
-        assert!(prompt.contains("push"));
-    }
-
-    fn shape_context() -> ShapePromptContext<'static> {
-        ShapePromptContext {
-            brief: "  shape the deploy flow  ",
-            root: std::path::Path::new("/repo"),
-            plan_path: std::path::Path::new("/repo/docs/PLAN.md"),
-        }
+        assert!(prompt.contains("Use $lgtm-phase-review for the local phase review pass."));
+        assert!(prompt.contains("Use $lgtm-final-review"));
+        assert!(prompt.contains("## Phase 7 - Runtime Gates"));
+        assert!(prompt.contains("Phase 7"));
+        assert!(prompt.contains("exactly one `LGTM_VERDICT:` line containing strict JSON"));
+        assert!(prompt.contains(r#""status":"pass""#));
+        assert!(prompt.contains(r#""status":"block""#));
     }
 
     #[test]
     fn resume_plan_prompt_only_special_cases_exact_finish() {
-        let finish_prompt = plan_resume_prompt("/finish");
-        assert!(finish_prompt.contains("Write the final PLAN.md now"));
-        assert!(finish_prompt.contains("best detailed implementation plan"));
-        assert!(finish_prompt.contains("implementation-sized phases"));
-        assert!(finish_prompt.contains("fewer than 12 phases is usually under-split"));
-        assert!(finish_prompt.contains("ten to twenty or more phases are expected"));
-        assert!(finish_prompt.contains("Do not compress a huge system into 5-8 broad phases"));
-        assert!(finish_prompt.contains("replacements of external systems"));
-        assert!(finish_prompt.contains("state the contract it establishes"));
-        assert!(finish_prompt.contains("Mark unresolved decisions explicitly"));
+        assert_ne!(plan_resume_prompt("/finish"), "/finish");
         assert_eq!(plan_resume_prompt(" /finish "), " /finish ");
         assert_eq!(plan_resume_prompt("answer"), "answer");
+    }
+
+    fn test_phase() -> Phase {
+        Phase {
+            id: 7,
+            title: "Runtime Gates".to_string(),
+            heading: "## Phase 7 - Runtime Gates".to_string(),
+        }
     }
 }

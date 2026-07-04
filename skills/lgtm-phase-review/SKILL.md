@@ -194,3 +194,19 @@ Do not approve merely because behavior is correct. Treat these as blockers unles
 - phase duplicates an existing helper or puts logic outside its canonical owner
 
 Final response concise: findings fixed, verification, blocked/out-of-scope items only.
+
+End the final response with exactly one verdict marker line:
+
+```text
+LGTM_VERDICT: {"schema_version":1,"status":"pass","summary":"<summary>","checks":["<check or evidence>"],"fixes":[],"blockers":[],"out_of_scope":[]}
+```
+
+or:
+
+```text
+LGTM_VERDICT: {"schema_version":1,"status":"block","summary":"<summary>","checks":[],"fixes":[],"blockers":["<blocker>"],"out_of_scope":[]}
+```
+
+Use `pass` only when the review is complete and safe to continue to commit. Use
+`block` when selected-phase findings remain, verification is incomplete, or a
+real blocker/out-of-scope dependency prevents approval.

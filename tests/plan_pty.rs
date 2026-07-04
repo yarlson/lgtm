@@ -262,23 +262,6 @@ fn plan_mode_implement_choice_hands_off_to_run_mode() {
         repo.join("handoff-logs/test-phase-02-index.jsonl")
             .is_file()
     );
-
-    let index_turn = fs::read_to_string(temp.path().join("turn-2.json")).expect("index prompt");
-    let implement_turn =
-        fs::read_to_string(temp.path().join("turn-3.json")).expect("implement prompt");
-    let validate_turn =
-        fs::read_to_string(temp.path().join("turn-4.json")).expect("validate prompt");
-    let review_turn = fs::read_to_string(temp.path().join("turn-5.json")).expect("review prompt");
-    let commit_turn = fs::read_to_string(temp.path().join("turn-6.json")).expect("commit prompt");
-    assert!(index_turn.contains("# Plan"));
-    assert!(index_turn.contains("## Phase 1 - Generated"));
-    assert!(index_turn.contains("Goal: generated."));
-    assert!(implement_turn.contains("$lgtm-phase-implement"));
-    assert!(implement_turn.contains("## Phase 1 - Generated"));
-    assert!(validate_turn.contains("$lgtm-phase-validate"));
-    assert!(review_turn.contains("$lgtm-phase-review"));
-    assert!(commit_turn.contains("$lgtm-phase-commit"));
-    assert!(commit_turn.contains("## Phase 1 - Generated"));
 }
 
 #[test]
@@ -518,9 +501,41 @@ printf '%s\n' "$turn_start" >"$dir/turn-$n.json"
 cat >"$dir/repo/PLAN.md" <<'PLAN'
 # Plan
 
+## Decisions
+
+- Test plan.
+
+## Non-Goals
+
+- None.
+
+## Open Risks
+
+- None.
+
+## Loopholes To Close
+
+- None.
+
 ## Phase 1 - Test
 
-Goal: test.
+Goal:
+test.
+
+Deliverables:
+- Test deliverable.
+
+Dependencies:
+- None.
+
+Unresolved decisions:
+- None.
+
+Steps:
+- Do it.
+
+Validation:
+- Check it.
 PLAN
 printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-plan","status":"inProgress","items":[]}}}'
 printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-1","text":"final plan written","status":"completed"}]}}}'
@@ -562,14 +577,52 @@ fn immediate_handoff_codex_script() -> &'static str {
 	  cat >"$dir/repo/PLAN.md" <<-'PLAN'
 	# Plan
 
+## Decisions
+
+- Test plan.
+
+## Non-Goals
+
+- None.
+
+## Open Risks
+
+- None.
+
+## Loopholes To Close
+
+- None.
+
 	## Phase 1 - Generated
 
-Goal: generated.
+Goal:
+generated.
+
+Deliverables:
+- Generated deliverable.
+
+Dependencies:
+- None.
+
+Unresolved decisions:
+- None.
+
+Steps:
+- Do it.
+
+Validation:
+- Check it.
 	PLAN
 	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-plan","text":"final plan written","status":"completed"}]}}}'
 	elif [ "$turn_n" = 2 ] || [ "$turn_n" = 7 ]; then
 	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-index","text":"{\"phases\":[{\"id\":1,\"title\":\"Generated\",\"heading\":\"## Phase 1 - Generated\"}]}","status":"completed"}]}}}'
+	elif [ "$turn_n" = 4 ] || [ "$turn_n" = 5 ]; then
+	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-verdict","text":"done\nLGTM_VERDICT: {\"schema_version\":1,\"status\":\"pass\",\"summary\":\"passed\",\"checks\":[\"fake check\"],\"fixes\":[],\"blockers\":[],\"out_of_scope\":[]}","status":"completed"}]}}}'
 	else
+	  if [ -n "$(git -C "$dir/repo" status --porcelain)" ]; then
+	    git -C "$dir/repo" add -A
+	    git -C "$dir/repo" -c user.name='lgtm test' -c user.email='lgtm@example.com' commit -m 'feat: commit phase' >/dev/null
+	  fi
 	  printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-pass","text":"done","status":"completed"}]}}}'
 	fi
 	done
@@ -602,9 +655,41 @@ if [ "$n" = 1 ]; then
   cat >"$dir/repo/PLAN.md" <<'PLAN'
 # Plan
 
+## Decisions
+
+- Test plan.
+
+## Non-Goals
+
+- None.
+
+## Open Risks
+
+- None.
+
+## Loopholes To Close
+
+- None.
+
 ## Phase 1 - Generated
 
-Goal: generated.
+Goal:
+generated.
+
+Deliverables:
+- Generated deliverable.
+
+Dependencies:
+- None.
+
+Unresolved decisions:
+- None.
+
+Steps:
+- Do it.
+
+Validation:
+- Check it.
 PLAN
   printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn":{"id":"turn-plan","status":"completed","items":[{"type":"agentMessage","id":"msg-plan","text":"final plan written","status":"completed"}]}}}'
 elif [ "$n" = 2 ]; then

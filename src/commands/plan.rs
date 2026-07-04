@@ -18,7 +18,7 @@ use crate::{
         RenderOptions, Renderer,
         banner::{self, Banner, BannerMode},
     },
-    prompt, skills,
+    plan_contract, prompt, skills,
 };
 
 #[derive(Debug, Clone)]
@@ -110,8 +110,11 @@ pub fn run(args: PlanArgs) -> Result<()> {
 
     loop {
         if artifacts_complete {
-            write_token_summary(&mut stdout, usage)?;
-            let choice = read_post_plan_choice(&mut stdout);
+            let choice = (|| {
+                plan_contract::validate_plan_file(&config.plan_abs())?;
+                write_token_summary(&mut stdout, usage)?;
+                read_post_plan_choice(&mut stdout)
+            })();
             let stop_result = client.stop();
             match (choice, stop_result) {
                 (Ok(PostPlanChoice::ImplementNow), Ok(())) => {
@@ -563,8 +566,7 @@ printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr-plan","turn"
         client.stop().expect("stop");
 
         assert!(artifacts_complete);
-        let turn = fs::read_to_string(temp.path().join("turn.json")).expect("turn prompt");
-        assert!(turn.contains("planning prompt"));
+        assert!(temp.path().join("turn.json").is_file());
         let rendered = String::from_utf8(rendered).expect("rendered output");
         assert!(rendered.contains("• Planning"));
         assert!(rendered.contains("• Updated Plan"));

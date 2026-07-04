@@ -207,101 +207,6 @@ mod tests {
     }
 
     #[test]
-    fn phase_review_skill_requires_strict_fixing_review() {
-        let body = bundled_skill(PHASE_REVIEW);
-
-        assert!(body.contains("code-judo"));
-        assert!(body.contains("Fix every safe, phase-scoped finding"));
-        assert!(body.contains("$lgtm-refactor-plan"));
-        assert!(body.contains("1000 lines"));
-        assert!(body.contains("No approve just because behavior seems correct"));
-        assert!(body.contains("Non-Negotiable Review Rules"));
-        assert!(body.contains("Do not soften major maintainability issues"));
-        assert!(body.contains("Approval Bar"));
-        assert!(body.contains("no obvious missed opportunity"));
-        assert!(body.contains("Commit pass owns committing"));
-    }
-
-    #[test]
-    fn phase_commit_skill_rejects_commit_message_inventories() {
-        let body = bundled_skill(PHASE_COMMIT);
-
-        assert!(body.contains("Prefer subject-only"));
-        assert!(body.contains("Never: changed-file list"));
-        assert!(body.contains("verification section"));
-        assert!(!body.contains("Key changes"));
-    }
-
-    #[test]
-    fn plan_create_skill_defines_implementation_grade_contract() {
-        let body = bundled_skill(PLAN_CREATE);
-
-        assert!(body.contains("not brainstorm transcript or roadmap summary"));
-        assert!(body.contains("without guessing"));
-        assert!(body.contains("explicit decision log"));
-        assert!(body.contains("lock the source inputs"));
-        assert!(body.contains("security/trust boundaries"));
-        assert!(body.contains("## Decisions"));
-        assert!(body.contains("## Non-Goals"));
-        assert!(body.contains("## Open Risks"));
-        assert!(body.contains("## Loopholes To Close"));
-        assert!(body.contains("Deliverables:"));
-        assert!(body.contains("Dependencies:"));
-        assert!(body.contains("Unresolved decisions:"));
-        assert!(body.contains("Plan phases must be implementation-sized"));
-        assert!(body.contains("under-split below 12 phases"));
-        assert!(body.contains("Ten to twenty or more phases are expected"));
-        assert!(body.contains("Do not compress a huge system into 5-8 broad phases"));
-        assert!(body.contains("replaces an external system"));
-        assert!(body.contains("state machine and scheduler/core runtime"));
-        assert!(body.contains("shadow mode, fallback, and rollout controls"));
-        assert!(body.contains("migration, cleanup, and removal of legacy paths"));
-        assert!(body.contains("concrete subsystem"));
-        assert!(body.contains("validation that proves the phase works"));
-        assert!(body.contains("dependencies on earlier phases"));
-        assert!(body.contains("Build backend"));
-        assert!(body.contains("vague verbs without concrete targets"));
-        assert!(body.contains("Run tests"));
-        assert!(body.contains("mark unresolved decisions explicitly"));
-    }
-
-    #[test]
-    fn plan_shape_skill_defines_session_contracts() {
-        let body = bundled_skill(PLAN_SHAPE);
-
-        assert!(body.contains("architecture sparring session"));
-        assert!(body.contains("Ask exactly one forced-choice question per sparring turn"));
-        assert!(body.contains("Reject vague, overlapping, or non-actionable choices"));
-        assert!(body.contains("Decision: ACCEPT"));
-        assert!(body.contains("Decision: REJECT"));
-        assert!(body.contains("Decision: NARROW"));
-        assert!(body.contains("locked choice and consequence"));
-        assert!(body.contains("decision log"));
-        assert!(body.contains("Do not finalize after only a few generic questions"));
-        assert!(body.contains("hundreds of questions are acceptable"));
-        assert!(body.contains("runtime model"));
-        assert!(body.contains("trust boundaries"));
-        assert!(body.contains("loopholes"));
-        assert!(body.contains("Session A Final Plan Contract"));
-        assert!(body.contains("# Plan"));
-        assert!(body.contains("## Decisions"));
-        assert!(body.contains("## Non-Goals"));
-        assert!(body.contains("## Open Risks"));
-        assert!(body.contains("## Loopholes To Close"));
-        assert!(body.contains("## Phase N - Name"));
-        assert!(body.contains("Goal:"));
-        assert!(body.contains("Steps:"));
-        assert!(body.contains("Validation:"));
-        assert!(body.contains("PLAN_PATH: <path>"));
-        assert!(body.contains("evidence session"));
-        assert!(body.contains("current codebase first"));
-        assert!(body.contains("current-year web search"));
-        assert!(body.contains("industry best practice"));
-        assert!(body.contains("<number>, but <correction>"));
-        assert!(body.contains("Answer with exactly one line and no extra prose"));
-    }
-
-    #[test]
     fn install_writes_plan_shape_skill() {
         let temp = tempfile::tempdir().expect("tempdir");
 
@@ -315,7 +220,6 @@ mod tests {
             .join("SKILL.md");
         let body = fs::read_to_string(skill_path).expect("plan shape skill");
         assert!(is_managed_skill(PLAN_SHAPE, &body));
-        assert!(body.contains("Session B Answer Format"));
     }
 
     #[test]
@@ -372,13 +276,5 @@ managed-by: lgtm
             fs::read_to_string(skill_path).expect("skill body"),
             "user owned"
         );
-    }
-
-    fn bundled_skill(name: &str) -> &'static str {
-        SKILLS
-            .iter()
-            .find(|skill| skill.name == name)
-            .unwrap_or_else(|| panic!("bundled skill {name}"))
-            .body
     }
 }

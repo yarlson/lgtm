@@ -100,11 +100,11 @@ Every phase must include `Goal:`, `Deliverables:`, `Dependencies:`,
 
 Plan phases must be implementation-sized, not umbrella roadmap buckets.
 
-For large tasks, prefer more phases. Broad product, platform, migration,
-UX/UI, or architecture work is usually under-split below 12 phases.
-Ten to twenty or more phases are expected when that is what makes
-implementation reviewable. Do not compress a huge system into 5-8 broad phases
-just to look concise.
+For large tasks, prefer phases that follow real implementation boundaries:
+ownership, data model, runtime boundary, dependency order, rollout risk, and
+validation method. Broad product, platform, migration, UX/UI, or architecture
+work often needs many phases, but do not target a fixed phase count. Do not
+compress unrelated workstreams into broad phases just to look concise.
 
 Treat a brief as broad when it replaces an external system, introduces a new
 runtime, changes agent/worker execution, adds a config schema, creates storage

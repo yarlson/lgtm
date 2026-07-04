@@ -19,6 +19,10 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from evals.common.lgtm_logs import collect_usage
+
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixture"
 DEFAULT_DATA_ROOT = Path.home() / "lgtm-token-eval-data"
 
@@ -31,6 +35,7 @@ class Binary:
 
 def main() -> int:
     args = parse_args()
+    require_token_eval()
     binaries = parse_binaries(args.bin)
     if len(binaries) < 2:
         raise SystemExit("provide at least two --bin VERSION PATH entries")
@@ -159,16 +164,22 @@ def run_trial(
     write_json(run_dir / "validation.json", validation)
 
     usage = collect_usage(logs_dir)
+    usage_success = (
+        usage["usage_objects"] > 0
+        and usage["log_files"] > 0
+        and usage["total_tokens"] > 0
+    )
     result = {
         "run_id": run_id,
         "version": binary.version,
         "binary": str(binary.path),
         "index": index,
         "total_runs": total,
-        "success": lgtm.returncode == 0 and validation["success"],
+        "success": lgtm.returncode == 0 and validation["success"] and usage_success,
         "lgtm_exit": lgtm.returncode,
         "wall_seconds": round(wall_seconds, 3),
         "usage": usage,
+        "usage_success": usage_success,
         "validation_success": validation["success"],
         "validation": validation["summary"],
         "logs_dir": str(logs_dir),
@@ -179,6 +190,12 @@ def run_trial(
 
     shutil.rmtree(repo_dir, ignore_errors=True)
     return result
+
+
+def require_token_eval() -> None:
+    if os.environ.get("LGTM_TOKEN_EVAL") == "1":
+        return
+    raise SystemExit("token usage eval requires LGTM_TOKEN_EVAL=1")
 
 
 def copy_fixture(repo_dir: Path) -> None:
@@ -221,138 +238,6 @@ def validate_repo(repo_dir: Path, timeout: int) -> dict[str, Any]:
         "summary": [{key: result[key] for key in ("name", "ok", "exit")} for result in results],
         "checks": results,
     }
-
-
-def collect_usage(logs_dir: Path) -> dict[str, int]:
-    explicit_turn_usage: list[dict[str, int]] = []
-    thread_totals: dict[str, dict[str, int]] = {}
-    log_files = 0
-    for path in sorted(logs_dir.glob("*.jsonl")):
-        log_files += 1
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            for payload in parse_log_payloads(line):
-                usage = turn_completed_usage(payload)
-                if usage is not None:
-                    explicit_turn_usage.append(usage)
-
-                update = thread_token_usage(payload)
-                if update is not None:
-                    thread_id, thread_usage = update
-                    previous = thread_totals.get(thread_id)
-                    if previous is None or thread_usage["total_tokens"] >= previous["total_tokens"]:
-                        thread_totals[thread_id] = thread_usage
-
-    if thread_totals:
-        total = sum_usage(thread_totals.values())
-        total["usage_objects"] = len(thread_totals)
-    else:
-        total = sum_usage(explicit_turn_usage)
-        total["usage_objects"] = len(explicit_turn_usage)
-    total["log_files"] = log_files
-    return total
-
-
-def parse_log_payloads(line: str) -> list[dict[str, Any]]:
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        return []
-    payloads = [payload] if isinstance(payload, dict) else []
-    if isinstance(payload, dict) and isinstance(payload.get("line"), str):
-        try:
-            inner = json.loads(payload["line"])
-        except json.JSONDecodeError:
-            pass
-        else:
-            if isinstance(inner, dict):
-                payloads.append(inner)
-    return payloads
-
-
-def turn_completed_usage(payload: dict[str, Any]) -> dict[str, int] | None:
-    if payload.get("method") != "turn/completed":
-        return None
-    params = payload.get("params")
-    if not isinstance(params, dict):
-        return None
-    turn = params.get("turn")
-    usage = turn.get("usage") if isinstance(turn, dict) else None
-    if not isinstance(usage, dict):
-        usage = params.get("usage")
-    if not isinstance(usage, dict):
-        return None
-    normalized = normalize_usage(usage)
-    return normalized if any(normalized.values()) else None
-
-
-def thread_token_usage(payload: dict[str, Any]) -> tuple[str, dict[str, int]] | None:
-    if payload.get("method") != "thread/tokenUsage/updated":
-        return None
-    params = payload.get("params")
-    if not isinstance(params, dict) or not isinstance(params.get("threadId"), str):
-        return None
-    token_usage = params.get("tokenUsage")
-    if not isinstance(token_usage, dict):
-        return None
-    total = token_usage.get("total")
-    if not isinstance(total, dict):
-        return None
-    normalized = normalize_usage(total)
-    return params["threadId"], normalized
-
-
-def normalize_usage(usage: dict[str, Any]) -> dict[str, int]:
-    return {
-        "input_tokens": int_value(usage, "input_tokens", "prompt_tokens", "inputTokens"),
-        "cached_input_tokens": cached_tokens(usage),
-        "output_tokens": int_value(usage, "output_tokens", "completion_tokens", "outputTokens"),
-        "reasoning_tokens": reasoning_tokens(usage),
-        "total_tokens": int_value(usage, "total_tokens", "totalTokens"),
-    }
-
-
-def sum_usage(usages: Any) -> dict[str, int]:
-    total = {
-        "input_tokens": 0,
-        "cached_input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "total_tokens": 0,
-    }
-    for usage in usages:
-        for key in total:
-            total[key] += usage[key]
-    return total
-
-
-def cached_tokens(usage: dict[str, Any]) -> int:
-    direct = int_value(usage, "cached_input_tokens", "cachedInputTokens")
-    details = nested_int(usage, "input_tokens_details", "cached_tokens")
-    prompt_details = nested_int(usage, "prompt_tokens_details", "cached_tokens")
-    cache_read = int_value(usage, "input_tokens_cache_read")
-    return direct + details + prompt_details + cache_read
-
-
-def reasoning_tokens(usage: dict[str, Any]) -> int:
-    direct = int_value(usage, "reasoning_tokens", "reasoningTokens", "reasoningOutputTokens")
-    output_details = nested_int(usage, "output_tokens_details", "reasoning_tokens")
-    completion_details = nested_int(usage, "completion_tokens_details", "reasoning_tokens")
-    return direct + output_details + completion_details
-
-
-def int_value(usage: dict[str, Any], *keys: str) -> int:
-    for key in keys:
-        value = usage.get(key)
-        if isinstance(value, int):
-            return value
-    return 0
-
-
-def nested_int(usage: dict[str, Any], parent: str, child: str) -> int:
-    value = usage.get(parent)
-    if isinstance(value, dict) and isinstance(value.get(child), int):
-        return value[child]
-    return 0
 
 
 def run(cmd: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
@@ -428,7 +313,22 @@ def write_summary(path: Path, results: list[dict[str, Any]]) -> None:
     failed = [result for result in results if not result["success"]]
     if failed:
         for result in failed:
-            lines.append(f"- {result['run_id']}: lgtm_exit={result['lgtm_exit']} validation={result['validation_success']}")
+            lines.append(
+                f"- {result['run_id']}: lgtm_exit={result['lgtm_exit']} "
+                f"validation={result['validation_success']} "
+                f"usage={result.get('usage_success', False)}"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "Missing token usage:", ""])
+    missing_usage = [result for result in results if not result.get("usage_success", False)]
+    if missing_usage:
+        for result in missing_usage:
+            usage = result["usage"]
+            lines.append(
+                f"- {result['run_id']}: usage_objects={usage['usage_objects']} "
+                f"log_files={usage['log_files']} total_tokens={usage['total_tokens']}"
+            )
     else:
         lines.append("- none")
     lines.append("")

@@ -345,6 +345,25 @@ Logs are written as JSONL:
 .lgtm/logs/<run-stamp>-shape-b-001.jsonl
 ```
 
+Validate and review passes must end with exactly one machine-readable verdict
+marker as the final non-empty line. `lgtm` parses that marker, blocks later
+passes on `block` or invalid verdicts, and writes gate artifacts:
+
+```text
+.lgtm/gates/<run-stamp>-phase-01-validate.json
+.lgtm/gates/<run-stamp>-phase-01-review.json
+```
+
+The verdict marker schema is:
+
+```text
+LGTM_VERDICT: {"schema_version":1,"status":"pass","summary":"Validated phase.","checks":["cargo test"],"fixes":[],"blockers":[],"out_of_scope":[]}
+```
+
+Use `"status":"block"` with a non-empty `blockers` array when the pass cannot
+approve the phase. A `pass` verdict must include at least one concrete check and
+no blockers.
+
 Shape session `a` is the sparring session. Shape session `b` is the evidence
 session.
 
@@ -358,6 +377,24 @@ Managed skills and logs are ignored in target repositories through:
 .agents/skills/lgtm-*
 .lgtm/
 ```
+
+## Evals
+
+Eval docs live in [`evals/README.md`](evals/README.md). The default lane is
+deterministic: fake Codex app-server runs and score-only artifact controls do
+not require Codex auth, network access, or model tokens.
+
+```bash
+make eval-check
+```
+
+Live plan and shape evals require `LGTM_LIVE_EVAL=1` and are for manual or
+release checks only. Optional judge prompts require `LGTM_LIVE_EVAL_JUDGE=1`
+and are secondary semantic review inputs, not pass authorities.
+
+Token metrics come from `.lgtm/logs`. Validate and review gate decisions are
+recorded under `.lgtm/gates`. The token usage sentinel is a live-token eval and
+requires `LGTM_TOKEN_EVAL=1`.
 
 ## Development
 
@@ -375,17 +412,17 @@ cargo build --all-targets --all-features
 ```
 
 Release packaging is defined in `.github/workflows/release.yml`. After merging
-the release changes, create the `v0.14.0` tag. The workflow validates that the
-tag matches `Cargo.toml`, builds platform archives, publishes the GitHub
-Release, pushes the arm64 Apple Container sandbox image as
-`ghcr.io/yarlson/lgtm-codex:0.14.0` and
+the release changes, create the version tag that matches `Cargo.toml`, for
+example `vX.Y.Z`. The workflow validates that the tag matches `Cargo.toml`,
+builds platform archives, publishes the GitHub Release, pushes the arm64 Apple
+Container sandbox image as `ghcr.io/yarlson/lgtm-codex:X.Y.Z` and
 `ghcr.io/yarlson/lgtm-codex:latest`, and can update the Homebrew formula
 through `scripts/update-homebrew-formula.sh`.
 
-Release notes for v0.14.0 should announce macOS Apple Container sandboxing
-support, not generic Docker sandboxing. After the release workflow is green,
-verify the GitHub Release assets, Homebrew formula update, and GHCR image tags,
-then smoke the published image:
+Release notes for sandbox releases should announce macOS Apple Container
+sandboxing support, not generic Docker sandboxing. After the release workflow
+is green, verify the GitHub Release assets, Homebrew formula update, and GHCR
+image tags, then smoke the published image:
 
 ```bash
 container run --rm ghcr.io/yarlson/lgtm-codex:latest codex --version

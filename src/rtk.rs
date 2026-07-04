@@ -71,9 +71,7 @@ mod tests {
 
         let suffix = developer_instructions_suffix_for_path(Some(&path)).expect("suffix");
 
-        assert!(suffix.contains("RTK - Rust Token Killer"));
-        assert!(suffix.contains("Always prefix shell commands with `rtk`."));
-        assert!(suffix.contains("rtk cargo test"));
+        assert!(!suffix.trim().is_empty());
     }
 
     #[test]

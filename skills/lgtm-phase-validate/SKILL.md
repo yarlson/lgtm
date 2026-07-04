@@ -65,3 +65,19 @@ Validation complete only when:
 - compile or type-check failures resolved or explicitly blocked
 
 Final response concise: validation result, fixes, checks, blockers only.
+
+End the final response with exactly one verdict marker line:
+
+```text
+LGTM_VERDICT: {"schema_version":1,"status":"pass","summary":"<summary>","checks":["<check or evidence>"],"fixes":[],"blockers":[],"out_of_scope":[]}
+```
+
+or:
+
+```text
+LGTM_VERDICT: {"schema_version":1,"status":"block","summary":"<summary>","checks":[],"fixes":[],"blockers":["<blocker>"],"out_of_scope":[]}
+```
+
+Use `pass` only when the selected phase is validated and safe to continue. Use
+`block` when required checks cannot run, verification is incomplete, or selected
+phase issues remain.
